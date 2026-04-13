@@ -1,0 +1,476 @@
+services:
+  postgres-project:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: project_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_project_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d project_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-planning:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: planning_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_planning_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d planning_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-admin:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: admin_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_admin_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d admin_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-orchestrator:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: orchestrator_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_orchestrator_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d orchestrator_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-adapter:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: adapter_db
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_adapter_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d adapter_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    ports:
+      - "8123:8123"
+      # native protocol; 9000 на хосте занят rustfs — снаружи 9009
+      - "9009:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse-users.d/lambot-default-network.xml:/etc/clickhouse-server/users.d/01-lambot-default-network.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfs_data:/data
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_CONSOLE_ENABLE: "true"
+    command: ["/data"]
+
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      # Single-broker dev: defaults are RF=3 and break consumer groups / __consumer_offsets
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
+      KAFKA_MIN_INSYNC_REPLICAS: "1"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 25s
+
+  project-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.project_service.main:app --host 0.0.0.0 --port 8001"
+    ports:
+      - "8001:8001"
+    environment:
+      PROJECT_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-project:5432/project_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+      INTERNAL_PROJECT_ADMIN_TOKEN: ${INTERNAL_PROJECT_ADMIN_TOKEN:-internal-project-admin-dev-token}
+    depends_on:
+      postgres-project:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  planning-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.planning_service.main:app --host 0.0.0.0 --port 8002"
+    ports:
+      - "8002:8002"
+    environment:
+      PLANNING_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-planning:5432/planning_db
+      LLM_ADAPTER_URL: http://llm-adapter-service:8005
+      PROJECT_SERVICE_URL: http://project-service:8001
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+    depends_on:
+      postgres-planning:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  orchestrator-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.orchestrator_service.main:app --host 0.0.0.0 --port 8003"
+    ports:
+      - "8003:8003"
+    environment:
+      ORCHESTRATOR_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-orchestrator:5432/orchestrator_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+      KAFKA_GROUP_ORCHESTRATOR: orchestrator-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-orchestrator:
+        condition: service_healthy
+
+  catalog-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.catalog_service.main:app --host 0.0.0.0 --port 8004"
+    ports:
+      - "8004:8004"
+
+  ansible-orchestrator-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.ansible_orchestrator_service.main:app --host 0.0.0.0 --port 8007"
+    ports:
+      - "8007:8007"
+    environment:
+      SUPERADMIN_TOKEN: ${SUPERADMIN_TOKEN:-superadmin-dev-token}
+      ANSIBLE_S3_ENDPOINT_URL: http://rustfs:9000
+      ANSIBLE_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      ANSIBLE_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      ANSIBLE_S3_BUCKET: ${ANSIBLE_S3_BUCKET:-platform-ansible}
+      ANSIBLE_S3_SEED_LOCAL: ${ANSIBLE_S3_SEED_LOCAL:-1}
+      # 1 = при старте перезаписать шаблоны в S3 из образа (нужно после обновления плейбуков; иначе в RustFS остаются старые).
+      ANSIBLE_S3_SYNC_LOCAL: ${ANSIBLE_S3_SYNC_LOCAL:-0}
+    depends_on:
+      rustfs:
+        condition: service_started
+
+  adapter-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.adapter_service.main:app --host 0.0.0.0 --port 8008"
+    ports:
+      - "8008:8008"
+    environment:
+      ADAPTER_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-adapter:5432/adapter_db
+      PROJECT_SERVICE_URL: http://project-service:8001
+      ANSIBLE_ORCHESTRATOR_URL: http://ansible-orchestrator-service:8007
+      ADMIN_SERVICE_URL: http://admin-service:8006
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      AGENT_INGEST_PUBLIC_URL: ${AGENT_INGEST_PUBLIC_URL:-http://api-gateway:8000/api/v1/agent/ingest}
+      ADAPTER_ANSIBLE_TIMEOUT_SEC: ${ADAPTER_ANSIBLE_TIMEOUT_SEC:-7200}
+      SSH_EXEC_TIMEOUT_SEC: ${SSH_EXEC_TIMEOUT_SEC:-120}
+      SSH_EXEC_CONFIRM_SECRET: ${SSH_EXEC_CONFIRM_SECRET:-change-me-ssh-confirm}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_HTTP_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-platform}
+    depends_on:
+      postgres-adapter:
+        condition: service_healthy
+      admin-service:
+        condition: service_started
+      clickhouse:
+        condition: service_started
+
+  llm-adapter-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.llm_adapter_service.main:app --host 0.0.0.0 --port 8005"
+    ports:
+      - "8005:8005"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ADMIN_SERVICE_URL: http://admin-service:8006
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+    depends_on:
+      admin-service:
+        condition: service_started
+
+  agent-worker-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.agent_worker_service.main:app --host 0.0.0.0 --port 8010"
+    ports:
+      - "8010:8010"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_AGENT_TASKS: platform.agent.tasks
+      KAFKA_TOPIC_AGENT_RESULTS: platform.agent.results
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+      ADMIN_SERVICE_URL: http://admin-service:8006
+      ADAPTER_SERVICE_URL: http://adapter-service:8008
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-0}
+      AGENT_WORKER_SEED_SAMPLE: ${AGENT_WORKER_SEED_SAMPLE:-1}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      admin-service:
+        condition: service_started
+      adapter-service:
+        condition: service_started
+      llm-adapter-service:
+        condition: service_started
+
+  # ИИ-агенты запуска цепочки: при создании проекта → автоматический planning (IDEA → PLAN_READY).
+  agent-bootstrap-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.agent_bootstrap_service.main:app --host 0.0.0.0 --port 8011"
+    ports:
+      - "8011:8011"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+      KAFKA_GROUP_AGENT_BOOTSTRAP: agent-bootstrap-service
+      PROJECT_SERVICE_URL: http://project-service:8001
+      PLANNING_SERVICE_URL: http://planning-service:8002
+      AGENT_BOOTSTRAP_AUTO_PLANNING: ${AGENT_BOOTSTRAP_AUTO_PLANNING:-1}
+      AGENT_BOOTSTRAP_INTERNAL_TOKEN: ${AGENT_BOOTSTRAP_INTERNAL_TOKEN:-internal-agent-bootstrap-dev-token}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      project-service:
+        condition: service_started
+      planning-service:
+        condition: service_started
+
+  # Песочница выполнения Python для агентов (ограничения см. сервис).
+  sandbox-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.sandbox_service.main:app --host 0.0.0.0 --port 8012"
+    ports:
+      - "8012:8012"
+    environment:
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
+
+  # LangGraph ReAct + tool calling (контекст проекта, sandbox, …)
+  agent-graph-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.agent_graph_service.main:app --host 0.0.0.0 --port 8013"
+    ports:
+      - "8013:8013"
+    environment:
+      ADAPTER_SERVICE_URL: http://adapter-service:8008
+      PROJECT_SERVICE_URL: http://project-service:8001
+      PLANNING_SERVICE_URL: http://planning-service:8002
+      SANDBOX_SERVICE_URL: http://sandbox-service:8012
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
+      ADMIN_SERVICE_URL: http://admin-service:8006
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_AGENT_TASKS: platform.agent.tasks
+    depends_on:
+      admin-service:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      planning-service:
+        condition: service_started
+      adapter-service:
+        condition: service_started
+      project-service:
+        condition: service_started
+      sandbox-service:
+        condition: service_started
+      llm-adapter-service:
+        condition: service_started
+
+  admin-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.admin_service.main:app --host 0.0.0.0 --port 8006"
+    ports:
+      - "8006:8006"
+    environment:
+      ADMIN_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-admin:5432/admin_db
+      DEFAULT_AGENT_INGEST_PUBLIC_URL: ${AGENT_INGEST_PUBLIC_URL:-http://api-gateway:8000/api/v1/agent/ingest}
+      SUPERADMIN_TOKEN: ${SUPERADMIN_TOKEN:-superadmin-dev-token}
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+      KAFKA_TOPIC_AGENT_TASKS: platform.agent.tasks
+      PROJECT_SERVICE_URL: http://project-service:8001
+      PLANNING_SERVICE_URL: http://planning-service:8002
+      ORCHESTRATOR_SERVICE_URL: http://orchestrator-service:8003
+      CATALOG_SERVICE_URL: http://catalog-service:8004
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+      AGENT_BOOTSTRAP_SERVICE_URL: http://agent-bootstrap-service:8011
+      SANDBOX_SERVICE_URL: http://sandbox-service:8012
+      AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
+      API_GATEWAY_URL: http://api-gateway:8000
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+    depends_on:
+      postgres-admin:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    environment:
+      INTERNAL_PROJECT_ADMIN_TOKEN: ${INTERNAL_PROJECT_ADMIN_TOKEN:-internal-project-admin-dev-token}
+      SUPERADMIN_TOKEN: ${SUPERADMIN_TOKEN:-superadmin-dev-token}
+      USER_BEARER_TOKEN: ${USER_BEARER_TOKEN:-user-dev-token}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      PROJECT_SERVICE_URL: http://project-service:8001
+      PLANNING_SERVICE_URL: http://planning-service:8002
+      ORCHESTRATOR_SERVICE_URL: http://orchestrator-service:8003
+      CATALOG_SERVICE_URL: http://catalog-service:8004
+      ADMIN_SERVICE_URL: http://admin-service:8006
+      ANSIBLE_ORCHESTRATOR_SERVICE_URL: http://ansible-orchestrator-service:8007
+      ADAPTER_SERVICE_URL: http://adapter-service:8008
+      AGENT_BOOTSTRAP_SERVICE_URL: http://agent-bootstrap-service:8011
+      AGENT_BOOTSTRAP_INTERNAL_TOKEN: ${AGENT_BOOTSTRAP_INTERNAL_TOKEN:-internal-agent-bootstrap-dev-token}
+      SANDBOX_SERVICE_URL: http://sandbox-service:8012
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
+      AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
+    depends_on:
+      project-service:
+        condition: service_started
+      planning-service:
+        condition: service_started
+      orchestrator-service:
+        condition: service_started
+      catalog-service:
+        condition: service_started
+      admin-service:
+        condition: service_started
+      ansible-orchestrator-service:
+        condition: service_started
+      adapter-service:
+        condition: service_started
+      agent-bootstrap-service:
+        condition: service_started
+      sandbox-service:
+        condition: service_started
+      agent-graph-service:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_GATEWAY_BASE: ""
+    ports:
+      - "5173:80"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
+volumes:
+  postgres_project_data:
+  postgres_planning_data:
+  postgres_admin_data:
+  postgres_orchestrator_data:
+  postgres_adapter_data:
+  clickhouse_data:
+  rustfs_data:

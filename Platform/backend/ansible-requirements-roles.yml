@@ -1,0 +1,4 @@
+---
+# Роли для infra prepare-stack (adapter запускает ansible-playbook из образа).
+roles:
+  - name: robertdebock.gitlab

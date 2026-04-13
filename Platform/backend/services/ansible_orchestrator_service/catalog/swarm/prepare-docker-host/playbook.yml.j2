@@ -1,0 +1,48 @@
+---
+# Базовая подготовка хоста: docker.io + Compose v2 (бинарь в cli-plugins), сервис docker, группа docker.
+# Вызывается adapter'ом перед provision-gitlab / provision-nexus на том же target.
+- name: Prepare Docker host (swarm template)
+  hosts: target
+  become: true
+  vars:
+    ssh_user: "{{ ssh_user }}"
+  tasks:
+    - name: Install Docker engine (Debian family)
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install Docker engine (generic)
+      ansible.builtin.package:
+        name: docker.io
+        state: present
+      when: ansible_os_family != "Debian"
+
+    - name: Ensure Docker CLI plugins directory
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+        mode: "0755"
+
+    # Скачивание Compose: только Ansible должен раскрыть {{ ansible_architecture }} и т.д.
+    # Иначе Jinja оркестратора (prepare-bundle) затирает их — в URL получается .../download//docker-compose-linux-
+    - name: Install Docker Compose v2 CLI plugin (GitHub release)
+      ansible.builtin.get_url:
+        url: {% raw %}"https://github.com/docker/compose/releases/download/v2.31.0/docker-compose-linux-{{ {'x86_64': 'x86_64', 'aarch64': 'aarch64', 'armv7l': 'armv7'}[ansible_architecture] | default('x86_64') }}"{% endraw %}
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        mode: "0755"
+        force: false
+
+    - name: Ensure docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ ssh_user }}"
+        groups: docker
+        append: true

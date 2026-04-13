@@ -1,0 +1,58 @@
+---
+# Шаблон роя: установка агента платформы (не генерировать с нуля — расширять meta + jinja)
+- name: Install Lambot platform agent
+  hosts: target
+  become: true
+  vars:
+    ingest_url: "{{ ingest_url }}"
+    agent_token: "{{ agent_token }}"
+    remote_agent_path: "{{ remote_agent_path | default('/opt/lambot/agent/remote_agent.py') }}"
+  tasks:
+    - name: Ensure agent directory exists
+      ansible.builtin.file:
+        path: "{{ remote_agent_path | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Place remote agent script (embed or copy from controller in prod)
+      ansible.builtin.copy:
+        dest: "{{ remote_agent_path }}"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env python3
+          # Managed by platform — см. репозиторий Platform/agent/remote_agent.py
+          import json, os, socket, time, urllib.request
+          INGEST = os.environ.get("LAMBOT_INGEST_URL","{{ ingest_url }}")
+          TOKEN = os.environ.get("LAMBOT_AGENT_TOKEN","{{ agent_token }}")
+          def push():
+            payload = {"hostname": socket.gethostname(), "ts": time.time(), "load": list(os.getloadavg())}
+            req = urllib.request.Request(INGEST, data=json.dumps(payload).encode(), headers={"Content-Type":"application/json","Authorization":"Bearer "+TOKEN}, method="POST")
+            urllib.request.urlopen(req, timeout=10)
+          while True:
+            try: push()
+            except Exception: pass
+            time.sleep(60)
+
+    - name: systemd unit for platform agent
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lambot-platform-agent.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Lambot platform metrics agent
+          After=network.target
+          [Service]
+          Type=simple
+          Environment=LAMBOT_INGEST_URL={{ ingest_url }}
+          Environment=LAMBOT_AGENT_TOKEN={{ agent_token }}
+          ExecStart=/usr/bin/python3 {{ remote_agent_path }}
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start agent
+      ansible.builtin.systemd:
+        name: lambot-platform-agent
+        enabled: true
+        state: started
+        daemon_reload: true

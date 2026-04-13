@@ -1,0 +1,42 @@
+id: provision-nexus-ck
+active: true
+name: Nexus 3 OSS (cloudkrafter.nexus)
+description: >
+  Sonatype Nexus 3 OSS через коллекцию cloudkrafter.nexus (роль nexus_oss): установка на хост,
+  без Docker. После — REST: hosted Maven/Docker и файл учётных данных для Lambot.
+  Память JVM по умолчанию снижена до ~768M для небольших VM (см. playbook).
+tags:
+  - nexus
+  - ansible-galaxy
+  - cloudkrafter
+vars_schema:
+  ssh_user:
+    type: string
+    required: true
+  server_host:
+    type: string
+    required: true
+  nexus_http_port:
+    type: integer
+    required: true
+  nexus_docker_port:
+    type: integer
+    required: true
+  nexus_url:
+    type: string
+    required: true
+  nexus_host:
+    type: string
+    required: true
+  lambot_project_id:
+    type: string
+    required: true
+  lambot_project_slug:
+    type: string
+    required: true
+  lambot_project_name:
+    type: string
+    required: true
+  lambot_service_password:
+    type: string
+    required: true

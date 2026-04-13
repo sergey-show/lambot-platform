@@ -1,0 +1,1307 @@
+import os
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+import httpx
+import jwt
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
+PROJECT_SERVICE_URL = os.getenv("PROJECT_SERVICE_URL", "http://project-service:8001")
+PLANNING_SERVICE_URL = os.getenv("PLANNING_SERVICE_URL", "http://planning-service:8002")
+ORCHESTRATOR_SERVICE_URL = os.getenv("ORCHESTRATOR_SERVICE_URL", "http://orchestrator-service:8003")
+CATALOG_SERVICE_URL = os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8004")
+ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://admin-service:8006")
+ANSIBLE_ORCHESTRATOR_SERVICE_URL = os.getenv(
+    "ANSIBLE_ORCHESTRATOR_SERVICE_URL", "http://ansible-orchestrator-service:8007"
+)
+ADAPTER_SERVICE_URL = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
+AGENT_BOOTSTRAP_SERVICE_URL = os.getenv(
+    "AGENT_BOOTSTRAP_SERVICE_URL", "http://agent-bootstrap-service:8011"
+)
+AGENT_BOOTSTRAP_INTERNAL_TOKEN = os.getenv(
+    "AGENT_BOOTSTRAP_INTERNAL_TOKEN", "internal-agent-bootstrap-dev-token"
+)
+SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox-service:8012")
+SANDBOX_SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev-token")
+AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
+INTERNAL_PROJECT_ADMIN_TOKEN = os.getenv(
+    "INTERNAL_PROJECT_ADMIN_TOKEN", "internal-project-admin-dev-token"
+)
+SUPERADMIN_TOKEN = os.getenv("SUPERADMIN_TOKEN", "superadmin-dev-token")
+USER_BEARER_TOKEN = os.getenv("USER_BEARER_TOKEN", "user-dev-token")
+JWT_SECRET = os.getenv("JWT_SECRET", "dev-jwt-secret")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+INTERNAL_LLM_SETTINGS_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
+
+ROLE_OWNER = "Owner"
+ROLE_ADMIN = "Admin"
+ROLE_VIEWER = "Viewer"
+ROLE_SUPERADMIN = "Superadmin"
+USER_ROLES = {ROLE_OWNER, ROLE_ADMIN, ROLE_VIEWER, ROLE_SUPERADMIN}
+
+app = FastAPI(title="api-gateway", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+REQUEST_COUNTER: dict[tuple[str, str, str], int] = defaultdict(int)
+REQUEST_LATENCY_SUM: dict[tuple[str, str], float] = defaultdict(float)
+REQUEST_LATENCY_COUNT: dict[tuple[str, str], int] = defaultdict(int)
+
+
+@dataclass
+class AuthContext:
+    subject: str
+    roles: set[str]
+    tenant_id: str | None = None
+    email: str | None = None
+
+
+def parse_bearer_token(authorization: str | None) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    return authorization.replace("Bearer ", "", 1).strip()
+
+
+def _append_activity_headers(request: Request, headers: dict[str, str]) -> None:
+    """Пробрасываем в adapter для журнала ClickHouse (email / sub из JWT)."""
+    try:
+        token = parse_bearer_token(request.headers.get("Authorization"))
+        ctx = decode_auth_context(token)
+        if ctx.email:
+            headers["X-Activity-Actor"] = ctx.email[:512]
+        if ctx.subject:
+            headers["X-Activity-Subject"] = ctx.subject[:128]
+    except Exception:
+        pass
+
+
+def decode_auth_context(token: str) -> AuthContext:
+    if token == SUPERADMIN_TOKEN:
+        return AuthContext(subject="local-superadmin", roles={ROLE_SUPERADMIN}, tenant_id=None, email=None)
+    if token == USER_BEARER_TOKEN:
+        return AuthContext(subject="local-owner", roles={ROLE_OWNER}, tenant_id=None, email=None)
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid JWT token: {exc}") from exc
+    subject = str(payload.get("sub") or "")
+    if not subject:
+        raise HTTPException(status_code=401, detail="JWT missing 'sub' claim")
+    roles_claim = payload.get("roles", [])
+    if isinstance(roles_claim, str):
+        roles = {roles_claim}
+    else:
+        roles = {str(role) for role in roles_claim}
+    tid = payload.get("tenant_id")
+    tenant_id = str(tid) if tid else None
+    em = payload.get("email")
+    email = str(em) if em else None
+    return AuthContext(subject=subject, roles=roles, tenant_id=tenant_id, email=email)
+
+
+def require_roles(request: Request, allowed_roles: set[str]) -> AuthContext:
+    token = parse_bearer_token(request.headers.get("Authorization"))
+    context = decode_auth_context(token)
+    if not (context.roles & allowed_roles):
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return context
+
+
+async def assert_project_tenant_access(ctx: AuthContext, project_id: str) -> None:
+    if ROLE_SUPERADMIN in ctx.roles:
+        return
+    if ctx.tenant_id is None:
+        return
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="Project service error")
+    data = r.json()
+    if str(data.get("tenant_id")) != ctx.tenant_id:
+        raise HTTPException(status_code=403, detail="Project not in your tenant")
+
+
+async def assert_project_mutable(ctx: AuthContext, project_id: str) -> None:
+    """Проект существует, не удалён; для пользователя — tenant совпадает; не в режиме приостановки."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="Project service error")
+    data = r.json()
+    if ROLE_SUPERADMIN not in ctx.roles and ctx.tenant_id is not None:
+        if str(data.get("tenant_id")) != ctx.tenant_id:
+            raise HTTPException(status_code=403, detail="Project not in your tenant")
+    if data.get("suspended"):
+        raise HTTPException(status_code=403, detail="Project suspended by administrator")
+
+
+def _admin_tracker_headers() -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN,
+    }
+
+
+def mark_request(method: str, path: str, status: int, elapsed_sec: float) -> None:
+    REQUEST_COUNTER[(method, path, str(status))] += 1
+    REQUEST_LATENCY_SUM[(method, path)] += elapsed_sec
+    REQUEST_LATENCY_COUNT[(method, path)] += 1
+
+
+def _response_from_httpx(response: httpx.Response) -> JSONResponse:
+    try:
+        content = response.json()
+    except Exception:
+        content = {"raw": response.text}
+    return JSONResponse(status_code=response.status_code, content=content)
+
+
+async def proxy_json(
+    method: str,
+    url: str,
+    request: Request,
+    extra_headers: dict | None = None,
+    timeout: float = 30.0,
+):
+    started = time.monotonic()
+    payload = None
+    if method in {"POST", "PUT", "PATCH"}:
+        payload = await request.json()
+    headers = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    if extra_headers:
+        headers.update(extra_headers)
+    if ADAPTER_SERVICE_URL in url:
+        _append_activity_headers(request, headers)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.request(method, url, json=payload, headers=headers)
+    mark_request(method, request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+async def downstream_health_metric() -> dict[str, int]:
+    services = {
+        "project_service": PROJECT_SERVICE_URL,
+        "planning_service": PLANNING_SERVICE_URL,
+        "orchestrator_service": ORCHESTRATOR_SERVICE_URL,
+        "catalog_service": CATALOG_SERVICE_URL,
+        "admin_service": ADMIN_SERVICE_URL,
+        "ansible_orchestrator_service": ANSIBLE_ORCHESTRATOR_SERVICE_URL,
+        "adapter_service": ADAPTER_SERVICE_URL,
+        "agent_bootstrap_service": AGENT_BOOTSTRAP_SERVICE_URL,
+        "sandbox_service": SANDBOX_SERVICE_URL,
+        "agent_graph_service": AGENT_GRAPH_SERVICE_URL,
+    }
+    out: dict[str, int] = {}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for name, url in services.items():
+            try:
+                resp = await client.get(f"{url}/health")
+                out[name] = 1 if resp.status_code == 200 else 0
+            except Exception:
+                out[name] = 0
+    return out
+
+
+def render_metrics_text(service_health: dict[str, int]) -> str:
+    lines: list[str] = []
+    lines.append("# HELP api_gateway_requests_total Total requests passing through gateway.")
+    lines.append("# TYPE api_gateway_requests_total counter")
+    for (method, path, status), value in sorted(REQUEST_COUNTER.items()):
+        lines.append(
+            f'api_gateway_requests_total{{method="{method}",path="{path}",status="{status}"}} {value}'
+        )
+    lines.append("# HELP api_gateway_request_latency_seconds_sum Total observed request latency.")
+    lines.append("# TYPE api_gateway_request_latency_seconds_sum counter")
+    for (method, path), value in sorted(REQUEST_LATENCY_SUM.items()):
+        lines.append(f'api_gateway_request_latency_seconds_sum{{method="{method}",path="{path}"}} {value}')
+    lines.append("# HELP api_gateway_request_latency_seconds_count Request latency sample count.")
+    lines.append("# TYPE api_gateway_request_latency_seconds_count counter")
+    for (method, path), value in sorted(REQUEST_LATENCY_COUNT.items()):
+        lines.append(f'api_gateway_request_latency_seconds_count{{method="{method}",path="{path}"}} {value}')
+    lines.append("# HELP api_gateway_service_health Downstream service health status.")
+    lines.append("# TYPE api_gateway_service_health gauge")
+    for service_name, value in sorted(service_health.items()):
+        lines.append(f'api_gateway_service_health{{service="{service_name}"}} {value}')
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/auth/me")
+def auth_me(request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    return {
+        "subject": ctx.subject,
+        "tenant_id": ctx.tenant_id,
+        "email": ctx.email,
+        "roles": sorted(ctx.roles),
+    }
+
+
+@app.post("/api/v1/auth/login")
+async def auth_login(request: Request):
+    payload = await request.json()
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        response = await client.post(f"{ADMIN_SERVICE_URL}/api/v1/auth/login", json=payload)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/admin/users")
+async def admin_users_list(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/users",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/users")
+async def admin_users_create(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/users",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    service_health = await downstream_health_metric()
+    payload = render_metrics_text(service_health)
+    return Response(content=payload, media_type="text/plain; version=0.0.4")
+
+
+@app.get("/api/v1/projects")
+async def list_projects_gateway(request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    if ROLE_SUPERADMIN in ctx.roles:
+        raise HTTPException(status_code=400, detail="Superadmin: use /api/v1/admin/projects")
+    if not ctx.tenant_id:
+        raise HTTPException(status_code=400, detail="JWT with tenant_id required for project list")
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{PROJECT_SERVICE_URL}/api/v1/projects",
+            params={"tenant_id": ctx.tenant_id},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects")
+async def create_project(request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    payload = await request.json()
+    if ROLE_SUPERADMIN not in ctx.roles and ctx.tenant_id:
+        payload = {**payload, "tenant_id": ctx.tenant_id}
+    started = time.monotonic()
+    headers = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(f"{PROJECT_SERVICE_URL}/api/v1/projects", json=payload, headers=headers)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}")
+async def get_project(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/status")
+async def get_project_status(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}/status")
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/planning/run")
+async def run_planning(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    payload = await request.json()
+    if ROLE_SUPERADMIN not in ctx.roles and ctx.tenant_id:
+        payload = {**payload, "tenant_id": ctx.tenant_id}
+    started = time.monotonic()
+    headers = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{PLANNING_SERVICE_URL}/api/v1/projects/{project_id}/planning/run",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/orchestrator/transition")
+async def transition(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json("POST", f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}/status/transition", request)
+
+
+@app.get("/api/v1/catalog")
+async def list_catalog(request: Request):
+    require_roles(request, USER_ROLES)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{CATALOG_SERVICE_URL}/api/v1/catalog")
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/admin/overview")
+async def admin_overview(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    extra = {"X-Superadmin-Token": SUPERADMIN_TOKEN}
+    return await proxy_json("GET", f"{ADMIN_SERVICE_URL}/api/v1/admin/overview", request, extra_headers=extra)
+
+
+@app.get("/api/v1/admin/projects")
+async def admin_projects(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    params = str(request.url.query)
+    suffix = f"?{params}" if params else ""
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/projects{suffix}",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.patch("/api/v1/admin/projects/{project_id}")
+async def admin_patch_project(project_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    payload = await request.json()
+    started = time.monotonic()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Internal-Project-Token": INTERNAL_PROJECT_ADMIN_TOKEN,
+    }
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.patch(
+            f"{PROJECT_SERVICE_URL}/api/v1/internal/projects/{project_id}",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("PATCH", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.delete("/api/v1/admin/projects/{project_id}")
+async def admin_delete_project(project_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    headers = {"X-Internal-Project-Token": INTERNAL_PROJECT_ADMIN_TOKEN}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.delete(
+            f"{PROJECT_SERVICE_URL}/api/v1/internal/projects/{project_id}",
+            headers=headers,
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/admin/services/health")
+async def admin_services_health(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/services/health",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/admin/llm-settings")
+async def admin_llm_settings_get(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/llm-settings",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.put("/api/v1/admin/llm-settings")
+async def admin_llm_settings_put(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PUT",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/llm-settings",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.get("/api/v1/admin/agent-settings")
+async def admin_agent_settings_get(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-settings",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.put("/api/v1/admin/agent-settings")
+async def admin_agent_settings_put(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PUT",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-settings",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.get("/api/v1/admin/agent-development-prompts")
+async def admin_agent_dev_prompts_get(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-development-prompts",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.put("/api/v1/admin/agent-development-prompts")
+async def admin_agent_dev_prompts_put(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PUT",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-development-prompts",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.get("/api/v1/admin/agent-graph-tools")
+async def admin_agent_graph_tools_get(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-graph-tools",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.put("/api/v1/admin/agent-graph-tools/builtins")
+async def admin_agent_graph_builtins_put(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PUT",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-graph-tools/builtins",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.post("/api/v1/admin/agent-graph-tools/http")
+async def admin_agent_graph_http_post(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-graph-tools/http",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.patch("/api/v1/admin/agent-graph-tools/http/{tool_id}")
+async def admin_agent_graph_http_patch(tool_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PATCH",
+        f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-graph-tools/http/{tool_id}",
+        request,
+        extra_headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+    )
+
+
+@app.delete("/api/v1/admin/agent-graph-tools/http/{tool_id}")
+async def admin_agent_graph_http_delete(tool_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/agent-graph-tools/http/{tool_id}",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+async def _proxy_get(url: str, request: Request) -> JSONResponse:
+    started = time.monotonic()
+    # Только query из входящего запроса. Если в url уже был «?…», не дублировать (?limit=1?limit=1 → 422 у FastAPI).
+    base = url.split("?", 1)[0]
+    q = request.url.query
+    url = f"{base}?{q}" if q else base
+    headers: dict[str, str] = {}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    if url.startswith(ADAPTER_SERVICE_URL):
+        _append_activity_headers(request, headers)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(url, headers=headers)
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/ansible/swarm/catalog")
+async def ansible_swarm_catalog(request: Request):
+    require_roles(request, USER_ROLES)
+    return await _proxy_get(f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/ansible/swarm/catalog", request)
+
+
+@app.get("/api/v1/ansible/swarm/templates/{template_id}")
+async def ansible_swarm_template_detail(template_id: str, request: Request):
+    require_roles(request, USER_ROLES)
+    return await _proxy_get(
+        f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/ansible/swarm/templates/{template_id}",
+        request,
+    )
+
+
+@app.post("/api/v1/ansible/swarm/render")
+async def ansible_swarm_render(request: Request):
+    require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    return await proxy_json("POST", f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/ansible/swarm/render", request)
+
+
+@app.post("/api/v1/ansible/swarm/prepare-bundle")
+async def ansible_swarm_prepare_bundle(request: Request):
+    require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST", f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/ansible/swarm/prepare-bundle", request
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/targets/test-connection")
+async def test_server_target_connection(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets/test-connection",
+        request,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/targets")
+async def create_server_target(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets",
+        request,
+        timeout=120.0,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/targets")
+async def list_server_targets(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets", request)
+
+
+@app.post("/api/v1/projects/{project_id}/targets/{target_id}/ssh-exec")
+async def ssh_exec_on_target_gateway(project_id: str, target_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets/{target_id}/ssh-exec",
+        request,
+        timeout=180.0,
+    )
+
+
+@app.delete("/api/v1/projects/{project_id}/targets/{target_id}")
+async def delete_server_target(project_id: str, target_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    headers: dict[str, str] = {}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    _append_activity_headers(request, headers)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets/{target_id}",
+            headers=headers,
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/targets/{target_id}/prepare")
+async def prepare_server_target(project_id: str, target_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets/{target_id}/prepare",
+        request,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/targets/{target_id}/confirm-setup")
+async def confirm_server_target(project_id: str, target_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    headers: dict[str, str] = {}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    _append_activity_headers(request, headers)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/targets/{target_id}/confirm-setup",
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/workspace")
+async def project_workspace(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/workspace", request)
+
+
+@app.get("/api/v1/projects/{project_id}/infra/service-assignments")
+async def infra_service_assignments_get(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/service-assignments", request)
+
+
+@app.put("/api/v1/projects/{project_id}/infra/service-assignments")
+async def infra_service_assignments_put(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "PUT",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/service-assignments",
+        request,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/infra/resources")
+async def infra_resources_list(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/resources", request)
+
+
+@app.post("/api/v1/projects/{project_id}/infra/resources")
+async def infra_resources_create(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/resources",
+        request,
+    )
+
+
+@app.patch("/api/v1/projects/{project_id}/infra/resources/{resource_id}")
+async def infra_resources_patch(project_id: str, resource_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "PATCH",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/resources/{resource_id}",
+        request,
+    )
+
+
+@app.delete("/api/v1/projects/{project_id}/infra/resources/{resource_id}")
+async def infra_resources_delete(project_id: str, resource_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    headers: dict[str, str] = {}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    _append_activity_headers(request, headers)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/resources/{resource_id}",
+            headers=headers,
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/infra/prepare-stack")
+async def infra_prepare_stack(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/prepare-stack",
+        request,
+        timeout=180.0,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/infra/run-stack")
+async def infra_run_stack(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/run-stack",
+        request,
+        timeout=3900.0,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/infra/run-stack-stream")
+async def infra_run_stack_stream(project_id: str, request: Request):
+    """Прокси NDJSON-потока логов Ansible (долгий запрос)."""
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    payload = await request.json()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    _append_activity_headers(request, headers)
+    url = f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/run-stack-stream"
+    started = time.monotonic()
+
+    client = httpx.AsyncClient(timeout=3900.0)
+    req = client.build_request("POST", url, json=payload, headers=headers)
+    response = await client.send(req, stream=True)
+    if response.status_code != 200:
+        body = await response.aread()
+        await response.aclose()
+        await client.aclose()
+        mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+
+    async def forward():
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+            mark_request("POST", request.url.path, "200", time.monotonic() - started)
+
+    return StreamingResponse(forward(), media_type="application/x-ndjson")
+
+
+@app.post("/api/v1/projects/{project_id}/infra/k8s-install-3node")
+async def infra_k8s_install_3node(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/k8s-install-3node",
+        request,
+        timeout=3900.0,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/infra/k8s-install-3node-stream")
+async def infra_k8s_install_3node_stream(project_id: str, request: Request):
+    """Прокси NDJSON: kubeadm на три SSH-таргета (долгий запрос)."""
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    payload = await request.json()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    _append_activity_headers(request, headers)
+    url = f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/k8s-install-3node-stream"
+    started = time.monotonic()
+
+    client = httpx.AsyncClient(timeout=3900.0)
+    req = client.build_request("POST", url, json=payload, headers=headers)
+    response = await client.send(req, stream=True)
+    if response.status_code != 200:
+        body = await response.aread()
+        await response.aclose()
+        await client.aclose()
+        mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+
+    async def forward():
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+            mark_request("POST", request.url.path, "200", time.monotonic() - started)
+
+    return StreamingResponse(forward(), media_type="application/x-ndjson")
+
+
+@app.post("/api/v1/projects/{project_id}/agent-demo/run")
+async def agent_demo_run(project_id: str, request: Request):
+    """Мультиагентное демо: LLM-нарратив + создание репозитория и CI в GitLab (нужен PAT в ресурсах проекта)."""
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/agent-demo/run",
+        request,
+        timeout=300.0,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/agents/bootstrap-planning")
+async def agents_bootstrap_planning(project_id: str, request: Request):
+    """Повторный запуск planning через agent-bootstrap (как при создании проекта). Опционально {\"force\": true}."""
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            payload = {}
+    except Exception:
+        payload = {}
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Internal-Token": AGENT_BOOTSTRAP_INTERNAL_TOKEN,
+    }
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=130.0) as client:
+        response = await client.post(
+            f"{AGENT_BOOTSTRAP_SERVICE_URL}/api/v1/internal/bootstrap/planning/{project_id}",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/agent-graph/invoke")
+async def agent_graph_invoke(project_id: str, request: Request):
+    """LangGraph ReAct-агент с tool calling (инструменты платформы + sandbox)."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        response = await client.post(
+            f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/invoke",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/agent-orchestrate/start")
+async def agent_orchestrate_start(project_id: str, request: Request):
+    """Фоновый запуск оркестрации ролей (PM → Frontend); вернуть run_id для опроса статуса."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/orchestrate/start",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}")
+async def agent_orchestrate_run_status(project_id: str, run_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    auth = request.headers.get("Authorization")
+    h: dict[str, str] = {}
+    if auth:
+        h["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/orchestrate/runs/{run_id}",
+            headers=h,
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/ai-team/state")
+async def ai_team_state(project_id: str, request: Request):
+    """Последний прогон AI-команды: шаги, архитектура, итог (Postgres через agent-graph)."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/ai-team/state")
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/tracker/items")
+async def tracker_items_list(project_id: str, request: Request):
+    """Трекер задач агентов (эпики/задачи) в проекте."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    kind = request.query_params.get("kind")
+    params: dict[str, str] = {}
+    if kind:
+        params["kind"] = kind
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items",
+            headers=_admin_tracker_headers(),
+            params=params or None,
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/tracker/items")
+async def tracker_items_create(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items",
+            json=payload,
+            headers=_admin_tracker_headers(),
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/tracker/items/{item_id}")
+async def tracker_item_get(project_id: str, item_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items/{item_id}",
+            headers=_admin_tracker_headers(),
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.patch("/api/v1/projects/{project_id}/tracker/items/{item_id}")
+async def tracker_item_patch(project_id: str, item_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.patch(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items/{item_id}",
+            json=payload,
+            headers=_admin_tracker_headers(),
+        )
+    mark_request("PATCH", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/tracker/items/{item_id}/events")
+async def tracker_item_events(project_id: str, item_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    limit = request.query_params.get("limit", "100")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items/{item_id}/events",
+            headers=_admin_tracker_headers(),
+            params={"limit": limit},
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/tracker/items/{item_id}/dispatch")
+async def tracker_item_dispatch(project_id: str, item_id: str, request: Request):
+    """Поставить задачу в очередь агента (Kafka → agent_worker)."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{ADMIN_SERVICE_URL}/api/v1/internal/projects/{project_id}/tracker/items/{item_id}/dispatch",
+            headers=_admin_tracker_headers(),
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/sandbox/python")
+async def sandbox_python(project_id: str, request: Request):
+    """Песочница Python: выполнение кода в изолированном временном каталоге (внутренний сервис)."""
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "X-Sandbox-Token": SANDBOX_SERVICE_TOKEN,
+    }
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(
+            f"{SANDBOX_SERVICE_URL}/api/v1/sandbox/python",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/development-context")
+async def development_context(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/development-context", request)
+
+
+@app.get("/api/v1/projects/{project_id}/k8s/clusters")
+async def k8s_clusters_list(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/k8s/clusters", request)
+
+
+@app.get("/api/v1/projects/{project_id}/k8s/operations")
+async def k8s_operations_list(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/k8s/operations", request)
+
+
+@app.post("/api/v1/projects/{project_id}/k8s/query")
+async def k8s_query_gateway(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/k8s/query",
+        request,
+        timeout=180.0,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/activity-logs")
+async def project_activity_logs(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    # Только базовый URL: _proxy_get уже добавляет request.url.query (иначе был бы дубликат ?limit=… → 422).
+    return await _proxy_get(
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/activity-logs",
+        request,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/agent/metrics")
+async def list_agent_metrics(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/agent/metrics", request)
+
+
+@app.post("/api/v1/agent/ingest")
+async def agent_ingest_public(request: Request):
+    """Публичная точка для агента на сервере (авторизация — Bearer agent token)."""
+    return await proxy_json("POST", f"{ADAPTER_SERVICE_URL}/api/v1/agent/ingest", request)
+
+
+_ANSIBLE_ADMIN = {"X-Superadmin-Token": SUPERADMIN_TOKEN}
+
+
+@app.get("/api/v1/admin/ansible/swarm/templates")
+async def admin_ansible_templates_list(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(
+            f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates",
+            headers=_ANSIBLE_ADMIN,
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/ansible/swarm/templates")
+async def admin_ansible_templates_create(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates",
+        request,
+        extra_headers=_ANSIBLE_ADMIN,
+    )
+
+
+@app.get("/api/v1/admin/ansible/swarm/templates/{template_id}")
+async def admin_ansible_template_get(template_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(
+            f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates/{template_id}",
+            headers=_ANSIBLE_ADMIN,
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.put("/api/v1/admin/ansible/swarm/templates/{template_id}")
+async def admin_ansible_template_put(template_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PUT",
+        f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates/{template_id}",
+        request,
+        extra_headers=_ANSIBLE_ADMIN,
+    )
+
+
+@app.delete("/api/v1/admin/ansible/swarm/templates/{template_id}")
+async def admin_ansible_template_delete(template_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates/{template_id}",
+            headers=_ANSIBLE_ADMIN,
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.patch("/api/v1/admin/ansible/swarm/templates/{template_id}/active")
+async def admin_ansible_template_active(template_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PATCH",
+        f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates/{template_id}/active",
+        request,
+        extra_headers=_ANSIBLE_ADMIN,
+    )
+
+
+@app.post("/api/v1/admin/ansible/swarm/templates/{template_id}/preview")
+async def admin_ansible_template_preview(template_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{ANSIBLE_ORCHESTRATOR_SERVICE_URL}/api/v1/admin/ansible/swarm/templates/{template_id}/preview",
+        request,
+        extra_headers=_ANSIBLE_ADMIN,
+    )

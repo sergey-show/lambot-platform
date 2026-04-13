@@ -1,0 +1,119 @@
+---
+# Swarm: GitLab CE в Docker (Debian/Ubuntu). Переменные подставляет оркестратор из API.
+- name: Provision GitLab CE via Docker Compose
+  hosts: target
+  become: true
+  vars:
+    ssh_user: "{{ ssh_user }}"
+    gitlab_http_port: {{ gitlab_http_port | int }}
+    gitlab_external_url: "{{ gitlab_external_url }}"
+    server_host: "{{ server_host }}"
+    lambot_project_id: "{{ lambot_project_id }}"
+    lambot_project_slug: "{{ lambot_project_slug }}"
+    lambot_project_name: "{{ lambot_project_name | replace('\"', '\\\"') }}"
+    lambot_service_password_b64: "{{ lambot_service_password_b64 }}"
+  tasks:
+    # Docker и Compose: шаблон prepare-docker-host (запускается adapter до этого плейбука).
+
+    - name: Infra directory for GitLab
+      ansible.builtin.file:
+        path: /opt/lambot-infra/gitlab
+        state: directory
+        mode: "0755"
+
+    - name: GitLab docker-compose file
+      ansible.builtin.copy:
+        dest: /opt/lambot-infra/gitlab/docker-compose.yml
+        mode: "0644"
+        content: |
+          services:
+            web:
+              image: gitlab/gitlab-ce:latest
+              container_name: lambot-gitlab
+              restart: unless-stopped
+              hostname: gitlab
+              environment:
+                GITLAB_OMNIBUS_CONFIG: |
+                  external_url '{{ gitlab_external_url }}'
+                  nginx['listen_port'] = 80
+              ports:
+                - "{{ gitlab_http_port }}:80"
+              volumes:
+                - gitlab-config:/etc/gitlab
+                - gitlab-logs:/var/log/gitlab
+                - gitlab-data:/var/opt/gitlab
+          volumes:
+            gitlab-config:
+            gitlab-logs:
+            gitlab-data:
+
+    - name: Start GitLab stack
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: /opt/lambot-infra/gitlab
+      environment:
+        COMPOSE_HTTP_TIMEOUT: "300"
+
+    - name: Wait for GitLab API
+      ansible.builtin.uri:
+        url: "{{ gitlab_external_url }}/api/v4/version"
+        method: GET
+        status_code: [200]
+      register: _gl_ver
+      until: _gl_ver.status == 200
+      retries: 90
+      delay: 10
+
+    - name: Lambot credentials directory on host
+      ansible.builtin.file:
+        path: "/opt/lambot-infra/lambot/{{ lambot_project_id }}"
+        state: directory
+        mode: "0755"
+
+    - name: GitLab bootstrap Ruby script on host
+      ansible.builtin.copy:
+        dest: /tmp/lambot_gitlab_bootstrap.rb
+        mode: "0600"
+        content: |
+          require 'json'
+          require 'base64'
+          slug = '{{ lambot_project_slug }}'
+          name = {{ lambot_project_name | to_json }}
+          password = Base64.strict_decode64('{{ lambot_service_password_b64 }}')
+          hex = '{{ lambot_project_id | replace("-", "") }}'
+          username = 'lambot_u' + hex[0,12]
+          email = username + '@lambot.local'
+          gl_url = '{{ gitlab_external_url }}'
+          group = Group.find_by_path(slug)
+          group ||= Group.create!(name: name, path: slug, visibility_level: Gitlab::VisibilityLevel::PRIVATE)
+          u = User.find_by_username(username)
+          if u.nil?
+            u = User.create!(username: username, email: email, name: 'Lambot Agent', password: password, password_confirmation: password, skip_confirmation: true)
+          else
+            u.password = password
+            u.password_confirmation = password
+            u.save!
+          end
+          group.members.find_by(user_id: u.id)&.destroy
+          group.add_user(u, Gitlab::Access::MAINTAINER)
+          u.personal_access_tokens.where(name: 'lambot-agent').find_each(&:destroy)
+          scopes = %w[api read_api write_repository read_repository]
+          t = u.personal_access_tokens.create!(name: 'lambot-agent', scopes: scopes, expires_at: 365.days.from_now)
+          token_val = nil
+          token_val = t.token if t.respond_to?(:token) && t.token.present?
+          token_val = t.plaintext_token if token_val.blank? && t.respond_to?(:plaintext_token)
+          out = { group_path: group.full_path, group_id: group.id, username: username, password: password, gitlab_url: gl_url, token: token_val }
+          puts out.to_json
+
+    - name: Run GitLab rails bootstrap
+      ansible.builtin.shell: docker exec -i lambot-gitlab /opt/gitlab/bin/gitlab-rails runner < /tmp/lambot_gitlab_bootstrap.rb
+      register: gitlab_rails_out
+      changed_when: true
+
+    - name: Save GitLab credentials JSON on host
+      ansible.builtin.copy:
+        dest: "/opt/lambot-infra/lambot/{{ lambot_project_id }}/gitlab-credentials.json"
+        mode: "0600"
+        content: |
+          {% raw %}{{ gitlab_rails_out.stdout | trim }}
+          {% endraw %}

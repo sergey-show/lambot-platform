@@ -1,0 +1,81 @@
+---
+# Nexus 3 OSS: cloudkrafter.nexus.nexus_oss + hosted-репозитории (как в docker-шаблоне).
+- name: Nexus OSS via cloudkrafter.nexus
+  hosts: target
+  become: true
+  collections:
+    - cloudkrafter.nexus
+  vars:
+    ssh_user: "{{ ssh_user }}"
+    nexus_http_port: {{ nexus_http_port | int }}
+    nexus_docker_port: {{ nexus_docker_port | int }}
+    nexus_url: "{{ nexus_url }}"
+    nexus_host: "{{ nexus_host }}"
+    lambot_project_id: "{{ lambot_project_id }}"
+    lambot_project_slug: "{{ lambot_project_slug }}"
+    lambot_service_password: "{{ lambot_service_password }}"
+    nexus_accept_community_eula: true
+    nexus_admin_password: "{{ lambot_service_password }}"
+    nexus_default_port: {{ nexus_http_port | int }}
+    nexus_docker_hosted_port: {{ nexus_docker_port | int }}
+    nexus_min_heap_size: 768M
+    nexus_max_heap_size: 768M
+    nexus_max_direct_memory: 512M
+    nexus_public_hostname: "{{ nexus_host }}"
+    nexus_public_scheme: http
+    nexus_application_host: "0.0.0.0"
+    nexus_api_hostname: localhost
+    nexus_api_scheme: http
+    nexus_api_port: {{ nexus_http_port | int }}
+  roles:
+    # При объявлении collections выше — короткое имя роли из коллекции (не FQCN в roles:).
+    - role: nexus_oss
+  post_tasks:
+    - name: Wait for Nexus status API
+      ansible.builtin.uri:
+        url: "{{ nexus_url }}/service/rest/v1/status"
+        method: GET
+        status_code: [200]
+        return_content: true
+      register: _nx_st
+      until: _nx_st.status == 200 and (_nx_st.json is defined) and (_nx_st.json.get('writable', false) == true)
+      retries: 60
+      delay: 5
+
+    - name: Lambot credentials directory on host
+      ansible.builtin.file:
+        path: "/opt/lambot-infra/lambot/{{ lambot_project_id }}"
+        state: directory
+        mode: "0755"
+
+    - name: Configure Nexus hosted repos (REST)
+      ansible.builtin.shell: |
+        set -e
+        NEXUS="{{ nexus_url }}"
+        SLUG="{{ lambot_project_slug }}"
+        M_NAME="lambot-maven-${SLUG}"
+        D_NAME="lambot-docker-${SLUG}"
+        export LAMBOT_MAVEN_REPO="$M_NAME"
+        export LAMBOT_DOCKER_REPO="$D_NAME"
+        curl -sf -u "admin:${LAMBOT_NX_PASS}" -X POST "${NEXUS}/service/rest/v1/repositories/maven/hosted" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"${M_NAME}\",\"online\":true,\"storage\":{\"blobStoreName\":\"default\",\"strictContentTypeValidation\":true,\"writePolicy\":\"allow_once\"},\"maven\":{\"versionPolicy\":\"RELEASE\",\"layoutPolicy\":\"STRICT\"}}" || true
+        curl -sf -u "admin:${LAMBOT_NX_PASS}" -X POST "${NEXUS}/service/rest/v1/repositories/docker/hosted" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"${D_NAME}\",\"online\":true,\"storage\":{\"blobStoreName\":\"default\",\"strictContentTypeValidation\":true,\"writePolicy\":\"allow_once\"},\"docker\":{\"v1Enabled\":false,\"forceBasicAuth\":true,\"httpPort\":{{ nexus_docker_port | int }}}}" || true
+        python3 -c "import json,os; print(json.dumps({'nexus_url':os.environ['LAMBOT_NX_URL'],'nexus_host':os.environ['LAMBOT_NX_HOST'],'maven_repository':os.environ['LAMBOT_MAVEN_REPO'],'docker_repository':os.environ['LAMBOT_DOCKER_REPO'],'docker_registry_host':os.environ['LAMBOT_NX_HOST'],'docker_registry_port':int(os.environ['LAMBOT_DOCKER_PORT']),'admin_password':os.environ['LAMBOT_NX_PASS']}))"
+      environment:
+        LAMBOT_NX_PASS: "{{ lambot_service_password }}"
+        LAMBOT_NX_URL: "{{ nexus_url }}"
+        LAMBOT_NX_HOST: "{{ nexus_host }}"
+        LAMBOT_DOCKER_PORT: "{{ nexus_docker_port | int }}"
+      register: nexus_cred_gen
+      changed_when: true
+
+    - name: Save Nexus credentials JSON on host
+      ansible.builtin.copy:
+        dest: "/opt/lambot-infra/lambot/{{ lambot_project_id }}/nexus-credentials.json"
+        mode: "0600"
+        content: |
+          {% raw %}{{ nexus_cred_gen.stdout | trim }}
+          {% endraw %}

@@ -1,0 +1,34 @@
+id: provision-gitlab
+active: true
+name: Provision GitLab CE (Docker)
+description: >
+  Устанавливает Docker (Debian), поднимает GitLab CE через docker compose на выбранном хосте.
+tags:
+  - gitlab
+  - docker
+  - infra
+vars_schema:
+  ssh_user:
+    type: string
+    required: true
+  server_host:
+    type: string
+    required: true
+  gitlab_http_port:
+    type: integer
+    required: true
+  gitlab_external_url:
+    type: string
+    required: true
+  lambot_project_id:
+    type: string
+    required: true
+  lambot_project_slug:
+    type: string
+    required: true
+  lambot_project_name:
+    type: string
+    required: true
+  lambot_service_password_b64:
+    type: string
+    required: true

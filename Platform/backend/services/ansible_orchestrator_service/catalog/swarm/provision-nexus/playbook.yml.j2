@@ -1,0 +1,102 @@
+---
+- name: Provision Nexus Repository via Docker Compose
+  hosts: target
+  become: true
+  vars:
+    ssh_user: "{{ ssh_user }}"
+    nexus_http_port: {{ nexus_http_port | int }}
+    nexus_docker_port: {{ nexus_docker_port | int }}
+    nexus_url: "{{ nexus_url }}"
+    nexus_host: "{{ nexus_host }}"
+    server_host: "{{ server_host }}"
+    lambot_project_id: "{{ lambot_project_id }}"
+    lambot_project_slug: "{{ lambot_project_slug }}"
+    lambot_service_password: "{{ lambot_service_password }}"
+  tasks:
+    # Docker и Compose: шаблон prepare-docker-host (запускается adapter до этого плейбука).
+
+    - name: Infra directory for Nexus
+      ansible.builtin.file:
+        path: /opt/lambot-infra/nexus
+        state: directory
+        mode: "0755"
+
+    - name: Nexus docker-compose file
+      ansible.builtin.copy:
+        dest: /opt/lambot-infra/nexus/docker-compose.yml
+        mode: "0644"
+        content: |
+          services:
+            nexus:
+              image: sonatype/nexus3:latest
+              container_name: lambot-nexus
+              restart: unless-stopped
+              ports:
+                - "{{ nexus_http_port }}:8081"
+                - "{{ nexus_docker_port }}:8082"
+              volumes:
+                - nexus-data:/nexus-data
+          volumes:
+            nexus-data:
+
+    - name: Start Nexus stack
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: /opt/lambot-infra/nexus
+
+    - name: Wait for Nexus status API
+      ansible.builtin.uri:
+        url: "{{ nexus_url }}/service/rest/v1/status"
+        method: GET
+        status_code: [200]
+        return_content: true
+      register: _nx_st
+      until: _nx_st.status == 200 and (_nx_st.json is defined) and (_nx_st.json.get('writable', false) == true)
+      retries: 60
+      delay: 5
+
+    - name: Lambot credentials directory on host
+      ansible.builtin.file:
+        path: "/opt/lambot-infra/lambot/{{ lambot_project_id }}"
+        state: directory
+        mode: "0755"
+
+    - name: Configure Nexus admin password and repositories
+      ansible.builtin.shell: |
+        set -e
+        NEXUS="{{ nexus_url }}"
+        SLUG="{{ lambot_project_slug }}"
+        INIT=$(docker exec lambot-nexus test -f /nexus-data/admin.password && docker exec lambot-nexus cat /nexus-data/admin.password 2>/dev/null || true)
+        if [ -n "$INIT" ]; then
+          export NX_INIT="$INIT"
+          curl -sf -u "admin:${INIT}" -X PUT "${NEXUS}/service/rest/v1/security/users/admin/change-password" \
+            -H 'Content-Type: application/json' \
+            -d "$(python3 -c 'import json,os; print(json.dumps({"userId":"admin","oldPassword":os.environ["NX_INIT"],"newPassword":os.environ["LAMBOT_NX_PASS"]}))')" || true
+          unset NX_INIT
+        fi
+        M_NAME="lambot-maven-${SLUG}"
+        D_NAME="lambot-docker-${SLUG}"
+        export LAMBOT_MAVEN_REPO="$M_NAME"
+        export LAMBOT_DOCKER_REPO="$D_NAME"
+        curl -sf -u "admin:${LAMBOT_NX_PASS}" -X POST "${NEXUS}/service/rest/v1/repositories/maven/hosted" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"${M_NAME}\",\"online\":true,\"storage\":{\"blobStoreName\":\"default\",\"strictContentTypeValidation\":true,\"writePolicy\":\"allow_once\"},\"maven\":{\"versionPolicy\":\"RELEASE\",\"layoutPolicy\":\"STRICT\"}}" || true
+        curl -sf -u "admin:${LAMBOT_NX_PASS}" -X POST "${NEXUS}/service/rest/v1/repositories/docker/hosted" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"${D_NAME}\",\"online\":true,\"storage\":{\"blobStoreName\":\"default\",\"strictContentTypeValidation\":true,\"writePolicy\":\"allow_once\"},\"docker\":{\"v1Enabled\":false,\"forceBasicAuth\":true,\"httpPort\":8082}}" || true
+        python3 -c "import json,os; print(json.dumps({'nexus_url':os.environ['LAMBOT_NX_URL'],'nexus_host':os.environ['LAMBOT_NX_HOST'],'maven_repository':os.environ['LAMBOT_MAVEN_REPO'],'docker_repository':os.environ['LAMBOT_DOCKER_REPO'],'docker_registry_host':os.environ['LAMBOT_NX_HOST'],'docker_registry_port':int(os.environ['LAMBOT_DOCKER_PORT']),'admin_password':os.environ['LAMBOT_NX_PASS']}))"
+      environment:
+        LAMBOT_NX_PASS: "{{ lambot_service_password }}"
+        LAMBOT_NX_URL: "{{ nexus_url }}"
+        LAMBOT_NX_HOST: "{{ nexus_host }}"
+        LAMBOT_DOCKER_PORT: "{{ nexus_docker_port | int }}"
+      register: nexus_cred_gen
+      changed_when: true
+
+    - name: Save Nexus credentials JSON on host
+      ansible.builtin.copy:
+        dest: "/opt/lambot-infra/lambot/{{ lambot_project_id }}/nexus-credentials.json"
+        mode: "0600"
+        content: |
+          {% raw %}{{ nexus_cred_gen.stdout | trim }}
+          {% endraw %}

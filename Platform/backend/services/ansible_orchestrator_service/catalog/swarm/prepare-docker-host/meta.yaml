@@ -1,0 +1,13 @@
+id: prepare-docker-host
+active: true
+name: Prepare host for Docker workloads
+description: >
+  Базовая подготовка: docker.io, Docker Compose v2 (бинарь в cli-plugins с GitHub), сервис docker, пользователь в группе docker.
+  Adapter вызывает этот шаблон автоматически перед provision-gitlab и provision-nexus на том же target.
+tags:
+  - docker
+  - infra
+vars_schema:
+  ssh_user:
+    type: string
+    required: true

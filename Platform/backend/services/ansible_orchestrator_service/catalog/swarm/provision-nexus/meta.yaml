@@ -1,0 +1,38 @@
+id: provision-nexus
+active: true
+name: Provision Sonatype Nexus (Docker)
+description: >
+  Поднимает Nexus через docker compose (UI + Docker Registry на портах хоста), задаёт пароль admin,
+  создаёт hosted Maven и Docker репозитории под slug проекта, пишет nexus-credentials.json для adapter.
+tags:
+  - nexus
+  - docker
+  - infra
+vars_schema:
+  ssh_user:
+    type: string
+    required: true
+  server_host:
+    type: string
+    required: true
+  nexus_http_port:
+    type: integer
+    required: true
+  nexus_docker_port:
+    type: integer
+    required: true
+  nexus_url:
+    type: string
+    required: true
+  nexus_host:
+    type: string
+    required: true
+  lambot_project_id:
+    type: string
+    required: true
+  lambot_project_slug:
+    type: string
+    required: true
+  lambot_service_password:
+    type: string
+    required: true

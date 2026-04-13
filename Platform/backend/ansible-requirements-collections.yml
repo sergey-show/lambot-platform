@@ -1,0 +1,4 @@
+---
+collections:
+  - name: cloudkrafter.nexus
+    version: "1.23.6"

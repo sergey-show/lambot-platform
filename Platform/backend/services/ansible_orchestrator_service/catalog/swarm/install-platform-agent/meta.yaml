@@ -1,0 +1,23 @@
+id: install-platform-agent
+active: true
+name: Install platform metrics agent
+description: >
+  Отработанный шаблон: ставит Python-агент и systemd unit, шлёт метрики на ingest URL.
+  Агент ИИ подставляет только переменные (host, token, URLs), а не пишет playbook с нуля.
+tags:
+  - agent
+  - bootstrap
+  - monitoring
+vars_schema:
+  ssh_user:
+    type: string
+    required: true
+  ingest_url:
+    type: string
+    required: true
+  agent_token:
+    type: string
+    required: true
+  remote_agent_path:
+    type: string
+    default: /opt/lambot/agent/remote_agent.py

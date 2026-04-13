@@ -1,0 +1,171 @@
+{% raw %}
+---
+# Три ноды: группа masters (один хост k8s-master), workers (k8s-worker1, k8s-worker2).
+# pod_network_cidr — в inventory all.vars (по умолчанию 10.244.0.0/16).
+- name: Проверка ОС
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Только Debian/Ubuntu
+      ansible.builtin.fail:
+        msg: "Поддерживаются только Debian/Ubuntu (apt). См. документацию Kubernetes."
+      when: ansible_os_family != "Debian"
+
+- name: Базовая подготовка узлов
+  hosts: all
+  become: true
+  tasks:
+    - name: Пакеты для apt и сети
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Отключить swap
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Убрать swap из fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+
+    - name: Модули ядра (файл)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          br_netfilter
+          overlay
+        mode: "0644"
+
+    - name: Загрузить br_netfilter
+      ansible.builtin.command: modprobe br_netfilter
+      changed_when: false
+      failed_when: false
+
+    - name: Загрузить overlay
+      ansible.builtin.command: modprobe overlay
+      changed_when: false
+      failed_when: false
+
+    - name: Sysctl для Kubernetes
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+        mode: "0644"
+
+    - name: Применить sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Установить containerd
+      ansible.builtin.apt:
+        name: containerd
+        state: present
+
+    - name: Конфиг containerd по умолчанию
+      ansible.builtin.shell: containerd config default | tee /etc/containerd/config.toml
+      args:
+        executable: /bin/bash
+
+    - name: Systemd cgroup для containerd
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: "SystemdCgroup = false"
+        replace: "SystemdCgroup = true"
+
+    - name: Перезапуск containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        enabled: true
+
+    - name: Каталог для ключа apt Kubernetes
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Ключ репозитория Kubernetes
+      ansible.builtin.get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+        dest: /tmp/kubernetes-apt-key.gpg
+        mode: "0644"
+
+    - name: Dearmor ключа Kubernetes
+      ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-apt-key.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Репозиторий Kubernetes
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        filename: kubernetes
+        state: present
+
+    - name: Установить kubelet kubeadm kubectl
+      ansible.builtin.apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: true
+
+    - name: Зафиксировать версии пакетов
+      ansible.builtin.command: apt-mark hold kubelet kubeadm kubectl
+      changed_when: false
+
+    - name: Включить kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+
+- name: Инициализация control plane
+  hosts: masters
+  become: true
+  tasks:
+    - name: kubeadm init
+      ansible.builtin.command: "kubeadm init --pod-network-cidr={{ pod_network_cidr | default('10.244.0.0/16') }}"
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+- name: Сеть pod (Flannel)
+  hosts: masters
+  become: true
+  run_once: true
+  tasks:
+    - name: Установить Flannel
+      ansible.builtin.command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: flannel_apply
+      changed_when: flannel_apply.rc == 0
+
+- name: Команда присоединения для workers
+  hosts: masters
+  become: true
+  tasks:
+    - name: Создать join-команду
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+- name: Присоединить workers
+  hosts: workers
+  become: true
+  tasks:
+    - name: kubeadm join
+      ansible.builtin.command: "{{ hostvars['k8s-master']['join_cmd']['stdout'] }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+{% endraw %}
