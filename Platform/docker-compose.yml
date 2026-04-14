@@ -334,6 +334,20 @@ services:
     environment:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
 
+  # Playwright browser tool для агентов (интеракции с UI/web).
+  browser-tool-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.browser_tool_service.main:app --host 0.0.0.0 --port 8014"
+    ports:
+      - "8014:8014"
+    environment:
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      BROWSER_ALLOWED_HOSTS: ${BROWSER_ALLOWED_HOSTS:-frontend,api-gateway,localhost,127.0.0.1}
+      BROWSER_ALLOW_PUBLIC_WEB: ${BROWSER_ALLOW_PUBLIC_WEB:-0}
+      BROWSER_IDLE_TTL_SEC: ${BROWSER_IDLE_TTL_SEC:-900}
+
   # LangGraph ReAct + tool calling (контекст проекта, sandbox, …)
   agent-graph-service:
     build:
@@ -348,6 +362,7 @@ services:
       PLANNING_SERVICE_URL: http://planning-service:8002
       SANDBOX_SERVICE_URL: http://sandbox-service:8012
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
+      API_GATEWAY_URL: http://api-gateway:8000
       ADMIN_SERVICE_URL: http://admin-service:8006
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -397,6 +412,7 @@ services:
       AGENT_BOOTSTRAP_SERVICE_URL: http://agent-bootstrap-service:8011
       SANDBOX_SERVICE_URL: http://sandbox-service:8012
       AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
+      BROWSER_TOOL_SERVICE_URL: http://browser-tool-service:8014
       API_GATEWAY_URL: http://api-gateway:8000
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
@@ -432,6 +448,7 @@ services:
       SANDBOX_SERVICE_URL: http://sandbox-service:8012
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
       AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
+      BROWSER_TOOL_SERVICE_URL: http://browser-tool-service:8014
     depends_on:
       project-service:
         condition: service_started
@@ -450,6 +467,8 @@ services:
       agent-bootstrap-service:
         condition: service_started
       sandbox-service:
+        condition: service_started
+      browser-tool-service:
         condition: service_started
       agent-graph-service:
         condition: service_started

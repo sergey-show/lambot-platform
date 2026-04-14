@@ -912,6 +912,10 @@ table.lp-table {
   padding: 18px;
 }
 
+.lp-modal-backdrop[hidden] {
+  display: none !important;
+}
+
 .lp-modal {
   width: min(860px, 100%);
   max-height: calc(100vh - 36px);

@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-client 
 
 RUN pip install --no-cache-dir -e .
 
+# Chromium для browser-tool-service (Playwright).
+RUN python -m playwright install --with-deps chromium
+
 # Роли/коллекции Ansible Galaxy для prepare-stack (robertdebock.gitlab, cloudkrafter.nexus).
 # ANSIBLE_CONFIG до RUN — чтобы ansible-galaxy читал [galaxy] timeout из ansible.cfg.
 # Повторы: таймауты/обрывы при скачивании артефактов с galaxy.ansible.com во время docker build.

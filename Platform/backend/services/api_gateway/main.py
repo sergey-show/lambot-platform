@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ import jwt
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from urllib.parse import urlencode
 
 PROJECT_SERVICE_URL = os.getenv("PROJECT_SERVICE_URL", "http://project-service:8001")
 PLANNING_SERVICE_URL = os.getenv("PLANNING_SERVICE_URL", "http://planning-service:8002")
@@ -26,6 +28,7 @@ AGENT_BOOTSTRAP_INTERNAL_TOKEN = os.getenv(
 SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox-service:8012")
 SANDBOX_SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev-token")
 AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
+BROWSER_TOOL_SERVICE_URL = os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014")
 INTERNAL_PROJECT_ADMIN_TOKEN = os.getenv(
     "INTERNAL_PROJECT_ADMIN_TOKEN", "internal-project-admin-dev-token"
 )
@@ -34,6 +37,10 @@ USER_BEARER_TOKEN = os.getenv("USER_BEARER_TOKEN", "user-dev-token")
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-jwt-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 INTERNAL_LLM_SETTINGS_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
+
+HTTP_EXEC_MAX_TIMEOUT_SEC = float(os.getenv("HTTP_EXEC_MAX_TIMEOUT_SEC", "45"))
+HTTP_EXEC_MAX_BODY_CHARS = int(os.getenv("HTTP_EXEC_MAX_BODY_CHARS", "200000"))
+HTTP_EXEC_MAX_RESPONSE_CHARS = int(os.getenv("HTTP_EXEC_MAX_RESPONSE_CHARS", "50000"))
 
 ROLE_OWNER = "Owner"
 ROLE_ADMIN = "Admin"
@@ -152,6 +159,82 @@ def _admin_tracker_headers() -> dict[str, str]:
     }
 
 
+_HTTP_ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
+_HTTP_FORBIDDEN_HEADER_KEYS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "host",
+        "x-internal-token",
+        "x-superadmin-token",
+        "x-sandbox-token",
+        "content-length",
+    }
+)
+_HTTP_HEADER_KEY_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_HTTP_ALIAS_CONFIG: dict[str, dict[str, object]] = {
+    "adapter": {
+        "base_url": ADAPTER_SERVICE_URL,
+        "path_prefixes": ["/api/v1/projects/{project_id}/"],
+        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    },
+    "project": {
+        "base_url": PROJECT_SERVICE_URL,
+        "path_prefixes": ["/api/v1/projects/{project_id}/", "/api/v1/projects/{project_id}"],
+        "methods": ["GET", "POST", "PUT", "PATCH"],
+    },
+    "planning": {
+        "base_url": PLANNING_SERVICE_URL,
+        "path_prefixes": ["/api/v1/projects/{project_id}/"],
+        "methods": ["GET", "POST"],
+    },
+    "catalog": {
+        "base_url": CATALOG_SERVICE_URL,
+        "path_prefixes": ["/api/v1/"],
+        "methods": ["GET"],
+    },
+    "agent_graph": {
+        "base_url": AGENT_GRAPH_SERVICE_URL,
+        "path_prefixes": ["/api/v1/projects/{project_id}/"],
+        "methods": ["GET", "POST"],
+    },
+}
+
+
+def _trim_text(s: str, limit: int) -> str:
+    if len(s) <= limit:
+        return s
+    return s[:limit] + "\n… [truncated]"
+
+
+def _normalize_http_path(path: str, project_id: str) -> str:
+    p = (path or "").strip()
+    if not p:
+        raise HTTPException(status_code=400, detail="path is required")
+    if "://" in p:
+        raise HTTPException(status_code=400, detail="absolute URL is not allowed, use alias + path")
+    if not p.startswith("/"):
+        p = "/" + p
+    return p.replace("{project_id}", project_id)
+
+
+def _build_http_headers(raw: object) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        kk = str(k).strip()
+        if not kk or not _HTTP_HEADER_KEY_RE.match(kk):
+            continue
+        if kk.lower() in _HTTP_FORBIDDEN_HEADER_KEYS:
+            continue
+        vv = str(v).strip()
+        if not vv:
+            continue
+        out[kk] = vv[:500]
+    return out
+
+
 def mark_request(method: str, path: str, status: int, elapsed_sec: float) -> None:
     REQUEST_COUNTER[(method, path, str(status))] += 1
     REQUEST_LATENCY_SUM[(method, path)] += elapsed_sec
@@ -203,6 +286,7 @@ async def downstream_health_metric() -> dict[str, int]:
         "agent_bootstrap_service": AGENT_BOOTSTRAP_SERVICE_URL,
         "sandbox_service": SANDBOX_SERVICE_URL,
         "agent_graph_service": AGENT_GRAPH_SERVICE_URL,
+        "browser_tool_service": BROWSER_TOOL_SERVICE_URL,
     }
     out: dict[str, int] = {}
     async with httpx.AsyncClient(timeout=3.0) as client:
@@ -260,6 +344,156 @@ async def auth_login(request: Request):
     started = time.monotonic()
     async with httpx.AsyncClient(timeout=25.0) as client:
         response = await client.post(f"{ADMIN_SERVICE_URL}/api/v1/auth/login", json=payload)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/internal/projects/{project_id}/http/execute")
+async def internal_http_execute(project_id: str, request: Request):
+    """Безопасный HTTP-executor для agent-graph tools (alias + path + method)."""
+    xit = (request.headers.get("X-Internal-Token") or "").strip()
+    if xit != INTERNAL_LLM_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+
+    alias = str(payload.get("endpoint_alias") or "").strip().lower()
+    cfg = _HTTP_ALIAS_CONFIG.get(alias)
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"unknown endpoint_alias: {alias}")
+
+    method = str(payload.get("method") or "GET").strip().upper()
+    if method not in _HTTP_ALLOWED_METHODS:
+        raise HTTPException(status_code=400, detail=f"unsupported method: {method}")
+    cfg_methods = {str(x).upper() for x in (cfg.get("methods") or [])}
+    if cfg_methods and method not in cfg_methods:
+        raise HTTPException(status_code=400, detail=f"method {method} not allowed for alias {alias}")
+
+    path = _normalize_http_path(str(payload.get("path") or ""), project_id)
+    prefixes = [str(x).replace("{project_id}", project_id) for x in (cfg.get("path_prefixes") or [])]
+    if prefixes and not any(path.startswith(p) for p in prefixes):
+        raise HTTPException(status_code=400, detail=f"path is not allowed for alias {alias}")
+
+    base_url = str(cfg.get("base_url") or "").rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=500, detail=f"alias {alias} misconfigured")
+
+    q = payload.get("query")
+    query_pairs: list[tuple[str, str]] = []
+    if isinstance(q, dict):
+        for k, v in q.items():
+            kk = str(k).strip()
+            if not kk:
+                continue
+            if isinstance(v, list):
+                for vv in v:
+                    query_pairs.append((kk, str(vv)))
+            else:
+                query_pairs.append((kk, str(v)))
+    query_str = urlencode(query_pairs, doseq=True) if query_pairs else ""
+    url = f"{base_url}{path}"
+    if query_str:
+        url = f"{url}?{query_str}"
+
+    timeout_sec = payload.get("timeout_sec")
+    try:
+        timeout_val = float(timeout_sec) if timeout_sec is not None else 20.0
+    except (TypeError, ValueError):
+        timeout_val = 20.0
+    timeout_val = max(1.0, min(timeout_val, HTTP_EXEC_MAX_TIMEOUT_SEC))
+
+    headers = _build_http_headers(payload.get("headers"))
+    body_json = payload.get("json_body")
+    body_text = payload.get("text_body")
+    if body_text is not None and not isinstance(body_text, str):
+        body_text = str(body_text)
+    if isinstance(body_text, str):
+        body_text = _trim_text(body_text, HTTP_EXEC_MAX_BODY_CHARS)
+    if body_json is not None:
+        if not isinstance(body_json, (dict, list)):
+            raise HTTPException(status_code=400, detail="json_body must be object or array")
+        if len(str(body_json)) > HTTP_EXEC_MAX_BODY_CHARS:
+            raise HTTPException(status_code=400, detail="json_body too large")
+
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=timeout_val, follow_redirects=False) as client:
+        response = await client.request(
+            method,
+            url,
+            headers=headers or None,
+            json=body_json if body_json is not None else None,
+            content=body_text.encode("utf-8") if body_json is None and isinstance(body_text, str) else None,
+        )
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+
+    raw = response.text or ""
+    raw = _trim_text(raw, HTTP_EXEC_MAX_RESPONSE_CHARS)
+    parsed_json: object | None = None
+    ctype = (response.headers.get("content-type") or "").lower()
+    if "json" in ctype:
+        try:
+            parsed_json = response.json()
+        except Exception:
+            parsed_json = None
+
+    return {
+        "ok": response.status_code < 400,
+        "endpoint_alias": alias,
+        "method": method,
+        "url": url,
+        "status_code": response.status_code,
+        "elapsed_ms": elapsed_ms,
+        "response_headers": {
+            "content-type": response.headers.get("content-type", ""),
+            "content-length": response.headers.get("content-length", ""),
+        },
+        "response_json": parsed_json,
+        "response_text": raw,
+    }
+
+
+@app.post("/api/v1/internal/projects/{project_id}/browser/execute")
+async def internal_browser_execute(project_id: str, request: Request):
+    """Proxy для browser-tool-service (только internal token)."""
+    xit = (request.headers.get("X-Internal-Token") or "").strip()
+    if xit != INTERNAL_LLM_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    action = str(payload.get("action") or "").strip().lower()
+    timeout = float(payload.get("timeout_sec") or 90.0)
+    timeout = max(5.0, min(timeout, 300.0))
+    headers = {"X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN, "Content-Type": "application/json"}
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if action == "create":
+            body = dict(payload)
+            body["project_id"] = project_id
+            response = await client.post(
+                f"{BROWSER_TOOL_SERVICE_URL}/api/v1/internal/browser/sessions",
+                json=body,
+                headers=headers,
+            )
+        elif action == "close":
+            sid = str(payload.get("session_id") or "").strip()
+            if not sid:
+                raise HTTPException(status_code=400, detail="session_id required for close")
+            response = await client.delete(
+                f"{BROWSER_TOOL_SERVICE_URL}/api/v1/internal/browser/sessions/{sid}",
+                headers=headers,
+            )
+        else:
+            sid = str(payload.get("session_id") or "").strip()
+            if not sid:
+                raise HTTPException(status_code=400, detail="session_id required")
+            response = await client.post(
+                f"{BROWSER_TOOL_SERVICE_URL}/api/v1/internal/browser/sessions/{sid}/action",
+                json=payload,
+                headers=headers,
+            )
     mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
     return _response_from_httpx(response)
 
@@ -1213,6 +1447,46 @@ async def list_agent_metrics(project_id: str, request: Request):
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     return await _proxy_get(f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/agent/metrics", request)
+
+
+@app.get("/api/v1/projects/{project_id}/browser/logs")
+async def browser_logs(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    run_id = request.query_params.get("run_id", "").strip()
+    limit = request.query_params.get("limit", "60").strip() or "60"
+    params: dict[str, str] = {"project_id": project_id, "limit": limit}
+    if run_id:
+        params["run_id"] = run_id
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{BROWSER_TOOL_SERVICE_URL}/api/v1/internal/browser/logs",
+            params=params,
+            headers={"X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/browser/artifacts/{artifact_name}")
+async def browser_artifact(project_id: str, artifact_name: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{BROWSER_TOOL_SERVICE_URL}/api/v1/internal/browser/artifacts/{artifact_name}",
+            headers={"X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    if response.status_code != 200:
+        return _response_from_httpx(response)
+    return Response(
+        content=response.content,
+        status_code=200,
+        media_type=response.headers.get("content-type", "application/octet-stream"),
+    )
 
 
 @app.post("/api/v1/agent/ingest")

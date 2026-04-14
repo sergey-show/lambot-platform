@@ -23,4 +23,4 @@ def fetch_tool_policy() -> dict[str, Any]:
             return r.json()
     except Exception:
         pass
-    return {"builtin": {}, "http_tools": []}
+    return {"builtin": {"http_request": True, "browser_session": True}, "http_tools": []}

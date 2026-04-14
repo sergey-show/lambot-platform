@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import re
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -80,10 +82,16 @@ STEP_EXTRA: dict[str, str] = {
     "execution_plan": (
         "Это шаг ТОЛЬКО для машинного плана исполнения (отдельно от нарратива). "
         "Ответь строго одним JSON-объектом без markdown и без пояснений вокруг. Формат:\n"
-        '{"tasks":[{"title":"кратко","action_kind":"adapter_agent_demo|noop|gitlab_pipeline","payload":{}}]}\n'
-        "Смысл: adapter_agent_demo — реальный вызов GitLab через платформу (нужен ресурс GitLab в проекте); "
-        "noop — ничего не делать (проверка цепочки); gitlab_pipeline — зарезервировано под триггер CI (может быть не реализовано в воркере). "
-        "Один объект tasks — список задач по порядку."
+        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|adapter_agent_demo|noop|gitlab_pipeline","payload":{}}]}\n'
+        "Смысл action_kind:\n"
+        "- ssh_run_command: реальный запуск команд на SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
+        "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
+        "- kubernetes_query: реальный kubectl через adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
+        "- adapter_agent_demo: GitLab demo через платформу (нужен GitLab ресурс).\n"
+        "- noop: ничего не делать (только если реально нет доступных действий).\n"
+        "- gitlab_pipeline: зарезервировано.\n"
+        "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
+        "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query."
     ),
     "implementation": (
         "Опирайся на блок «Факты исполнения» (структурированные задачи, воркеры) — что реально запускалось и с каким результатом. "
@@ -112,6 +120,16 @@ FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("deploy",),
     ("pm_summary",),
 )
+MAX_STEP_RETRIES = 3
+MAX_STEP_INVOCATIONS_PER_RUN = 4
+MAX_IDENTICAL_ERROR_REPEATS = 2
+MAX_IDENTICAL_OUTPUT_REPEATS = 2
+MAX_ORCHESTRATION_SECONDS = 1800
+
+
+def _text_fingerprint(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return t[:1200]
 
 
 def _extract_graph_text(graph_result: dict[str, Any]) -> str:
@@ -206,6 +224,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ctx = fetch_development_context_summary(pid)
         accumulated: dict[str, str] = {}
         execution_ctx = ""
+        run_started = monotonic()
+        step_invocations: dict[str, int] = {}
+        step_error_signatures: dict[str, str] = {}
+        step_error_repeats: dict[str, int] = {}
+        step_output_signatures: dict[str, str] = {}
+        step_output_repeats: dict[str, int] = {}
         
         def _accumulated_md(extra: dict[str, str] | None = None) -> str:
             merged = dict(accumulated)
@@ -275,68 +299,124 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ) -> tuple[bool, str | None, str | None]:
             nonlocal execution_ctx
             label, _task = STEP_META.get(step_key, (step_key, ""))
-            team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
-            try:
-                text = _run_single_step_text(
-                    step_key,
-                    direct_answer=direct_answer,
-                    acc_override=acc_override,
-                    debug_hint=debug_hint,
+            step_invocations[step_key] = step_invocations.get(step_key, 0) + 1
+            if step_invocations[step_key] > MAX_STEP_INVOCATIONS_PER_RUN:
+                err = (
+                    f"loop_detected: шаг {step_key} запускался слишком много раз "
+                    f"({step_invocations[step_key]} > {MAX_STEP_INVOCATIONS_PER_RUN})"
                 )
-                if step_key == "execution_plan":
-                    parsed = parse_execution_plan_json(text)
-                    if not parsed:
-                        parsed = default_execution_tasks_if_empty(ctx)
-                    team_replace_execution_tasks(run_id, parsed)
-                    run = team_get_run(run_id)
-                    if not run:
-                        raise RuntimeError("run not found after execution tasks create")
-                    etasks = run.get("execution_tasks") or []
-                    team_patch_run(run_id, phase="execution_dispatch")
-                    publish_ai_team_execution_tasks(
-                        project_id=pid,
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        tasks=etasks,
-                    )
-                    wait_for_ai_team_execution_tasks(run_id)
-                    run_done = team_get_run(run_id) or run
-                    exec_md = format_execution_tasks_markdown(run_done)
-                    text = f"{text}\n\n---\n{exec_md}"
-                    execution_ctx = exec_md
-                    team_patch_run(
-                        run_id,
-                        phase="execution_done"
-                        if all(
-                            x.get("status") == "done" for x in (run_done.get("execution_tasks") or [])
-                        )
-                        else "execution_mixed",
-                    )
-                team_patch_step(
-                    run_id,
-                    step_key,
-                    status="done",
-                    output_md=text,
-                    finished_at=_utc_iso(),
-                )
-                accumulated[step_key] = text
-                if step_key == "architect":
-                    team_patch_run(run_id, architecture_md=text, phase="architecture_done")
-                if step_key == "pm_summary":
-                    team_patch_run(run_id, final_report_md=text, phase="summary_done")
-                return True, text, None
-            except Exception as exc:
-                err = str(exc)
-                team_patch_step(
-                    run_id,
-                    step_key,
-                    status="error",
-                    error=err,
-                    finished_at=_utc_iso(),
-                )
+                team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
                 return False, None, err
+            if monotonic() - run_started > MAX_ORCHESTRATION_SECONDS:
+                err = "loop_detected: превышен лимит времени оркестрации"
+                team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
+                if fail_run_on_error:
+                    team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
+                return False, None, err
+
+            team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
+            last_err = "unknown error"
+            for attempt in range(1, MAX_STEP_RETRIES + 1):
+                try:
+                    text = _run_single_step_text(
+                        step_key,
+                        direct_answer=direct_answer,
+                        acc_override=acc_override,
+                        debug_hint=debug_hint,
+                    )
+                    sig_out = _text_fingerprint(text)
+                    prev_out = step_output_signatures.get(step_key, "")
+                    if sig_out and sig_out == prev_out:
+                        step_output_repeats[step_key] = step_output_repeats.get(step_key, 1) + 1
+                    else:
+                        step_output_signatures[step_key] = sig_out
+                        step_output_repeats[step_key] = 1
+                    if step_output_repeats.get(step_key, 1) >= MAX_IDENTICAL_OUTPUT_REPEATS and attempt < MAX_STEP_RETRIES:
+                        raise RuntimeError(
+                            "loop_detected: модель повторяет одинаковый вывод, пробую переформулировать шаг"
+                        )
+
+                    if step_key == "execution_plan":
+                        parsed = parse_execution_plan_json(text)
+                        if not parsed:
+                            parsed = default_execution_tasks_if_empty(ctx)
+                        team_replace_execution_tasks(run_id, parsed)
+                        run = team_get_run(run_id)
+                        if not run:
+                            raise RuntimeError("run not found after execution tasks create")
+                        etasks = run.get("execution_tasks") or []
+                        team_patch_run(run_id, phase="execution_dispatch")
+                        publish_ai_team_execution_tasks(
+                            project_id=pid,
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            tasks=etasks,
+                        )
+                        wait_for_ai_team_execution_tasks(run_id)
+                        run_done = team_get_run(run_id) or run
+                        exec_md = format_execution_tasks_markdown(run_done)
+                        text = f"{text}\n\n---\n{exec_md}"
+                        execution_ctx = exec_md
+                        team_patch_run(
+                            run_id,
+                            phase="execution_done"
+                            if all(
+                                x.get("status") == "done" for x in (run_done.get("execution_tasks") or [])
+                            )
+                            else "execution_mixed",
+                        )
+
+                    team_patch_step(
+                        run_id,
+                        step_key,
+                        status="done",
+                        output_md=text,
+                        structured={"attempt": attempt, "max_attempts": MAX_STEP_RETRIES},
+                        finished_at=_utc_iso(),
+                    )
+                    accumulated[step_key] = text
+                    if step_key == "architect":
+                        team_patch_run(run_id, architecture_md=text, phase="architecture_done")
+                    if step_key == "pm_summary":
+                        team_patch_run(run_id, final_report_md=text, phase="summary_done")
+                    return True, text, None
+                except Exception as exc:
+                    last_err = str(exc)
+                    sig_err = _text_fingerprint(last_err)
+                    prev_err = step_error_signatures.get(step_key, "")
+                    if sig_err and sig_err == prev_err:
+                        step_error_repeats[step_key] = step_error_repeats.get(step_key, 1) + 1
+                    else:
+                        step_error_signatures[step_key] = sig_err
+                        step_error_repeats[step_key] = 1
+                    if step_error_repeats.get(step_key, 1) >= MAX_IDENTICAL_ERROR_REPEATS:
+                        last_err = f"loop_detected: повторяющаяся ошибка шага ({last_err})"
+                        break
+                    if attempt < MAX_STEP_RETRIES:
+                        team_patch_step(
+                            run_id,
+                            step_key,
+                            status="running",
+                            output_md=(
+                                f"Попытка {attempt}/{MAX_STEP_RETRIES} завершилась ошибкой: {last_err}\n"
+                                f"Перезапуск шага (попытка {attempt + 1}/{MAX_STEP_RETRIES})…"
+                            ),
+                            structured={"attempt": attempt, "max_attempts": MAX_STEP_RETRIES},
+                        )
+
+            team_patch_step(
+                run_id,
+                step_key,
+                status="error",
+                error=last_err,
+                structured={"attempt": MAX_STEP_RETRIES, "max_attempts": MAX_STEP_RETRIES},
+                finished_at=_utc_iso(),
+            )
+            if fail_run_on_error:
+                team_patch_run(run_id, status="error", error=f"{label}: {last_err}", phase="failed")
+            return False, None, last_err
 
         ok_intake, intake_text, _err = _execute_step("intake")
         if not ok_intake:

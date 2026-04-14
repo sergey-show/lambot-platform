@@ -63,6 +63,96 @@ async def _patch_ai_team_task(task_id: str, body: dict[str, Any]) -> None:
 TRACKER_STEP = "tracker_task_execute"
 
 
+async def _ssh_exec_once(
+    client: httpx.AsyncClient,
+    *,
+    project_id: str,
+    target_id: str,
+    command: str,
+    confirmed: bool = False,
+    confirmation_token: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"command": command, "confirmed": confirmed}
+    if confirmation_token:
+        payload["confirmation_token"] = confirmation_token
+    r = await client.post(
+        f"{ADAPTER_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/targets/{target_id}/ssh-exec",
+        json=payload,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+async def _run_ssh_action(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    target_id = str(payload.get("target_id") or "").strip()
+    commands: list[str] = []
+    cmd = payload.get("command")
+    if isinstance(cmd, str) and cmd.strip():
+        commands.append(cmd.strip())
+    raw_many = payload.get("commands")
+    if isinstance(raw_many, list):
+        for x in raw_many:
+            if isinstance(x, str) and x.strip():
+                commands.append(x.strip())
+    if not target_id:
+        raise ValueError("ssh_run_command: payload.target_id required")
+    if not commands:
+        raise ValueError("ssh_run_command: payload.command or payload.commands required")
+
+    out: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        for c in commands:
+            first = await _ssh_exec_once(
+                client,
+                project_id=project_id,
+                target_id=target_id,
+                command=c,
+                confirmed=False,
+            )
+            if bool(first.get("needs_confirmation")):
+                tok = str(first.get("confirmation_token") or "").strip()
+                if not tok:
+                    raise RuntimeError("ssh_run_command: needs_confirmation without token")
+                second = await _ssh_exec_once(
+                    client,
+                    project_id=project_id,
+                    target_id=target_id,
+                    command=c,
+                    confirmed=True,
+                    confirmation_token=tok,
+                )
+                out.append({"command": c, "response": second, "auto_confirmed": True})
+            else:
+                out.append({"command": c, "response": first, "auto_confirmed": False})
+    return {"ok": True, "mode": "ssh_run_command", "target_id": target_id, "results": out}
+
+
+async def _run_k8s_action(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    target_id = str(payload.get("target_id") or "").strip()
+    operation = str(payload.get("operation") or "").strip().lower()
+    if not target_id or not operation:
+        raise ValueError("kubernetes_query: payload.target_id and payload.operation required")
+    body: dict[str, Any] = {"target_id": target_id, "operation": operation}
+    for k in ("namespace", "name", "resource", "container"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            body[k] = v.strip()
+    for k in ("all_namespaces", "wide"):
+        if isinstance(payload.get(k), bool):
+            body[k] = payload[k]
+    for k in ("tail_lines", "replicas"):
+        if payload.get(k) is not None:
+            body[k] = payload[k]
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        r = await client.post(
+            f"{ADAPTER_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/k8s/query",
+            json=body,
+        )
+        r.raise_for_status()
+        data = r.json()
+    return {"ok": True, "mode": "kubernetes_query", "request": body, "response": data}
+
+
 async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str, Any]) -> None:
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.patch(
@@ -198,6 +288,10 @@ async def _handle_ai_team_execution(envelope: TaskEnvelope) -> tuple[TaskStatus,
                 )
                 r.raise_for_status()
                 result = {"ok": True, "mode": "adapter_agent_demo", "adapter_response": r.json()}
+        elif action == "ssh_run_command":
+            result = await _run_ssh_action(project_id, payload)
+        elif action == "kubernetes_query":
+            result = await _run_k8s_action(project_id, payload)
         else:
             raise ValueError(f"unknown ai_team_action: {action}")
 

@@ -19,6 +19,8 @@ PROJECT_URL = os.getenv("PROJECT_SERVICE_URL", "http://project-service:8001")
 PLANNING_URL = os.getenv("PLANNING_SERVICE_URL", "http://planning-service:8002")
 SANDBOX_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox-service:8012")
 SANDBOX_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev-token")
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
+INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
 
 def _make_get_development_context(pid: str):
@@ -250,6 +252,101 @@ def _make_run_sandbox_python(pid: str):
     return run_sandbox_python
 
 
+def _make_http_request(pid: str):
+    @tool
+    def http_request(
+        endpoint_alias: str,
+        method: str = "GET",
+        path: str = "",
+        query: dict | None = None,
+        headers: dict | None = None,
+        json_body: dict | list | None = None,
+        text_body: str = "",
+        timeout_sec: int = 20,
+    ) -> str:
+        """Универсальный HTTP запрос через безопасный executor gateway. endpoint_alias: adapter|project|planning|catalog|agent_graph. Используй path только внутри alias (можно с {project_id}); method: GET/POST/PUT/PATCH/DELETE. Для тела используй json_body или text_body. Секретные/служебные заголовки передавать нельзя."""
+        p = (path or "").strip()
+        if not p:
+            return json.dumps({"error": "path required"})
+        payload: dict[str, Any] = {
+            "endpoint_alias": (endpoint_alias or "").strip().lower(),
+            "method": (method or "GET").strip().upper(),
+            "path": p,
+            "query": query if isinstance(query, dict) else {},
+            "headers": headers if isinstance(headers, dict) else {},
+            "timeout_sec": int(timeout_sec) if timeout_sec else 20,
+        }
+        if json_body is not None:
+            payload["json_body"] = json_body
+        elif (text_body or "").strip():
+            payload["text_body"] = text_body
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/http/execute",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=65.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return http_request
+
+
+def _make_browser_session(pid: str):
+    @tool
+    def browser_session(
+        action: str,
+        run_id: str = "",
+        session_id: str = "",
+        url: str = "",
+        selector: str = "",
+        text: str = "",
+        timeout_sec: int = 25,
+        timeout_ms: int = 12000,
+        wait_until: str = "domcontentloaded",
+        full_page: bool = False,
+        viewport_width: int = 1366,
+        viewport_height: int = 900,
+    ) -> str:
+        """Браузерный инструмент Playwright (через browser-tool-service). action=create|navigate|click|type|fill|press|wait|extract_text|content|snapshot|screenshot|close. Для create можно передать url (start_url) и viewport_*; для остальных нужен session_id. run_id передавай для привязки логов браузера к текущему прогону оркестрации."""
+        act = (action or "").strip().lower()
+        payload: dict[str, Any] = {
+            "action": act,
+            "timeout_sec": int(timeout_sec) if timeout_sec else 25,
+            "timeout_ms": int(timeout_ms) if timeout_ms else 12000,
+            "wait_until": (wait_until or "domcontentloaded").strip(),
+            "full_page": bool(full_page),
+        }
+        if run_id.strip():
+            payload["run_id"] = run_id.strip()
+        if session_id.strip():
+            payload["session_id"] = session_id.strip()
+        if selector.strip():
+            payload["selector"] = selector.strip()
+        if text:
+            payload["text"] = text
+        if act == "create":
+            payload["start_url"] = (url or "").strip() or None
+            payload["viewport_width"] = int(viewport_width) if viewport_width else 1366
+            payload["viewport_height"] = int(viewport_height) if viewport_height else 900
+        elif url.strip():
+            payload["url"] = url.strip()
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/browser/execute",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=90.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return browser_session
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "get_development_context": _make_get_development_context,
     "get_project_status": _make_get_project_status,
@@ -260,6 +357,8 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "ssh_run_command": _make_ssh_run_command,
     "kubernetes_query": _make_kubernetes_query,
     "run_sandbox_python": _make_run_sandbox_python,
+    "http_request": _make_http_request,
+    "browser_session": _make_browser_session,
 }
 
 

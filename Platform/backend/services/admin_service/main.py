@@ -486,6 +486,7 @@ def admin_services_health(_: None = Depends(require_superadmin)) -> dict:
         "agent-graph-service": os.getenv(
             "AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013"
         ),
+        "browser-tool-service": os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014"),
         "api-gateway": os.getenv("API_GATEWAY_URL", "http://api-gateway:8000"),
     }
     results: dict[str, str] = {}
@@ -669,6 +670,8 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "ssh_run_command",
         "kubernetes_query",
         "run_sandbox_python",
+        "http_request",
+        "browser_session",
     }
 )
 

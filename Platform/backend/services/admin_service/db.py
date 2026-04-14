@@ -100,6 +100,8 @@ def _seed_agent_graph_builtin_tools() -> None:
         "ssh_run_command": "SSH: команда на сервере (с подтверждением опасных)",
         "kubernetes_query": "Kubernetes: kubectl по kubeconfig (проект)",
         "run_sandbox_python": "Песочница Python",
+        "http_request": "Универсальный HTTP инструмент (alias/method/path/body)",
+        "browser_session": "Браузерный Playwright инструмент (сессии, действия, скриншоты)",
     }
     try:
         with SessionLocal() as db:

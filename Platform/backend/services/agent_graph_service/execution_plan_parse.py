@@ -28,7 +28,14 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
         if not isinstance(t, dict):
             continue
         title = str(t.get("title") or "Задача")[:512]
-        action = str(t.get("action_kind") or t.get("action") or "noop")[:64]
+        action = str(t.get("action_kind") or t.get("action") or "noop")[:64].strip().lower()
+        alias = {
+            "ssh_exec": "ssh_run_command",
+            "ssh_run": "ssh_run_command",
+            "k8s_query": "kubernetes_query",
+            "kubernetes": "kubernetes_query",
+        }
+        action = alias.get(action, action)
         payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
         notes = t.get("notes")
         plan_summary = str(notes)[:8000] if notes is not None else None
@@ -44,8 +51,51 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
 
 
 def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str, Any]]:
-    """Если LLM не вернул JSON — одна реальная задача при наличии GitLab в контексте, иначе noop."""
+    """Если LLM не вернул JSON — стараемся дать исполняемую задачу по доступным tool-таргетам."""
     ctx = dev_context_summary.lower()
+    ssh_target_id = ""
+    k8s_target_id = ""
+    try:
+        parsed = json.loads(dev_context_summary)
+        if isinstance(parsed, dict):
+            ssh_tools = parsed.get("ssh_tools") if isinstance(parsed.get("ssh_tools"), dict) else {}
+            ssh_list = ssh_tools.get("ssh_targets_for_tools") if isinstance(ssh_tools, dict) else []
+            if isinstance(ssh_list, list) and ssh_list:
+                first = ssh_list[0]
+                if isinstance(first, dict):
+                    ssh_target_id = str(first.get("target_id") or "").strip()
+            k8s_list = parsed.get("kubernetes_clusters")
+            if isinstance(k8s_list, list) and k8s_list:
+                first_k = k8s_list[0]
+                if isinstance(first_k, dict):
+                    k8s_target_id = str(first_k.get("target_id") or "").strip()
+    except Exception:
+        pass
+
+    if ssh_target_id:
+        return [
+            {
+                "title": "SSH: проверка сервера и подготовка деплоя",
+                "action_kind": "ssh_run_command",
+                "payload": {
+                    "target_id": ssh_target_id,
+                    "commands": [
+                        "set -e; uname -a; whoami; pwd",
+                        "if command -v docker >/dev/null 2>&1; then docker --version; else echo docker_not_found; fi",
+                    ],
+                },
+                "plan_summary": "Автовыбор: найден SSH target в контексте, запускаем реальные команды на сервере.",
+            }
+        ]
+    if k8s_target_id:
+        return [
+            {
+                "title": "Kubernetes: состояние кластера",
+                "action_kind": "kubernetes_query",
+                "payload": {"target_id": k8s_target_id, "operation": "nodes", "wide": True},
+                "plan_summary": "Автовыбор: найден Kubernetes target в контексте.",
+            }
+        ]
     if "gitlab" in ctx or "git lab" in ctx:
         return [
             {

@@ -566,6 +566,14 @@ function renderPortal(): void {
         <div id="orchestration-steps" class="lp-orch-grid"></div>
         <div id="orchestration-final-wrap" style="margin-top:12px;"></div>
       </div>
+      <div class="lp-panel" id="browser-logs-panel">
+        <h2>Browser tool: действия и скриншоты</h2>
+        <p class="lp-muted" style="font-size:12px;">
+          Логи браузерных действий агентов (Playwright) по текущему проекту и run. Для скриншотов нажмите «Открыть».
+        </p>
+        <p class="lp-muted" id="browser-logs-status-line" style="font-size:12px;"></p>
+        <div id="browser-logs-wrap" class="lp-orch-grid"></div>
+      </div>
       <div id="orchestration-node-modal" class="lp-modal-backdrop" hidden>
         <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="orch-node-modal-title">
           <div class="lp-modal-head">
@@ -1042,6 +1050,20 @@ function renderPortal(): void {
     execution_tasks?: Array<Record<string, unknown>>;
   };
 
+  type BrowserLogItem = {
+    id?: string;
+    created_at?: string;
+    project_id?: string;
+    run_id?: string | null;
+    session_id?: string;
+    action?: string;
+    ok?: boolean;
+    url?: string;
+    artifact_name?: string;
+    error?: string;
+    details?: Record<string, unknown>;
+  };
+
   type GraphNodeDef = {
     key: string;
     label: string;
@@ -1248,6 +1270,112 @@ function renderPortal(): void {
     });
   };
 
+  const renderBrowserLogsPanel = (items: BrowserLogItem[], runId: string) => {
+    const wrap = document.getElementById("browser-logs-wrap");
+    const st = document.getElementById("browser-logs-status-line");
+    if (!wrap) return;
+    if (st) st.textContent = `run ${runId || "—"} · записей ${items.length}`;
+    if (!items.length) {
+      wrap.innerHTML = `<p class="lp-muted">Пока нет browser-действий для этого прогона.</p>`;
+      return;
+    }
+    wrap.innerHTML = items
+      .map((it) => {
+        const action = escapeHtml(String(it.action || "action"));
+        const ok = Boolean(it.ok);
+        const badge = ok ? "lp-orch-badge ok" : "lp-orch-badge err";
+        const ts = fmtTs(it.created_at || null);
+        const sid = escapeHtml(String(it.session_id || "—"));
+        const url = escapeHtml(String(it.url || "—"));
+        const err = it.error ? `<pre class="lp-orch-pre lp-error">${escapeHtml(String(it.error))}</pre>` : "";
+        const artifact = String(it.artifact_name || "").trim();
+        const openBtn = artifact
+          ? `<button type="button" class="lp-btn lp-btn-ghost lp-browser-open-artifact" data-name="${escapeHtml(artifact)}">Открыть скриншот</button>`
+          : "";
+        return `<article class="lp-orch-card">
+          <div class="lp-orch-card-head">
+            <span class="${badge}">${action}</span>
+            <span class="lp-muted" style="font-size:12px;">${escapeHtml(ts)}</span>
+          </div>
+          <p class="lp-muted" style="font-size:12px;margin:0;">session: <code>${sid}</code></p>
+          <p class="lp-muted" style="font-size:12px;margin:4px 0 8px;word-break:break-all;">url: ${url}</p>
+          ${openBtn}
+          ${err}
+        </article>`;
+      })
+      .join("");
+    wrap.querySelectorAll<HTMLButtonElement>(".lp-browser-open-artifact").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!currentProjectId) return;
+        const name = (btn.dataset.name || "").trim();
+        if (!name) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch(
+            `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/browser/artifacts/${encodeURIComponent(name)}`,
+            { headers: authHeader(token()) },
+          );
+          if (!r.ok) {
+            const tx = await r.text();
+            alert(tx || String(r.status));
+            return;
+          }
+          const blob = await r.blob();
+          const obj = URL.createObjectURL(blob);
+          window.open(obj, "_blank", "noopener,noreferrer");
+          setTimeout(() => URL.revokeObjectURL(obj), 60000);
+        } catch (e) {
+          alert(String(e));
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  };
+
+  const loadBrowserLogs = async (runId: string) => {
+    const wrap = document.getElementById("browser-logs-wrap");
+    const st = document.getElementById("browser-logs-status-line");
+    if (!wrap || !currentProjectId || !runId) {
+      if (wrap) wrap.innerHTML = `<p class="lp-muted">Логи браузера появятся после запуска оркестрации.</p>`;
+      if (st) st.textContent = "";
+      return;
+    }
+    try {
+      const fetchLogs = async (withRun: boolean) => {
+        const suffix = withRun
+          ? `?run_id=${encodeURIComponent(runId)}&limit=80`
+          : `?limit=80`;
+        const r = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/browser/logs${suffix}`,
+          { headers: authHeader(token()) },
+        );
+        const raw = await r.text();
+        let data: { items?: BrowserLogItem[]; detail?: string };
+        try {
+          data = JSON.parse(raw) as { items?: BrowserLogItem[]; detail?: string };
+        } catch {
+          return { ok: false, items: [] as BrowserLogItem[], err: "parse error" };
+        }
+        if (!r.ok) {
+          return { ok: false, items: [] as BrowserLogItem[], err: String(data.detail || raw || r.status) };
+        }
+        return { ok: true, items: data.items || [], err: "" };
+      };
+      let rs = await fetchLogs(true);
+      if (runId && rs.ok && rs.items.length === 0) {
+        rs = await fetchLogs(false);
+      }
+      if (!rs.ok) {
+        if (st) st.textContent = rs.err;
+        return;
+      }
+      renderBrowserLogsPanel(rs.items, runId);
+    } catch (e) {
+      if (st) st.textContent = String(e);
+    }
+  };
+
   /** Дублирует завершённые шаги оркестрации в основной чат как «групповой диалог» ролей. */
   const syncOrchestrationStepsToChat = (
     runId: string,
@@ -1319,6 +1447,7 @@ function renderPortal(): void {
       stepsEl.innerHTML = `<p class="lp-muted">Выберите проект. Запуск — «Оркестрация ролей» (то же сообщение, что для чата).</p>`;
       if (statusEl) statusEl.textContent = "";
       renderOrchestrationGraph(null);
+      void loadBrowserLogs("");
       return;
     }
     renderOrchestrationGraph(data);
@@ -1391,6 +1520,7 @@ function renderPortal(): void {
       }
       renderOrchestrationPanel(data);
       syncOrchestrationStepsToChat(runId, data);
+      void loadBrowserLogs(runId);
       const st = data.status;
       if (st === "done" || st === "error") {
         stopOrchestrationPoll();
@@ -1583,10 +1713,12 @@ function renderPortal(): void {
     void loadTrackerItems();
     if (!currentProjectId) {
       renderOrchestrationPanel(null);
+      void loadBrowserLogs("");
       return;
     }
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
     if (last) {
+      void loadBrowserLogs(last);
       void pollOrchestration(last);
       orchPollTimer = window.setInterval(() => void pollOrchestration(last), 900);
       return;
@@ -1601,6 +1733,7 @@ function renderPortal(): void {
           renderOrchestrationPanel(j.run);
           const rid = typeof j.run.run_id === "string" ? j.run.run_id : "";
           if (rid) {
+            void loadBrowserLogs(rid);
             const um = typeof j.run.user_message === "string" ? j.run.user_message.trim() : "";
             if (um && projectAiChatHistory.length === 0) {
               projectAiChatHistory.push({ role: "user", content: um });
