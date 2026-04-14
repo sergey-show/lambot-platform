@@ -1113,6 +1113,7 @@ function renderPortal(): void {
     if (v === "running") return "В работе";
     if (v === "error") return "Ошибка";
     if (v === "skipped") return "Пропущено";
+    if (v === "paused") return "Ждём уточнений";
     return "Ожидание";
   };
 
@@ -1122,6 +1123,7 @@ function renderPortal(): void {
     if (v === "running") return "lp-orch-badge run";
     if (v === "error") return "lp-orch-badge err";
     if (v === "skipped") return "lp-orch-badge skip";
+    if (v === "paused") return "lp-orch-badge run";
     return "lp-orch-badge wait";
   };
 
@@ -1493,8 +1495,14 @@ function renderPortal(): void {
       .join("");
     stepsEl.innerHTML = html;
     const fin = data.final_report_md || data.final_message;
-    if (finalWrap && fin && (data.status === "done" || data.status === "running")) {
-      finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><pre class="lp-orch-pre">${escapeHtml(fin)}</pre></div>`;
+    if (finalWrap) {
+      if (data.status === "paused") {
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и запустите новый прогон.</p></div>`;
+      } else if (fin && (data.status === "done" || data.status === "running")) {
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><pre class="lp-orch-pre">${escapeHtml(fin)}</pre></div>`;
+      } else {
+        finalWrap.innerHTML = "";
+      }
     }
   };
 
@@ -1522,7 +1530,7 @@ function renderPortal(): void {
       syncOrchestrationStepsToChat(runId, data);
       void loadBrowserLogs(runId);
       const st = data.status;
-      if (st === "done" || st === "error") {
+      if (st === "done" || st === "error" || st === "paused") {
         stopOrchestrationPoll();
       }
     } catch {

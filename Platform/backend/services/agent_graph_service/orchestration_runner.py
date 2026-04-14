@@ -14,10 +14,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
 from services.agent_graph_service.dev_prompts import fetch_development_context_summary, fetch_development_prompts
 from services.agent_graph_service.orchestration_route import (
+    PRIMARY_ROLE_TO_STEP,
     parse_orchestration_route,
     pipeline_for_direct,
     step_keys_to_skip_when_direct,
 )
+from services.agent_graph_service.orchestration_step_output import parse_step_envelope
 from services.agent_graph_service.execution_plan_parse import (
     default_execution_tasks_if_empty,
     format_execution_tasks_markdown,
@@ -111,6 +113,17 @@ STEP_EXTRA: dict[str, str] = {
 STEP_META: dict[str, tuple[str, str]] = {k: (lbl, task) for k, lbl, task in DEFAULT_PIPELINE}
 STEP_ORDER: dict[str, int] = {k: i for i, (k, _lbl, _task) in enumerate(DEFAULT_PIPELINE)}
 DIRECT_TOOL_STEPS = frozenset({"devops_plan", "backend_plan", "frontend_plan"})
+# Модель «для кода» из настроек платформы (coding_model) — только для инженерных шагов.
+CODING_MODEL_STEPS = frozenset(
+    {
+        "devops_plan",
+        "backend_plan",
+        "frontend_plan",
+        "execution_plan",
+        "implementation",
+        "deploy",
+    }
+)
 FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("pm",),
     ("architect",),
@@ -125,6 +138,41 @@ MAX_STEP_INVOCATIONS_PER_RUN = 4
 MAX_IDENTICAL_ERROR_REPEATS = 2
 MAX_IDENTICAL_OUTPUT_REPEATS = 2
 MAX_ORCHESTRATION_SECONDS = 1800
+MAX_PEER_QUERIES = 5
+
+# Шаги с единым JSON-конвертом (summary + вопросы/peer_queries); execution_plan и intake — отдельно.
+STRUCTURED_STEP_KEYS = frozenset(
+    {
+        "pm",
+        "architect",
+        "devops_plan",
+        "backend_plan",
+        "frontend_plan",
+        "implementation",
+        "deploy",
+        "pm_summary",
+    }
+)
+
+STEP_OUTPUT_JSON_INSTRUCTIONS = """
+--- ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА ДЛЯ ЭТОГО ШАГА ---
+Сначала выведи РОВНО ОДИН JSON-объект (без markdown-ограждений), затем можно пустую строку и дополнительный текст.
+Схема JSON:
+{
+  "schema_version": 1,
+  "step_status": "complete | need_user_clarification | need_peer_sync",
+  "summary_md": "основной результат шага для коллег и отчёта (markdown)",
+  "questions_for_user": [],
+  "peer_queries": [],
+  "pipeline_continue": true
+}
+Правила:
+- summary_md — главный передаваемый дальше контент; пиши сюда всё важное для команды.
+- Если нужен ответ пользователя до продолжения — step_status=need_user_clarification, заполни questions_for_user, pipeline_continue=false.
+- Если вопрос к другой роли команды (backend/frontend/devops/architect/pm) — добавь в peer_queries: [{"role":"backend","question":"..."}]. Оркестратор запросит коллегу автоматически; не жди пользователя.
+- Не задавай вопросы пользователю, если их можно закрыть через peer_queries.
+- При pipeline_continue=false пайплайн остановится до следующего сообщения пользователя.
+"""
 
 
 def _text_fingerprint(text: str) -> str:
@@ -155,6 +203,11 @@ def _extract_graph_text(graph_result: dict[str, Any]) -> str:
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _llm_purpose_for_step(step_key: str) -> str:
+    """coding — использовать coding_model из LLM-настроек, если задана; иначе default_model."""
+    return "coding" if step_key in CODING_MODEL_STEPS else "default"
 
 
 def _ctx_trim(ctx: str, max_chars: int) -> str:
@@ -202,7 +255,7 @@ def _build_system(
         )
     acc = accumulated_md.strip() or "(предыдущие шаги ещё не дали выводов)"
     ex = execution_ctx.strip() or "(ещё нет — шаг execution_plan и воркеры не завершены)"
-    return (
+    tail = (
         f"{role_prompt}\n\n---\n{extra}\n\n---\n"
         f"Контекст проекта (development-context):\n{ctx}\n\n---\n"
         f"Накопленные результаты шагов:\n{acc}\n\n---\n"
@@ -211,6 +264,9 @@ def _build_system(
         "Не выдумывай секреты и URL — используй только контекст."
         f"\n\nЗапрос пользователя:\n{user_message}"
     )
+    if step_key in STRUCTURED_STEP_KEYS:
+        tail += STEP_OUTPUT_JSON_INSTRUCTIONS
+    return tail
 
 
 def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> None:
@@ -243,6 +299,37 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 label, _task = STEP_META.get(k, (k, ""))
                 chunks.append(f"### {label}\n{merged[k]}")
             return "\n\n".join(chunks)
+
+        def _consult_peer(role: str, question: str, requester_step: str) -> str:
+            role_l = (role or "").strip().lower()
+            peer_step = PRIMARY_ROLE_TO_STEP.get(role_l)
+            if not peer_step:
+                return (
+                    f"[роль {role!r} не поддерживается для peer-синхронизации — "
+                    "используй: pm, architect, devops, backend, frontend]"
+                )
+            lbl, _tsk = STEP_META.get(peer_step, (peer_step, ""))
+            pr_key = STEP_PROMPT_ROLE.get(peer_step, "pm")
+            peer_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
+            peer_ctx = _ctx_trim(ctx, 6000)
+            acc_now = _accumulated_md()
+            system_peer = (
+                f"{peer_prompt}\n\n---\n"
+                "Внутренний запрос от коллеги по AI-команде. Ответь кратко и по делу, чтобы коллега мог "
+                f"продолжить шаг «{requester_step}». Не обращайся к конечному пользователю — только ответ коллеге.\n\n"
+                f"Контекст проекта:\n{peer_ctx}\n\n---\n"
+                f"Накопленные результаты шагов:\n{acc_now}\n\n---\n"
+                f"Вопрос от коллеги (шаг пайплайна: {requester_step}; консультант: {lbl}):\n{question.strip()}"
+            )
+            model = build_chat_model(purpose=_llm_purpose_for_step(peer_step))
+            resp = model.invoke(
+                [
+                    SystemMessage(content=system_peer),
+                    HumanMessage(content="Дай ответ коллеге для продолжения пайплайна."),
+                ]
+            )
+            out = resp.content if isinstance(resp.content, str) else str(resp.content)
+            return (out or "").strip()
 
         def _run_single_step_text(
             step_key: str,
@@ -279,7 +366,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "Повторите запрос, чтобы агент сформировал финальный вывод из результатов инструментов."
                     )
                 return text
-            model = build_chat_model(purpose="coding")
+            model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
             messages = [
                 SystemMessage(content=system_full),
                 HumanMessage(content=human_content),
@@ -296,7 +383,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             fail_run_on_error: bool = True,
             acc_override: str | None = None,
             debug_hint: str = "",
-        ) -> tuple[bool, str | None, str | None]:
+        ) -> tuple[bool, str | None, str | None, bool]:
+            """Последний bool: halt_pipeline — остановить прогон (ожидание ответа пользователя)."""
             nonlocal execution_ctx
             label, _task = STEP_META.get(step_key, (step_key, ""))
             step_invocations[step_key] = step_invocations.get(step_key, 0) + 1
@@ -308,13 +396,13 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
-                return False, None, err
+                return False, None, err, False
             if monotonic() - run_started > MAX_ORCHESTRATION_SECONDS:
                 err = "loop_detected: превышен лимит времени оркестрации"
                 team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
-                return False, None, err
+                return False, None, err, False
 
             team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
             last_err = "unknown error"
@@ -337,6 +425,59 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         raise RuntimeError(
                             "loop_detected: модель повторяет одинаковый вывод, пробую переформулировать шаг"
                         )
+
+                    structured_payload: dict[str, Any] = {
+                        "attempt": attempt,
+                        "max_attempts": MAX_STEP_RETRIES,
+                    }
+                    halt_pipeline = False
+                    apply_structured = step_key in STRUCTURED_STEP_KEYS and not (
+                        direct_answer and step_key in DIRECT_TOOL_STEPS
+                    )
+                    if apply_structured:
+                        env, _fb = parse_step_envelope(text)
+                        if env:
+                            peer_responses: list[dict[str, Any]] = []
+                            if env.peer_queries:
+                                peer_parts: list[str] = []
+                                for pq in env.peer_queries[:MAX_PEER_QUERIES]:
+                                    ans = _consult_peer(pq.role, pq.question, step_key)
+                                    peer_responses.append(
+                                        {"role": pq.role, "question": pq.question, "answer": ans}
+                                    )
+                                    peer_parts.append(f"#### Ответ ({pq.role})\n{ans}")
+                                if peer_parts:
+                                    env.summary_md = (
+                                        env.summary_md
+                                        + "\n\n---\n### Синхронизация с командой (авто)\n\n"
+                                        + "\n\n".join(peer_parts)
+                                    )
+                                    structured_payload["peer_responses"] = peer_responses
+                            text = env.summary_md
+                            structured_payload["step_envelope"] = env.to_dict()
+                            halt_pipeline = (
+                                (not env.pipeline_continue)
+                                or bool(env.questions_for_user)
+                                or env.step_status == "need_user_clarification"
+                            )
+                            if env.questions_for_user:
+                                structured_payload["questions_for_user"] = env.questions_for_user
+
+                    if halt_pipeline:
+                        structured_payload["paused_for_user"] = True
+                        team_patch_step(
+                            run_id,
+                            step_key,
+                            status="done",
+                            output_md=text,
+                            structured=structured_payload,
+                            finished_at=_utc_iso(),
+                        )
+                        accumulated[step_key] = text
+                        if step_key == "architect":
+                            team_patch_run(run_id, architecture_md=text, phase="architecture_done")
+                        team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                        return True, text, None, True
 
                     if step_key == "execution_plan":
                         parsed = parse_execution_plan_json(text)
@@ -373,7 +514,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         step_key,
                         status="done",
                         output_md=text,
-                        structured={"attempt": attempt, "max_attempts": MAX_STEP_RETRIES},
+                        structured=structured_payload,
                         finished_at=_utc_iso(),
                     )
                     accumulated[step_key] = text
@@ -381,7 +522,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         team_patch_run(run_id, architecture_md=text, phase="architecture_done")
                     if step_key == "pm_summary":
                         team_patch_run(run_id, final_report_md=text, phase="summary_done")
-                    return True, text, None
+                    return True, text, None, False
                 except Exception as exc:
                     last_err = str(exc)
                     sig_err = _text_fingerprint(last_err)
@@ -416,9 +557,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             )
             if fail_run_on_error:
                 team_patch_run(run_id, status="error", error=f"{label}: {last_err}", phase="failed")
-            return False, None, last_err
+            return False, None, last_err, False
 
-        ok_intake, intake_text, _err = _execute_step("intake")
+        ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
         route = parse_orchestration_route(intake_text or "")
@@ -435,12 +576,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         finished_at=_utc_iso(),
                     )
                 team_patch_run(run_id, phase="routing_direct")
-                ok_direct, _txt, _e = _execute_step(
+                ok_direct, _txt, _e, halt_direct = _execute_step(
                     specialist_key,
                     direct_answer=True,
                     fail_run_on_error=True,
                 )
                 if not ok_direct:
+                    return
+                if halt_direct:
                     return
                 team_patch_run(run_id, status="done", phase="done")
                 return
@@ -449,14 +592,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         for layer in FULL_DAG_LAYERS:
             if len(layer) == 1:
                 k = layer[0]
-                ok_step, _txt, _e = _execute_step(k)
+                ok_step, _txt, _e, halt_step = _execute_step(k)
                 if not ok_step:
+                    return
+                if halt_step:
                     return
                 continue
 
             team_patch_run(run_id, phase="parallel_plans")
             acc_snapshot = _accumulated_md()
-            results: dict[str, tuple[bool, str | None, str | None]] = {}
+            results: dict[str, tuple[bool, str | None, str | None, bool]] = {}
             with ThreadPoolExecutor(max_workers=len(layer)) as pool:
                 futs = {
                     pool.submit(
@@ -473,13 +618,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     try:
                         results[k] = fut.result()
                     except Exception as exc:  # pragma: no cover
-                        results[k] = (False, None, str(exc))
+                        results[k] = (False, None, str(exc), False)
 
-            failed = [k for k in layer if not results.get(k, (False, None, "no result"))[0]]
+            if any(results.get(k, (False, None, None, False))[3] for k in layer):
+                return
+
+            failed = [k for k in layer if not results.get(k, (False, None, "no result", False))[0]]
             if failed:
                 peer_outputs = []
                 for k in layer:
-                    ok_peer, txt_peer, _ = results.get(k, (False, None, None))
+                    ok_peer, txt_peer, _, _hp = results.get(k, (False, None, None, False))
                     if ok_peer and txt_peer:
                         lbl, _task = STEP_META.get(k, (k, ""))
                         peer_outputs.append(f"### {lbl}\n{txt_peer}")
@@ -491,7 +639,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 acc_for_retry = _accumulated_md()
                 hard_failed: list[tuple[str, str]] = []
                 for k in failed:
-                    ok_retry, _txt_retry, err_retry = _execute_step(
+                    ok_retry, _txt_retry, err_retry, _h = _execute_step(
                         k,
                         fail_run_on_error=False,
                         acc_override=acc_for_retry,

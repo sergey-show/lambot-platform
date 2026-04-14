@@ -713,6 +713,14 @@ def ssh_exec_on_target(
     if cls == "blocked":
         raise HTTPException(status_code=400, detail=reason)
 
+    # SSH_SKIP_USER_CONFIRMATION=1 — выполнять «опасные» команды без двухшагового подтверждения пользователем (политика площадки).
+    if cls == "needs_confirmation" and os.getenv("SSH_SKIP_USER_CONFIRMATION", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        cls = "allowed"
+
     if cls == "needs_confirmation":
         if not body.confirmed:
             tok = issue_confirmation_token(str(project_id), str(target_id), cmd)

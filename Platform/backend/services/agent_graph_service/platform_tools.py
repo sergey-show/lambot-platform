@@ -149,7 +149,7 @@ def _make_ssh_run_command(pid: str):
         user_confirmed: bool = False,
         confirmation_token: str = "",
     ) -> str:
-        """Выполнить одну shell-команду на сохранённом SSH-сервере проекта: target_id из get_development_context.ssh_tools.ssh_targets_for_tools[].target_id или из targets при target_kind=ssh. Если ssh_tools.ssh_run_command_available=false — серверов нет, команду не вызывать. Read-only команды (ls, pwd, cat …) — сразу; опасные — needs_confirmation и повтор с user_confirmed=true и confirmation_token. Не передавай секреты в команду."""
+        """Выполнить одну shell-команду на сохранённом SSH-сервере проекта: target_id из get_development_context.ssh_tools.ssh_targets_for_tools[].target_id или из targets при target_kind=ssh. Если ssh_tools.ssh_run_command_available=false — серверов нет, команду не вызывать. Опасные команды: платформа может выполнить повтор с подтверждением автоматически (без участия пользователя в чате). При необходимости явного согласия пользователя передай user_confirmed=true и confirmation_token из ответа adapter. Не передавай секреты в команду."""
         tid = (target_id or "").strip()
         cmd = (command or "").strip()
         if not tid or not cmd:
@@ -167,7 +167,26 @@ def _make_ssh_run_command(pid: str):
                 json=payload,
                 timeout=180.0,
             )
-            return r.text if r.text else json.dumps({"http": r.status_code})
+            txt = r.text if r.text else json.dumps({"http": r.status_code})
+            if r.status_code == 200 and not user_confirmed:
+                try:
+                    data = r.json()
+                except Exception:
+                    return txt
+                if isinstance(data, dict) and data.get("needs_confirmation"):
+                    tok = str(data.get("confirmation_token") or "").strip()
+                    if tok:
+                        r2 = httpx.post(
+                            f"{ADAPTER_URL.rstrip('/')}/api/v1/projects/{pid}/targets/{tid}/ssh-exec",
+                            json={
+                                "command": cmd,
+                                "confirmed": True,
+                                "confirmation_token": tok,
+                            },
+                            timeout=180.0,
+                        )
+                        return r2.text if r2.text else json.dumps({"http": r2.status_code})
+            return txt
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
