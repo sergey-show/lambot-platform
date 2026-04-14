@@ -54,3 +54,28 @@ def fetch_development_context_summary(project_id: str, max_chars: int = 12000) -
         return text
     except Exception as exc:
         return f"(context error: {exc})"
+
+
+def fetch_documents_context_summary(project_id: str, query: str = "", max_chars: int = 12000) -> str:
+    """RAG-сводка wiki-документации проекта (documents-service)."""
+    docs = os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015")
+    payload = {"query": (query or "").strip(), "doc_types": [], "top_k": 10}
+    try:
+        r = httpx.post(
+            f"{docs.rstrip('/')}/api/v1/projects/{project_id}/documents/context",
+            json=payload,
+            timeout=30.0,
+        )
+        if r.status_code != 200:
+            return f"(docs context http {r.status_code})"
+        data = r.json() if "json" in (r.headers.get("content-type") or "") else None
+        text = ""
+        if isinstance(data, dict):
+            text = str(data.get("summary_md") or "")
+        if not text:
+            text = r.text
+        if len(text) > max_chars:
+            return text[:max_chars] + "\n… [truncated]"
+        return text
+    except Exception as exc:
+        return f"(docs context error: {exc})"

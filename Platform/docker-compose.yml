@@ -79,6 +79,22 @@ services:
       timeout: 3s
       retries: 20
 
+  postgres-documents:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: documents_db
+    ports:
+      - "5437:5432"
+    volumes:
+      - postgres_documents_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d documents_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis:7
     ports:
@@ -340,6 +356,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        INSTALL_PLAYWRIGHT: "1"
+        PLAYWRIGHT_INSTALL_DEPS: ${PLAYWRIGHT_INSTALL_DEPS:-0}
     command: sh -c "uvicorn services.browser_tool_service.main:app --host 0.0.0.0 --port 8014"
     ports:
       - "8014:8014"
@@ -348,6 +367,22 @@ services:
       BROWSER_ALLOWED_HOSTS: ${BROWSER_ALLOWED_HOSTS:-frontend,api-gateway,localhost,127.0.0.1}
       BROWSER_ALLOW_PUBLIC_WEB: ${BROWSER_ALLOW_PUBLIC_WEB:-0}
       BROWSER_IDLE_TTL_SEC: ${BROWSER_IDLE_TTL_SEC:-900}
+
+  documents-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.documents_service.main:app --host 0.0.0.0 --port 8015"
+    ports:
+      - "8015:8015"
+    environment:
+      DOCUMENTS_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-documents:5432/documents_db
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+    depends_on:
+      postgres-documents:
+        condition: service_healthy
+      llm-adapter-service:
+        condition: service_started
 
   # LangGraph ReAct + tool calling (контекст проекта, sandbox, …)
   agent-graph-service:
@@ -364,6 +399,7 @@ services:
       SANDBOX_SERVICE_URL: http://sandbox-service:8012
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
       API_GATEWAY_URL: http://api-gateway:8000
+      DOCUMENTS_SERVICE_URL: http://documents-service:8015
       ADMIN_SERVICE_URL: http://admin-service:8006
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -388,6 +424,8 @@ services:
       sandbox-service:
         condition: service_started
       llm-adapter-service:
+        condition: service_started
+      documents-service:
         condition: service_started
 
   admin-service:
@@ -414,6 +452,7 @@ services:
       SANDBOX_SERVICE_URL: http://sandbox-service:8012
       AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
       BROWSER_TOOL_SERVICE_URL: http://browser-tool-service:8014
+      DOCUMENTS_SERVICE_URL: http://documents-service:8015
       API_GATEWAY_URL: http://api-gateway:8000
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
@@ -450,6 +489,7 @@ services:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
       AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
       BROWSER_TOOL_SERVICE_URL: http://browser-tool-service:8014
+      DOCUMENTS_SERVICE_URL: http://documents-service:8015
     depends_on:
       project-service:
         condition: service_started
@@ -470,6 +510,8 @@ services:
       sandbox-service:
         condition: service_started
       browser-tool-service:
+        condition: service_started
+      documents-service:
         condition: service_started
       agent-graph-service:
         condition: service_started
@@ -492,5 +534,6 @@ volumes:
   postgres_admin_data:
   postgres_orchestrator_data:
   postgres_adapter_data:
+  postgres_documents_data:
   clickhouse_data:
   rustfs_data:

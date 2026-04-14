@@ -487,6 +487,7 @@ def admin_services_health(_: None = Depends(require_superadmin)) -> dict:
             "AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013"
         ),
         "browser-tool-service": os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014"),
+        "documents-service": os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015"),
         "api-gateway": os.getenv("API_GATEWAY_URL", "http://api-gateway:8000"),
     }
     results: dict[str, str] = {}
@@ -672,6 +673,9 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "run_sandbox_python",
         "http_request",
         "browser_session",
+        "get_project_docs_context",
+        "upsert_project_document",
+        "list_project_documents",
     }
 )
 

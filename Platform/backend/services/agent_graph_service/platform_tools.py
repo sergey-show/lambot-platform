@@ -283,7 +283,7 @@ def _make_http_request(pid: str):
         text_body: str = "",
         timeout_sec: int = 20,
     ) -> str:
-        """Универсальный HTTP запрос через безопасный executor gateway. endpoint_alias: adapter|project|planning|catalog|agent_graph. Используй path только внутри alias (можно с {project_id}); method: GET/POST/PUT/PATCH/DELETE. Для тела используй json_body или text_body. Секретные/служебные заголовки передавать нельзя."""
+        """Универсальный HTTP запрос через безопасный executor gateway. endpoint_alias: adapter|project|planning|catalog|agent_graph|documents. Используй path только внутри alias (можно с {project_id}); method: GET/POST/PUT/PATCH/DELETE. Для тела используй json_body или text_body. Секретные/служебные заголовки передавать нельзя."""
         p = (path or "").strip()
         if not p:
             return json.dumps({"error": "path required"})
@@ -366,6 +366,96 @@ def _make_browser_session(pid: str):
     return browser_session
 
 
+def _make_get_project_docs_context(pid: str):
+    @tool
+    def get_project_docs_context(query: str = "", doc_types_csv: str = "", top_k: int = 8) -> str:
+        """RAG-контекст проектной документации (Wiki): архитектура, user/admin guide, runbook, ADR. Используй перед планированием и изменениями. doc_types_csv пример: architecture,user_guide,admin_guide."""
+        types = []
+        for raw in (doc_types_csv or "").split(","):
+            v = raw.strip().lower()
+            if v:
+                types.append(v)
+        try:
+            k = max(1, min(int(top_k), 20))
+        except (TypeError, ValueError):
+            k = 8
+        payload = {"query": (query or "").strip(), "doc_types": types, "top_k": k}
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/documents/context",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=60.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return get_project_docs_context
+
+
+def _make_upsert_project_document(pid: str):
+    @tool
+    def upsert_project_document(
+        doc_type: str,
+        title: str,
+        content_md: str,
+        slug: str = "",
+        tags_csv: str = "",
+        change_summary: str = "",
+        run_id: str = "",
+    ) -> str:
+        """Создать/обновить wiki-документ проекта и новую версию. Используй после решения задачи для: architecture, user_guide, admin_guide."""
+        if not title.strip() or not content_md.strip():
+            return json.dumps({"error": "title and content_md are required"})
+        tags = [x.strip().lower() for x in tags_csv.split(",") if x.strip()]
+        payload = {
+            "doc_type": (doc_type or "other").strip().lower(),
+            "title": title.strip(),
+            "content_md": content_md.strip(),
+            "slug": slug.strip() or None,
+            "tags": tags,
+            "change_summary": (change_summary or "Updated by agent").strip(),
+            "author_type": "agent",
+            "author_id": "agent-graph",
+            "run_id": (run_id or "").strip() or None,
+        }
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/documents/upsert",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=90.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return upsert_project_document
+
+
+def _make_list_project_documents(pid: str):
+    @tool
+    def list_project_documents(doc_type: str = "", status: str = "active", limit: int = 100) -> str:
+        """Список wiki-документов проекта (фильтр по типу/статусу)."""
+        params: dict[str, str] = {"limit": str(max(1, min(int(limit or 100), 300)))}
+        if doc_type.strip():
+            params["doc_type"] = doc_type.strip().lower()
+        if status.strip():
+            params["status"] = status.strip().lower()
+        try:
+            r = httpx.get(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/projects/{pid}/documents",
+                params=params,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return list_project_documents
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "get_development_context": _make_get_development_context,
     "get_project_status": _make_get_project_status,
@@ -378,6 +468,9 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "run_sandbox_python": _make_run_sandbox_python,
     "http_request": _make_http_request,
     "browser_session": _make_browser_session,
+    "get_project_docs_context": _make_get_project_docs_context,
+    "upsert_project_document": _make_upsert_project_document,
+    "list_project_documents": _make_list_project_documents,
 }
 
 

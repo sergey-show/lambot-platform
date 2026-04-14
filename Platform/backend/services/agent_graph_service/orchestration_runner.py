@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import os
 import re
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
-from services.agent_graph_service.dev_prompts import fetch_development_context_summary, fetch_development_prompts
+from services.agent_graph_service.dev_prompts import (
+    fetch_development_context_summary,
+    fetch_development_prompts,
+    fetch_documents_context_summary,
+)
 from services.agent_graph_service.orchestration_route import (
     PRIMARY_ROLE_TO_STEP,
     parse_orchestration_route,
@@ -139,6 +145,8 @@ MAX_IDENTICAL_ERROR_REPEATS = 2
 MAX_IDENTICAL_OUTPUT_REPEATS = 2
 MAX_ORCHESTRATION_SECONDS = 1800
 MAX_PEER_QUERIES = 5
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
+INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
 # Шаги с единым JSON-конвертом (summary + вопросы/peer_queries); execution_plan и intake — отдельно.
 STRUCTURED_STEP_KEYS = frozenset(
@@ -221,6 +229,7 @@ def _build_system(
     step_key: str,
     role_prompt: str,
     ctx: str,
+    docs_ctx: str,
     accumulated_md: str,
     user_message: str,
     *,
@@ -230,12 +239,14 @@ def _build_system(
     if step_key == "intake":
         extra = STEP_EXTRA.get("intake", "")
         ctx_use = _ctx_trim(ctx, 4500)
+        docs_use = _ctx_trim(docs_ctx, 2500)
         return (
             "Ты маршрутизатор запроса к AI-команде. Нужно только определить: полный пайплайн (full) или "
             "ответ одного специалиста (direct) и при direct — какая роль. Не расписывай этапы работ, "
             "не собирай требования к продукту — это следующие шаги.\n\n"
             f"{extra}\n\n---\n"
             f"Контекст проекта:\n{ctx_use}\n\n---\n"
+            f"Документация проекта:\n{docs_use}\n\n---\n"
             "Ответь по-русски: короткая преамбула, затем JSON orchestration_route. "
             "Не выдумывай факты — опирайся на контекст и формулировку запроса.\n\n"
             f"Запрос пользователя:\n{user_message.strip()}"
@@ -258,6 +269,7 @@ def _build_system(
     tail = (
         f"{role_prompt}\n\n---\n{extra}\n\n---\n"
         f"Контекст проекта (development-context):\n{ctx}\n\n---\n"
+        f"Документация проекта (wiki / RAG):\n{docs_ctx}\n\n---\n"
         f"Накопленные результаты шагов:\n{acc}\n\n---\n"
         f"Факты исполнения (структурированные задачи, воркеры):\n{ex}\n\n---\n"
         "Ответь по-русски, кроме шага execution_plan — там только JSON по инструкции. "
@@ -278,6 +290,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         tenant_id = fetch_project_tenant_id(pid)
         prompts = fetch_development_prompts()
         ctx = fetch_development_context_summary(pid)
+        docs_ctx = fetch_documents_context_summary(pid, user_message)
         accumulated: dict[str, str] = {}
         execution_ctx = ""
         run_started = monotonic()
@@ -331,6 +344,81 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             out = resp.content if isinstance(resp.content, str) else str(resp.content)
             return (out or "").strip()
 
+        def _upsert_doc(
+            *,
+            doc_type: str,
+            title: str,
+            content_md: str,
+            slug: str,
+            change_summary: str,
+        ) -> None:
+            content = (content_md or "").strip()
+            if not content:
+                return
+            payload = {
+                "doc_type": doc_type,
+                "title": title,
+                "content_md": content,
+                "slug": slug,
+                "tags": ["auto", "orchestration", doc_type],
+                "change_summary": change_summary,
+                "author_type": "agent",
+                "author_id": "agent-graph-orchestrator",
+                "run_id": run_id,
+            }
+            with httpx.Client(timeout=60.0) as client:
+                r = client.post(
+                    f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/documents/upsert",
+                    headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if r.status_code >= 400:
+                    raise RuntimeError(f"documents upsert {doc_type} failed: http {r.status_code}")
+
+        def _persist_docs_after_run() -> None:
+            arch = (accumulated.get("architect") or "").strip()
+            impl = (accumulated.get("implementation") or "").strip()
+            deploy = (accumulated.get("deploy") or "").strip()
+            summary = (accumulated.get("pm_summary") or "").strip()
+            if not (arch or impl or deploy or summary):
+                return
+            _upsert_doc(
+                doc_type="architecture",
+                title="Architecture Overview",
+                slug="architecture-overview",
+                content_md=arch or summary,
+                change_summary="Auto-sync architecture from orchestration run",
+            )
+            user_doc = "\n\n".join(
+                [x for x in [summary, accumulated.get("frontend_plan") or "", deploy] if (x or "").strip()]
+            ).strip()
+            _upsert_doc(
+                doc_type="user_guide",
+                title="User Guide",
+                slug="user-guide",
+                content_md=user_doc,
+                change_summary="Auto-sync user guide from orchestration run",
+            )
+            admin_doc = "\n\n".join(
+                [
+                    x
+                    for x in [
+                        accumulated.get("devops_plan") or "",
+                        accumulated.get("backend_plan") or "",
+                        impl,
+                        deploy,
+                    ]
+                    if (x or "").strip()
+                ]
+            ).strip()
+            _upsert_doc(
+                doc_type="admin_guide",
+                title="Administrator Guide",
+                slug="administrator-guide",
+                content_md=admin_doc,
+                change_summary="Auto-sync admin guide from orchestration run",
+            )
+
         def _run_single_step_text(
             step_key: str,
             *,
@@ -345,6 +433,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 step_key,
                 role_prompt,
                 ctx,
+                docs_ctx,
                 acc_override if acc_override is not None else _accumulated_md(),
                 user_message,
                 execution_ctx=execution_ctx,
@@ -585,6 +674,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     return
                 if halt_direct:
                     return
+                try:
+                    _persist_docs_after_run()
+                except Exception as exc:
+                    team_patch_run(run_id, phase=f"docs_sync_warning: {exc}"[:120])
                 team_patch_run(run_id, status="done", phase="done")
                 return
 
@@ -659,6 +752,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     return
             team_patch_run(run_id, phase="parallel_done")
 
+        try:
+            _persist_docs_after_run()
+        except Exception as exc:
+            team_patch_run(run_id, phase=f"docs_sync_warning: {exc}"[:120])
         team_patch_run(run_id, status="done", phase="done")
     except Exception as exc:
         team_patch_run(run_id, status="error", error=str(exc), phase="failed")

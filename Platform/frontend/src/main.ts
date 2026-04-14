@@ -479,6 +479,7 @@ function renderPortal(): void {
         <nav class="lp-portal-nav">
           <a href="#/portal/home" data-portal-view="home">Главная</a>
           <a href="#/portal/team" data-portal-view="team">ИИ Команда</a>
+          <a href="#/portal/docs" data-portal-view="docs">Документация</a>
           <a href="#/portal/tracker" data-portal-view="tracker">Задачи агентов</a>
           <a href="#/portal/servers" data-portal-view="servers">Серверы</a>
           <a href="#/portal/k8s-install" data-portal-view="k8s-install">K8s: установка</a>
@@ -582,6 +583,83 @@ function renderPortal(): void {
           </div>
           <div id="orch-node-modal-body"></div>
         </div>
+      </div>
+      </div>
+      <div id="view-docs" class="lp-portal-view">
+      <div class="lp-panel" id="docs-panel">
+        <h2>Документация проекта (Wiki + RAG)</h2>
+        <p class="lp-muted">
+          Здесь хранится актуальная архитектура и инструкции для пользователя/администратора. Агенты используют эти документы как контекст при решении следующих задач.
+        </p>
+        <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
+          <div class="lp-field" style="min-width:190px;">
+            <label>Фильтр типа</label>
+            <select class="lp-select" id="docs-filter-type">
+              <option value="">Все</option>
+              <option value="architecture">architecture</option>
+              <option value="user_guide">user_guide</option>
+              <option value="admin_guide">admin_guide</option>
+              <option value="runbook">runbook</option>
+              <option value="adr">adr</option>
+              <option value="api_contract">api_contract</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-refresh-btn">Обновить список</button>
+        </div>
+        <p class="lp-muted" id="docs-status-line" style="font-size:12px;margin-bottom:8px;"></p>
+        <div id="docs-items-list" class="lp-orch-grid"></div>
+      </div>
+      <div class="lp-panel">
+        <h3 style="margin-top:0;">Редактор документа</h3>
+        <input type="hidden" id="docs-edit-id" value="" />
+        <div class="lp-row" style="flex-wrap:wrap;gap:10px;">
+          <div class="lp-field" style="min-width:240px;flex:1;">
+            <label>Заголовок</label>
+            <input class="lp-input" id="docs-edit-title" placeholder="Например, Architecture Overview" />
+          </div>
+          <div class="lp-field" style="min-width:180px;">
+            <label>Тип</label>
+            <select class="lp-select" id="docs-edit-type">
+              <option value="architecture">architecture</option>
+              <option value="user_guide">user_guide</option>
+              <option value="admin_guide">admin_guide</option>
+              <option value="runbook">runbook</option>
+              <option value="adr">adr</option>
+              <option value="api_contract">api_contract</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <div class="lp-field" style="min-width:220px;">
+            <label>Slug (опционально)</label>
+            <input class="lp-input" id="docs-edit-slug" placeholder="architecture-overview" />
+          </div>
+        </div>
+        <div class="lp-field">
+          <label>Содержимое (Markdown)</label>
+          <textarea class="lp-textarea" id="docs-edit-content" rows="12" placeholder="# Заголовок&#10;&#10;Текст..."></textarea>
+        </div>
+        <div class="lp-field">
+          <label>Комментарий версии</label>
+          <input class="lp-input" id="docs-edit-change-summary" placeholder="Что изменено" />
+        </div>
+        <div class="lp-row" style="gap:8px;">
+          <button type="button" class="lp-btn" id="docs-save-btn">Сохранить версию</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-new-btn">Новый документ</button>
+        </div>
+        <h4 style="margin:14px 0 8px;">История версий</h4>
+        <div id="docs-versions-wrap" class="lp-orch-grid"></div>
+      </div>
+      <div class="lp-panel">
+        <h3 style="margin-top:0;">Поиск по документации (RAG)</h3>
+        <div class="lp-row" style="gap:8px;align-items:flex-end;">
+          <div class="lp-field" style="flex:1;">
+            <label>Запрос</label>
+            <input class="lp-input" id="docs-search-query" placeholder="например: как устроен деплой и rollback" />
+          </div>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-search-btn">Поиск</button>
+        </div>
+        <div id="docs-search-results" class="lp-orch-grid"></div>
       </div>
       </div>
       <div id="view-tracker" class="lp-portal-view">
@@ -890,6 +968,7 @@ function renderPortal(): void {
   let currentTargetId = "";
   let statusPoll: number | null = null;
   let lastActivityItems: Array<Record<string, unknown>> = [];
+  let currentDocId = "";
 
   /** Основной чат: пользователь, одиночный ассистент (LangGraph), либо сообщения ролей ИИ Команды. */
   type ProjectChatMsg =
@@ -1062,6 +1141,16 @@ function renderPortal(): void {
     artifact_name?: string;
     error?: string;
     details?: Record<string, unknown>;
+  };
+
+  type ProjectDocItem = {
+    id: string;
+    slug: string;
+    title: string;
+    doc_type: string;
+    status: string;
+    latest_version: number;
+    updated_at?: string;
   };
 
   type GraphNodeDef = {
@@ -1538,6 +1627,290 @@ function renderPortal(): void {
     }
   };
 
+  const resetDocsEditor = () => {
+    currentDocId = "";
+    const idEl = document.getElementById("docs-edit-id") as HTMLInputElement | null;
+    const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
+    const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
+    const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
+    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
+    const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
+    const versionsWrap = document.getElementById("docs-versions-wrap");
+    if (idEl) idEl.value = "";
+    if (titleEl) titleEl.value = "";
+    if (typeEl) typeEl.value = "architecture";
+    if (slugEl) slugEl.value = "";
+    if (contentEl) contentEl.value = "";
+    if (chgEl) chgEl.value = "Создано/обновлено вручную";
+    if (versionsWrap) versionsWrap.innerHTML = `<p class="lp-muted">Выберите документ в списке слева.</p>`;
+  };
+
+  const loadDocumentVersions = async (docId: string) => {
+    const wrap = document.getElementById("docs-versions-wrap");
+    if (!wrap || !currentProjectId || !docId) return;
+    const resp = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(docId)}/versions`,
+      { headers: authHeader(token()) },
+    );
+    if (!resp.ok) {
+      wrap.innerHTML = `<p class="lp-muted">Ошибка загрузки версий: ${resp.status}</p>`;
+      return;
+    }
+    const data = (await resp.json()) as { items?: Array<Record<string, unknown>> };
+    const items = data.items || [];
+    if (items.length === 0) {
+      wrap.innerHTML = `<p class="lp-muted">Пока нет версий.</p>`;
+      return;
+    }
+    wrap.innerHTML = items
+      .map((v) => {
+        const ver = Number(v.version ?? 0);
+        const created = String(v.created_at ?? "");
+        const summary = String(v.change_summary ?? "");
+        return `<article class="lp-orch-card">
+          <div class="lp-orch-card-head">
+            <span class="lp-orch-badge ok">v${ver}</span>
+            <span class="lp-muted" style="font-size:12px;">${escapeHtml(created)}</span>
+          </div>
+          <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">${escapeHtml(summary || "—")}</p>
+          <button type="button" class="lp-btn lp-btn-ghost lp-docs-load-ver" data-version="${ver}">Открыть</button>
+        </article>`;
+      })
+      .join("");
+    wrap.querySelectorAll(".lp-docs-load-ver").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const ver = (b as HTMLButtonElement).dataset.version;
+        if (!ver || !currentProjectId || !currentDocId) return;
+        const r = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(currentDocId)}/versions/${encodeURIComponent(ver)}`,
+          { headers: authHeader(token()) },
+        );
+        if (!r.ok) {
+          alert(`Не удалось загрузить версию ${ver}: ${r.status}`);
+          return;
+        }
+        const payload = (await r.json()) as { version?: Record<string, unknown> };
+        const content = String(payload.version?.content_md ?? "");
+        const cEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
+        if (cEl) cEl.value = content;
+      });
+    });
+  };
+
+  const loadDocumentById = async (docId: string) => {
+    if (!currentProjectId || !docId) return;
+    const resp = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(docId)}`,
+      { headers: authHeader(token()) },
+    );
+    if (!resp.ok) return;
+    const payload = (await resp.json()) as {
+      document?: Record<string, unknown>;
+      current_version?: Record<string, unknown> | null;
+    };
+    const doc = payload.document || {};
+    const ver = payload.current_version || {};
+    currentDocId = String(doc.id ?? "");
+    const idEl = document.getElementById("docs-edit-id") as HTMLInputElement | null;
+    const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
+    const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
+    const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
+    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
+    const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
+    if (idEl) idEl.value = currentDocId;
+    if (titleEl) titleEl.value = String(doc.title ?? "");
+    if (typeEl) typeEl.value = String(doc.doc_type ?? "other");
+    if (slugEl) slugEl.value = String(doc.slug ?? "");
+    if (contentEl) contentEl.value = String(ver.content_md ?? "");
+    if (chgEl) chgEl.value = "Обновлено вручную";
+    await loadDocumentVersions(currentDocId);
+  };
+
+  const loadDocumentsList = async () => {
+    const listEl = document.getElementById("docs-items-list");
+    const stEl = document.getElementById("docs-status-line");
+    const typeEl = document.getElementById("docs-filter-type") as HTMLSelectElement | null;
+    if (!listEl || !stEl) return;
+    if (!currentProjectId) {
+      listEl.innerHTML = `<p class="lp-muted">Выберите проект</p>`;
+      stEl.textContent = "";
+      resetDocsEditor();
+      return;
+    }
+    const params = new URLSearchParams();
+    const tt = typeEl?.value?.trim() || "";
+    if (tt) params.set("doc_type", tt);
+    params.set("limit", "200");
+    const r = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents?${params.toString()}`,
+      { headers: authHeader(token()) },
+    );
+    if (!r.ok) {
+      listEl.innerHTML = `<p class="lp-muted">Ошибка загрузки: ${r.status}</p>`;
+      stEl.textContent = "";
+      return;
+    }
+    const data = (await r.json()) as { items?: ProjectDocItem[] };
+    const items = data.items || [];
+    stEl.textContent = `Документов: ${items.length}`;
+    if (items.length === 0) {
+      listEl.innerHTML = `<p class="lp-muted">Пока нет документов.</p>`;
+      return;
+    }
+    listEl.innerHTML = items
+      .map(
+        (d) => `<article class="lp-orch-card">
+          <div class="lp-orch-card-head">
+            <span class="lp-orch-badge ok">${escapeHtml(d.doc_type)}</span>
+            <span class="lp-muted" style="font-size:12px;">v${Number(d.latest_version || 0)}</span>
+          </div>
+          <h4 style="margin:0 0 4px;font-size:14px;">${escapeHtml(d.title || d.slug)}</h4>
+          <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">slug: ${escapeHtml(d.slug)} · ${escapeHtml(d.status)}</p>
+          <div class="lp-row" style="gap:6px;">
+            <button type="button" class="lp-btn lp-btn-ghost lp-doc-open" data-doc-id="${escapeHtml(d.id)}">Открыть</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-doc-del" data-doc-id="${escapeHtml(d.id)}" style="color:#b91c1c;">Удалить</button>
+          </div>
+        </article>`,
+      )
+      .join("");
+    listEl.querySelectorAll(".lp-doc-open").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = (b as HTMLButtonElement).dataset.docId;
+        if (id) void loadDocumentById(id);
+      });
+    });
+    listEl.querySelectorAll(".lp-doc-del").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const id = (b as HTMLButtonElement).dataset.docId;
+        if (!id || !currentProjectId) return;
+        if (!window.confirm("Удалить документ?")) return;
+        const rr = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(id)}`,
+          { method: "DELETE", headers: authHeader(token()) },
+        );
+        if (!rr.ok) alert(`Ошибка удаления: ${rr.status}`);
+        if (currentDocId === id) resetDocsEditor();
+        void loadDocumentsList();
+      });
+    });
+  };
+
+  const saveDocumentFromEditor = async () => {
+    if (!currentProjectId) {
+      alert("Выберите проект");
+      return;
+    }
+    const title = (document.getElementById("docs-edit-title") as HTMLInputElement | null)?.value.trim() || "";
+    const docType = (document.getElementById("docs-edit-type") as HTMLSelectElement | null)?.value || "other";
+    const slug = (document.getElementById("docs-edit-slug") as HTMLInputElement | null)?.value.trim() || "";
+    const content = (document.getElementById("docs-edit-content") as HTMLTextAreaElement | null)?.value || "";
+    const changeSummary =
+      (document.getElementById("docs-edit-change-summary") as HTMLInputElement | null)?.value.trim() || "Updated";
+    if (!title || !content.trim()) {
+      alert("Нужны title и content");
+      return;
+    }
+    if (!currentDocId) {
+      const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents`, {
+        method: "POST",
+        headers: { ...authHeader(token()), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          doc_type: docType,
+          slug: slug || null,
+          tags: [],
+          content_md: content,
+          change_summary: changeSummary,
+          author_type: "user",
+        }),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        alert(txt || `Ошибка ${resp.status}`);
+        return;
+      }
+      const payload = (await resp.json()) as { document?: { id?: string } };
+      currentDocId = String(payload.document?.id || "");
+      await loadDocumentsList();
+      if (currentDocId) await loadDocumentById(currentDocId);
+      return;
+    }
+    const vr = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(currentDocId)}/versions`,
+      {
+        method: "POST",
+        headers: { ...authHeader(token()), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content_md: content,
+          change_summary: changeSummary,
+          author_type: "user",
+        }),
+      },
+    );
+    if (!vr.ok) {
+      const txt = await vr.text();
+      alert(txt || `Ошибка ${vr.status}`);
+      return;
+    }
+    await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(currentDocId)}`, {
+      method: "PATCH",
+      headers: { ...authHeader(token()), "Content-Type": "application/json" },
+      body: JSON.stringify({ title, doc_type: docType, slug: slug || null, status: "active" }),
+    });
+    await loadDocumentsList();
+    await loadDocumentVersions(currentDocId);
+  };
+
+  const searchDocuments = async () => {
+    const wrap = document.getElementById("docs-search-results");
+    const q = (document.getElementById("docs-search-query") as HTMLInputElement | null)?.value.trim() || "";
+    if (!wrap) return;
+    if (!currentProjectId) {
+      wrap.innerHTML = `<p class="lp-muted">Выберите проект</p>`;
+      return;
+    }
+    if (!q) {
+      wrap.innerHTML = `<p class="lp-muted">Введите запрос</p>`;
+      return;
+    }
+    const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/search`, {
+      method: "POST",
+      headers: { ...authHeader(token()), "Content-Type": "application/json" },
+      body: JSON.stringify({ query: q, top_k: 8 }),
+    });
+    if (!r.ok) {
+      wrap.innerHTML = `<p class="lp-muted">Ошибка поиска: ${r.status}</p>`;
+      return;
+    }
+    const data = (await r.json()) as { items?: Array<Record<string, unknown>> };
+    const items = data.items || [];
+    if (items.length === 0) {
+      wrap.innerHTML = `<p class="lp-muted">Ничего не найдено.</p>`;
+      return;
+    }
+    wrap.innerHTML = items
+      .map((it) => {
+        const score = Number(it.score ?? 0).toFixed(3);
+        const docId = String(it.document_id ?? "");
+        return `<article class="lp-orch-card">
+          <div class="lp-orch-card-head">
+            <span class="lp-orch-badge run">${escapeHtml(String(it.doc_type ?? "doc"))}</span>
+            <span class="lp-muted" style="font-size:12px;">score ${escapeHtml(score)}</span>
+          </div>
+          <h4 style="margin:0 0 6px;font-size:14px;">${escapeHtml(String(it.title ?? ""))}</h4>
+          <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">${escapeHtml(String(it.excerpt ?? ""))}</p>
+          <button type="button" class="lp-btn lp-btn-ghost lp-doc-search-open" data-doc-id="${escapeHtml(docId)}">Открыть документ</button>
+        </article>`;
+      })
+      .join("");
+    wrap.querySelectorAll(".lp-doc-search-open").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = (b as HTMLButtonElement).dataset.docId;
+        if (id) void loadDocumentById(id);
+      });
+    });
+  };
+
   const loadTrackerItems = async () => {
     const listEl = document.getElementById("tracker-items-list");
     const stEl = document.getElementById("tracker-status-line");
@@ -1719,9 +2092,11 @@ function renderPortal(): void {
     closeOrchNodeModal();
     stopOrchestrationPoll();
     void loadTrackerItems();
+    void loadDocumentsList();
     if (!currentProjectId) {
       renderOrchestrationPanel(null);
       void loadBrowserLogs("");
+      resetDocsEditor();
       return;
     }
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
@@ -2679,6 +3054,18 @@ function renderPortal(): void {
       closeOrchNodeModal();
     }
   });
+
+  document.getElementById("docs-refresh-btn")?.addEventListener("click", () => void loadDocumentsList());
+  document.getElementById("docs-new-btn")?.addEventListener("click", () => resetDocsEditor());
+  document.getElementById("docs-save-btn")?.addEventListener("click", () => void saveDocumentFromEditor());
+  document.getElementById("docs-search-btn")?.addEventListener("click", () => void searchDocuments());
+  document.getElementById("docs-search-query")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      void searchDocuments();
+    }
+  });
+  document.getElementById("docs-filter-type")?.addEventListener("change", () => void loadDocumentsList());
 
   document.getElementById("tracker-create-btn")?.addEventListener("click", async () => {
     if (!currentProjectId) {

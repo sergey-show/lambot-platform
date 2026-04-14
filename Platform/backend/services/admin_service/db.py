@@ -102,6 +102,9 @@ def _seed_agent_graph_builtin_tools() -> None:
         "run_sandbox_python": "Песочница Python",
         "http_request": "Универсальный HTTP инструмент (alias/method/path/body)",
         "browser_session": "Браузерный Playwright инструмент (сессии, действия, скриншоты)",
+        "get_project_docs_context": "RAG-контекст документации проекта (wiki)",
+        "upsert_project_document": "Создать/обновить документ проекта (wiki + версии)",
+        "list_project_documents": "Список документов проекта (wiki)",
     }
     try:
         with SessionLocal() as db:

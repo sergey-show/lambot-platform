@@ -29,6 +29,7 @@ SANDBOX_SERVICE_URL = os.getenv("SANDBOX_SERVICE_URL", "http://sandbox-service:8
 SANDBOX_SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev-token")
 AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
 BROWSER_TOOL_SERVICE_URL = os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014")
+DOCUMENTS_SERVICE_URL = os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015")
 INTERNAL_PROJECT_ADMIN_TOKEN = os.getenv(
     "INTERNAL_PROJECT_ADMIN_TOKEN", "internal-project-admin-dev-token"
 )
@@ -197,6 +198,11 @@ _HTTP_ALIAS_CONFIG: dict[str, dict[str, object]] = {
         "base_url": AGENT_GRAPH_SERVICE_URL,
         "path_prefixes": ["/api/v1/projects/{project_id}/"],
         "methods": ["GET", "POST"],
+    },
+    "documents": {
+        "base_url": DOCUMENTS_SERVICE_URL,
+        "path_prefixes": ["/api/v1/projects/{project_id}/documents"],
+        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
     },
 }
 
@@ -496,6 +502,32 @@ async def internal_browser_execute(project_id: str, request: Request):
             )
     mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
     return _response_from_httpx(response)
+
+
+@app.post("/api/v1/internal/projects/{project_id}/documents/context")
+async def internal_documents_context(project_id: str, request: Request):
+    xit = (request.headers.get("X-Internal-Token") or "").strip()
+    if xit != INTERNAL_LLM_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await proxy_json(
+        "POST",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/context",
+        request,
+        timeout=60.0,
+    )
+
+
+@app.post("/api/v1/internal/projects/{project_id}/documents/upsert")
+async def internal_documents_upsert(project_id: str, request: Request):
+    xit = (request.headers.get("X-Internal-Token") or "").strip()
+    if xit != INTERNAL_LLM_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await proxy_json(
+        "POST",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/upsert",
+        request,
+        timeout=90.0,
+    )
 
 
 @app.get("/api/v1/admin/users")
@@ -1271,6 +1303,129 @@ async def ai_team_state(project_id: str, request: Request):
         response = await client.get(f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/ai-team/state")
     mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
     return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/documents")
+async def documents_list(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents", request)
+
+
+@app.post("/api/v1/projects/{project_id}/documents")
+async def documents_create(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json("POST", f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents", request)
+
+
+@app.get("/api/v1/projects/{project_id}/documents/{doc_id}")
+async def documents_get(project_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}", request)
+
+
+@app.patch("/api/v1/projects/{project_id}/documents/{doc_id}")
+async def documents_patch(project_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "PATCH",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}",
+        request,
+    )
+
+
+@app.delete("/api/v1/projects/{project_id}/documents/{doc_id}")
+async def documents_delete(project_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    hard = request.query_params.get("hard", "0")
+    params = {"hard": hard}
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        response = await client.delete(
+            f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}",
+            params=params,
+        )
+    mark_request("DELETE", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/documents/{doc_id}/versions")
+async def documents_versions_list(project_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}/versions",
+        request,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/documents/{doc_id}/versions")
+async def documents_versions_create(project_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}/versions",
+        request,
+        timeout=90.0,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/documents/{doc_id}/versions/{version}")
+async def documents_version_get(project_id: str, doc_id: str, version: int, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await _proxy_get(
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}/versions/{version}",
+        request,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/documents/{doc_id}/restore/{version}")
+async def documents_restore(project_id: str, doc_id: str, version: int, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/{doc_id}/restore/{version}",
+        )
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/documents/search")
+async def documents_search(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/search",
+        request,
+        timeout=90.0,
+    )
+
+
+@app.post("/api/v1/projects/{project_id}/documents/reindex")
+async def documents_reindex(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/reindex",
+        request,
+        timeout=180.0,
+    )
 
 
 @app.get("/api/v1/projects/{project_id}/tracker/items")

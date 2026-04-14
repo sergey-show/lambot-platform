@@ -82,7 +82,6 @@ def parse_step_envelope(raw_text: str) -> tuple[StepEnvelope | None, str]:
 
     summary = str(obj.get("summary_md") or "").strip()
     if not summary:
-        # без summary — считаем, что модель не следовала схеме
         return None, text
 
     qfu = obj.get("questions_for_user")
@@ -119,5 +118,4 @@ def parse_step_envelope(raw_text: str) -> tuple[StepEnvelope | None, str]:
     )
     if questions or status == "need_user_clarification":
         env.pipeline_continue = False
-
     return env, text
