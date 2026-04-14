@@ -797,6 +797,21 @@ def _orchestrator_prepare_bundle(template_id: str, variables: dict, row: ServerT
     return r.json()
 
 
+def _orchestrator_template_detail(template_id: str) -> dict[str, Any]:
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(
+            f"{ANSIBLE_ORCHESTRATOR_URL.rstrip('/')}/api/v1/ansible/swarm/templates/{template_id}",
+        )
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Unknown ansible template: {template_id}")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=r.text)
+    data = r.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="template detail response is not object")
+    return data
+
+
 @app.post("/api/v1/projects/{project_id}/targets/{target_id}/prepare")
 def prepare_bundle(
     project_id: UUID,
@@ -1325,6 +1340,17 @@ class PrepareStackBody(BaseModel):
     nexus_docker_port: int = Field(default=5050, ge=1, le=65535, description="Порт на хосте для Docker Registry в Nexus")
 
 
+class InfraRunTemplateBody(BaseModel):
+    target_id: UUID
+    template_id: str = Field(..., min_length=2, max_length=80)
+    variables: dict[str, Any] = Field(default_factory=dict)
+    gitlab_http_port: int = 8081
+    nexus_http_port: int = 8082
+    nexus_docker_port: int = Field(default=5050, ge=1, le=65535)
+    allow_fallback: bool = False
+    fallback_service: str | None = Field(default=None, description="gitlab|docker|nexus")
+
+
 def _infra_template_vars_and_url(
     role: str, tgt: ServerTarget, body: PrepareStackBody, project_id: UUID
 ) -> tuple[dict, str] | None:
@@ -1403,6 +1429,86 @@ def _truncate_log(text: str, max_len: int = 48000) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 40] + "\n... [truncated]"
+
+
+def _default_template_variables(
+    project_id: UUID,
+    tgt: ServerTarget,
+    *,
+    gitlab_http_port: int,
+    nexus_http_port: int,
+    nexus_docker_port: int,
+) -> dict[str, Any]:
+    pname = _fetch_project_name(project_id)
+    slug = _slug_for_infra(pname, project_id)
+    pwd = _derive_service_password(project_id)
+    pwd_b64 = base64.b64encode(pwd.encode("utf-8")).decode("ascii")
+    return {
+        "ssh_user": tgt.ssh_user,
+        "server_host": tgt.host,
+        "gitlab_http_port": gitlab_http_port,
+        "nexus_http_port": nexus_http_port,
+        "nexus_docker_port": nexus_docker_port,
+        "gitlab_external_url": f"http://{tgt.host}:{gitlab_http_port}",
+        "nexus_url": f"http://{tgt.host}:{nexus_http_port}",
+        "nexus_host": tgt.host,
+        "lambot_project_id": str(project_id),
+        "lambot_project_slug": slug,
+        "lambot_project_name": pname,
+        "lambot_service_password": pwd,
+        "lambot_service_password_b64": pwd_b64,
+    }
+
+
+def _run_fallback_service_install(
+    row: ServerTarget,
+    service: str,
+) -> dict[str, Any]:
+    secret = decrypt_secret(row.credential_encrypted)
+    timeout_sec = float(os.getenv("SSH_EXEC_TIMEOUT_SEC", "120"))
+    svc = (service or "").strip().lower()
+    if svc == "gitlab":
+        command = (
+            "set -e; "
+            "if command -v gitlab-ctl >/dev/null 2>&1; then echo gitlab_already_installed; exit 0; fi; "
+            "apt-get update -y; apt-get install -y curl ca-certificates openssh-server tzdata perl; "
+            "curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash; "
+            "EXTERNAL_URL=http://$(hostname -f) apt-get install -y gitlab-ce; "
+            "gitlab-ctl status"
+        )
+    elif svc == "docker":
+        command = (
+            "set -e; "
+            "if command -v docker >/dev/null 2>&1; then docker --version; exit 0; fi; "
+            "apt-get update -y; apt-get install -y docker.io; "
+            "systemctl enable --now docker || true; "
+            "docker --version"
+        )
+    elif svc == "nexus":
+        command = (
+            "set -e; "
+            "if systemctl list-unit-files | grep -qi nexus; then echo nexus_service_present; systemctl status nexus || true; exit 0; fi; "
+            "echo 'No fallback installer for nexus in platform baseline'; exit 12"
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown fallback_service: {service}")
+
+    rc, out, err = run_ssh_command(
+        row.host,
+        row.ssh_port,
+        row.ssh_user,
+        row.auth_type,
+        secret,
+        command,
+        timeout=timeout_sec,
+    )
+    return {
+        "ok": rc == 0,
+        "service": svc,
+        "exit_code": rc,
+        "stdout": _truncate_log(out),
+        "stderr": _truncate_log(err),
+    }
 
 
 def _sanitize_prepare_results(results: list[dict]) -> list[dict]:
@@ -1770,6 +1876,137 @@ def _iter_infra_run_stack(
         },
     )
     yield {"type": "done", "payload": out, "status": st, "summary": summary}
+
+
+@app.post("/api/v1/projects/{project_id}/infra/run-template")
+def run_infra_template(
+    project_id: UUID,
+    body: InfraRunTemplateBody,
+    db: Session = Depends(get_db),
+    act: ActivityContext = Depends(get_activity_context),
+) -> dict[str, Any]:
+    """Универсальный запуск Ansible-шаблона из каталога на выбранном SSH-таргете."""
+    if not _project_exists(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not ansible_playbook_available():
+        raise HTTPException(status_code=503, detail="ansible-playbook недоступен")
+    row = db.get(ServerTarget, body.target_id)
+    if not row or str(row.project_id) != str(project_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    if getattr(row, "target_kind", "ssh") != "ssh":
+        raise HTTPException(status_code=400, detail="Template run доступен только для SSH target")
+
+    template_id = body.template_id.strip()
+    defaults = _default_template_variables(
+        project_id,
+        row,
+        gitlab_http_port=body.gitlab_http_port,
+        nexus_http_port=body.nexus_http_port,
+        nexus_docker_port=body.nexus_docker_port,
+    )
+    variables = {**defaults, **(body.variables or {})}
+
+    detail: dict[str, Any] | None = None
+    try:
+        detail = _orchestrator_template_detail(template_id)
+    except HTTPException as exc:
+        if body.allow_fallback and body.fallback_service:
+            fb = _run_fallback_service_install(row, body.fallback_service)
+            st = "ok" if fb.get("ok") else "error"
+            _emit_activity(
+                project_id,
+                act,
+                "infra.run_template_fallback",
+                st,
+                f"Fallback install {body.fallback_service} on {row.host}",
+                {"template_id": template_id, "target_id": str(row.id), "result": fb},
+            )
+            return {
+                "ok": bool(fb.get("ok")),
+                "mode": "fallback",
+                "template_id": template_id,
+                "target_id": str(row.id),
+                "target_host": row.host,
+                "fallback_service": body.fallback_service,
+                "fallback_result": fb,
+            }
+        raise exc
+
+    schema = detail.get("vars_schema")
+    if isinstance(schema, dict):
+        missing: list[str] = []
+        for key, spec in schema.items():
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("required") is True:
+                v = variables.get(key)
+                if v is None or (isinstance(v, str) and not v.strip()):
+                    missing.append(str(key))
+        if missing:
+            raise HTTPException(status_code=400, detail=f"missing required variables: {', '.join(sorted(missing))}")
+
+    prep_result: dict[str, Any] | None = None
+    needs_prep = _template_requires_docker(template_id)
+    if template_id not in TEMPLATE_REQUIRES_DOCKER:
+        tags_raw = detail.get("tags") if isinstance(detail, dict) else []
+        tags = {str(x).strip().lower() for x in (tags_raw if isinstance(tags_raw, list) else []) if str(x).strip()}
+        needs_prep = "docker" in tags or "compose" in tags
+    if needs_prep:
+        prep_bundle = _orchestrator_prepare_bundle(PREPARE_DOCKER_TEMPLATE_ID, _prepare_docker_variables(row), row)
+        prep_gen = iter_ansible_playbook(str(prep_bundle.get("playbook_yaml") or ""), row)
+        prep_out_lines: list[str] = []
+        try:
+            while True:
+                prep_out_lines.append(next(prep_gen))
+        except StopIteration as ex:
+            val = ex.value or (127, "", "ansible: no result")
+            rc_p, out_p, err_p = val
+        prep_result = {
+            "ok": rc_p == 0,
+            "ansible_rc": rc_p,
+            "stdout": _truncate_log(out_p if isinstance(out_p, str) else "\n".join(prep_out_lines)),
+            "stderr": _truncate_log(err_p if isinstance(err_p, str) else ""),
+            "template_id": PREPARE_DOCKER_TEMPLATE_ID,
+        }
+        if rc_p != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"prepare-docker-host failed (rc={rc_p})",
+            )
+
+    bundle = _orchestrator_prepare_bundle(template_id, variables, row)
+    playbook_yaml = str(bundle.get("playbook_yaml") or "")
+    run_gen = iter_ansible_playbook(playbook_yaml, row)
+    run_out_lines: list[str] = []
+    try:
+        while True:
+            run_out_lines.append(next(run_gen))
+    except StopIteration as ex:
+        val = ex.value or (127, "", "ansible: no result")
+        rc, out, err = val
+
+    ok = rc == 0
+    result = {
+        "ok": ok,
+        "mode": "template_run",
+        "template_id": template_id,
+        "target_id": str(row.id),
+        "target_host": row.host,
+        "ansible_rc": rc,
+        "stdout": _truncate_log(out if isinstance(out, str) else "\n".join(run_out_lines)),
+        "stderr": _truncate_log(err if isinstance(err, str) else ""),
+        "prepared": prep_result,
+        "variables_used": variables,
+    }
+    _emit_activity(
+        project_id,
+        act,
+        "infra.run_template",
+        "ok" if ok else "error",
+        f"Template {template_id} на {row.host}",
+        {"template_id": template_id, "target_id": str(row.id), "ansible_rc": rc},
+    )
+    return result
 
 
 @app.post("/api/v1/projects/{project_id}/infra/run-stack")

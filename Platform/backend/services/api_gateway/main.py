@@ -1097,6 +1097,19 @@ async def infra_run_stack(project_id: str, request: Request):
     )
 
 
+@app.post("/api/v1/projects/{project_id}/infra/run-template")
+async def infra_run_template(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/infra/run-template",
+        request,
+        timeout=1800.0,
+    )
+
+
 @app.post("/api/v1/projects/{project_id}/infra/run-stack-stream")
 async def infra_run_stack_stream(project_id: str, request: Request):
     """Прокси NDJSON-потока логов Ansible (долгий запрос)."""
@@ -1291,6 +1304,64 @@ async def agent_orchestrate_run_status(project_id: str, run_id: str, request: Re
         )
     mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
     return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/continue")
+async def agent_orchestrate_continue(project_id: str, run_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    payload = await request.json()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/continue",
+            json=payload,
+            headers=headers,
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/stream")
+async def agent_orchestrate_run_stream(project_id: str, run_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    auth = request.headers.get("Authorization")
+    headers: dict[str, str] = {}
+    if auth:
+        headers["Authorization"] = auth
+    url = f"{AGENT_GRAPH_SERVICE_URL}/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream"
+
+    client = httpx.AsyncClient(timeout=14400.0)
+    req = client.build_request("GET", url, headers=headers)
+    response = await client.send(req, stream=True)
+    if response.status_code != 200:
+        body = await response.aread()
+        await response.aclose()
+        await client.aclose()
+        mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+
+    async def forward():
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+            mark_request("GET", request.url.path, "200", time.monotonic() - started)
+
+    return StreamingResponse(forward(), media_type="application/x-ndjson")
 
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")

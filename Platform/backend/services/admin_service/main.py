@@ -673,6 +673,7 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "run_sandbox_python",
         "http_request",
         "browser_session",
+        "ansible_run_template",
         "get_project_docs_context",
         "upsert_project_document",
         "list_project_documents",

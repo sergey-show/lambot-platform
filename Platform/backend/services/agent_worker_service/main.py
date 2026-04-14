@@ -153,6 +153,30 @@ async def _run_k8s_action(project_id: str, payload: dict[str, Any]) -> dict[str,
     return {"ok": True, "mode": "kubernetes_query", "request": body, "response": data}
 
 
+async def _run_ansible_template_action(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    target_id = str(payload.get("target_id") or "").strip()
+    template_id = str(payload.get("template_id") or "").strip()
+    if not target_id or not template_id:
+        raise ValueError("ansible_run_template: payload.target_id and payload.template_id required")
+    req: dict[str, Any] = {
+        "target_id": target_id,
+        "template_id": template_id,
+        "variables": payload.get("variables") if isinstance(payload.get("variables"), dict) else {},
+        "allow_fallback": bool(payload.get("allow_fallback")),
+    }
+    fb = payload.get("fallback_service")
+    if isinstance(fb, str) and fb.strip():
+        req["fallback_service"] = fb.strip().lower()
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        r = await client.post(
+            f"{ADAPTER_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/infra/run-template",
+            json=req,
+        )
+        r.raise_for_status()
+        data = r.json()
+    return {"ok": True, "mode": "ansible_run_template", "request": req, "response": data}
+
+
 async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str, Any]) -> None:
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.patch(
@@ -292,6 +316,8 @@ async def _handle_ai_team_execution(envelope: TaskEnvelope) -> tuple[TaskStatus,
             result = await _run_ssh_action(project_id, payload)
         elif action == "kubernetes_query":
             result = await _run_k8s_action(project_id, payload)
+        elif action == "ansible_run_template":
+            result = await _run_ansible_template_action(project_id, payload)
         else:
             raise ValueError(f"unknown ai_team_action: {action}")
 

@@ -27,6 +27,7 @@ def fetch_tool_policy() -> dict[str, Any]:
         "builtin": {
             "http_request": True,
             "browser_session": True,
+            "ansible_run_template": True,
             "get_project_docs_context": True,
             "upsert_project_document": True,
             "list_project_documents": True,

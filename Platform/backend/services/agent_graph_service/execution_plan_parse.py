@@ -34,6 +34,8 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
             "ssh_run": "ssh_run_command",
             "k8s_query": "kubernetes_query",
             "kubernetes": "kubernetes_query",
+            "ansible_template": "ansible_run_template",
+            "ansible_marketplace": "ansible_run_template",
         }
         action = alias.get(action, action)
         payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
@@ -72,6 +74,21 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
     except Exception:
         pass
 
+    if ssh_target_id and ("gitlab" in ctx or "git lab" in ctx):
+        return [
+            {
+                "title": "Установка GitLab через Ansible marketplace",
+                "action_kind": "ansible_run_template",
+                "payload": {
+                    "target_id": ssh_target_id,
+                    "template_id": "provision-gitlab-omnibus",
+                    "allow_fallback": True,
+                    "fallback_service": "gitlab",
+                    "variables": {},
+                },
+                "plan_summary": "Автовыбор: найден SSH target и запрос про GitLab — сначала marketplace роль.",
+            }
+        ]
     if ssh_target_id:
         return [
             {
@@ -115,19 +132,20 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
     ]
 
 
-def wait_for_ai_team_execution_tasks(run_id: str, timeout_sec: float = 900.0) -> None:
-    """Блокирует оркестратор, пока воркеры не завершат все задачи (или таймаут)."""
+def wait_for_ai_team_execution_tasks(run_id: str, timeout_sec: float = 900.0) -> bool:
+    """Блокирует оркестратор, пока воркеры не завершат все задачи; False при таймауте."""
     t0 = time.time()
     while time.time() - t0 < timeout_sec:
         r = team_get_run(run_id)
         if not r:
-            return
+            return True
         tasks = r.get("execution_tasks") or []
         if not tasks:
-            return
+            return True
         if all(x.get("status") in ("done", "error") for x in tasks):
-            return
+            return True
         time.sleep(2.0)
+    return False
 
 
 def format_execution_tasks_markdown(run: dict) -> str:

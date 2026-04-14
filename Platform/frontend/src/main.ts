@@ -561,6 +561,10 @@ function renderPortal(): void {
           Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → итоговый отчёт PM. Промпты ролей — в Superadmin. Нажмите «Запустить оркестрацию» выше.
         </p>
         <p class="lp-muted" id="orchestration-status-line" style="font-size:13px;margin-bottom:8px;"></p>
+        <details id="orchestration-live-log-wrap" style="margin:0 0 10px;">
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Realtime лог действий агента</summary>
+          <pre id="orchestration-live-log" class="lp-pre" style="max-height:260px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
+        </details>
         <div id="orchestration-graph-wrap"></div>
         <div id="orchestration-arch-wrap"></div>
         <div id="orchestration-exec-wrap"></div>
@@ -867,6 +871,42 @@ function renderPortal(): void {
           <button type="button" class="lp-btn" id="agent-demo-run" title="Нужен GitLab с PAT в ресурсах проекта">Демо агентов (GitLab)</button>
           <button type="button" class="lp-btn lp-btn-ghost" id="agents-bootstrap-planning" title="Повторно запустить planning (как ИИ-агент при создании проекта)">Planning (bootstrap)</button>
         </div>
+        <div class="lp-panel" style="margin-top:10px;padding:12px;border:1px solid var(--lp-border);border-radius:12px;">
+          <h3 style="margin:0 0 8px;font-size:0.95rem;">Ansible marketplace: запуск роли</h3>
+          <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">
+            Выберите роль из каталога и SSH-таргет. Поля параметров строятся автоматически из vars_schema шаблона.
+          </p>
+          <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
+            <div class="lp-field"><label>SSH-таргет</label>
+              <select class="lp-select" id="infra-template-target" style="min-width:260px;">
+                <option value="">— выберите SSH-сервер —</option>
+              </select>
+            </div>
+            <div class="lp-field"><label>Роль (template)</label>
+              <select class="lp-select" id="infra-template-id" style="min-width:320px;">
+                <option value="">— загрузка каталога… —</option>
+              </select>
+            </div>
+            <div class="lp-field">
+              <button type="button" class="lp-btn lp-btn-ghost" id="infra-template-reload">Обновить каталог</button>
+            </div>
+          </div>
+          <div id="infra-template-vars" class="lp-row" style="margin-top:8px;flex-wrap:wrap;gap:10px;"></div>
+          <div class="lp-row" style="margin-top:8px;gap:12px;flex-wrap:wrap;align-items:center;">
+            <label class="lp-muted" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <input type="checkbox" id="infra-template-fallback" /> fallback если роли нет
+            </label>
+            <div class="lp-field"><label>fallback service</label>
+              <select class="lp-select" id="infra-template-fallback-service" style="min-width:160px;">
+                <option value="gitlab">gitlab</option>
+                <option value="docker">docker</option>
+                <option value="nexus">nexus</option>
+              </select>
+            </div>
+            <button type="button" class="lp-btn" id="infra-template-run">Запустить роль</button>
+          </div>
+          <p class="lp-muted" id="infra-template-hint" style="margin:8px 0 0;font-size:12px;"></p>
+        </div>
         <details style="margin-top:10px;">
           <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Песочница Python (sandbox)</summary>
           <p class="lp-muted" style="font-size:12px;margin:8px 0;">Код выполняется на сервисе sandbox с таймаутом; только для доверенных сценариев.</p>
@@ -969,6 +1009,16 @@ function renderPortal(): void {
   let statusPoll: number | null = null;
   let lastActivityItems: Array<Record<string, unknown>> = [];
   let currentDocId = "";
+  type InfraTemplateCatalogItem = {
+    id: string;
+    name?: string;
+    description?: string;
+    tags?: string[];
+    vars_schema?: Record<string, { type?: string; required?: boolean }>;
+  };
+  let infraTemplateCatalog: InfraTemplateCatalogItem[] = [];
+  let infraTemplateSchema: Record<string, { type?: string; required?: boolean }> = {};
+  let infraTemplateCatalogProjectId = "";
 
   /** Основной чат: пользователь, одиночный ассистент (LangGraph), либо сообщения ролей ИИ Команды. */
   type ProjectChatMsg =
@@ -1095,12 +1145,46 @@ function renderPortal(): void {
   };
 
   let orchPollTimer: number | null = null;
+  let orchStreamAbort: AbortController | null = null;
+  let orchStreamLastRun: OrchRunData | null = null;
+  let orchBrowserLogsTs = 0;
+  const orchLiveLogMax = 180_000;
 
   const stopOrchestrationPoll = () => {
     if (orchPollTimer !== null) {
       window.clearInterval(orchPollTimer);
       orchPollTimer = null;
     }
+  };
+
+  const stopOrchestrationStream = () => {
+    if (orchStreamAbort) {
+      try {
+        orchStreamAbort.abort();
+      } catch {
+        /* ignore */
+      }
+      orchStreamAbort = null;
+    }
+  };
+
+  const appendOrchestrationLiveLog = (line: string) => {
+    const pre = document.getElementById("orchestration-live-log");
+    if (!pre) return;
+    const ts = new Date().toLocaleTimeString();
+    let txt = (pre.textContent || "") + `[${ts}] ${line}\n`;
+    if (txt.length > orchLiveLogMax) {
+      txt = `… [обрезано]\n${txt.slice(-orchLiveLogMax)}`;
+    }
+    pre.textContent = txt;
+    pre.scrollTop = pre.scrollHeight;
+  };
+
+  const resetOrchestrationLiveLog = () => {
+    const pre = document.getElementById("orchestration-live-log");
+    if (pre) pre.textContent = "";
+    orchStreamLastRun = null;
+    orchBrowserLogsTs = 0;
   };
 
   type OrchStep = {
@@ -1586,11 +1670,120 @@ function renderPortal(): void {
     const fin = data.final_report_md || data.final_message;
     if (finalWrap) {
       if (data.status === "paused") {
-        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и запустите новый прогон.</p></div>`;
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и нажмите «Запустить ИИ команду» — цепочка продолжится с текущего шага.</p></div>`;
       } else if (fin && (data.status === "done" || data.status === "running")) {
         finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><pre class="lp-orch-pre">${escapeHtml(fin)}</pre></div>`;
       } else {
         finalWrap.innerHTML = "";
+      }
+    }
+  };
+
+  const applyOrchestrationRunRealtime = (runId: string, data: OrchRunData) => {
+    renderOrchestrationPanel(data);
+    syncOrchestrationStepsToChat(runId, data);
+
+    const prev = orchStreamLastRun;
+    if (!prev) {
+      appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+    } else {
+      if ((data.status || "") !== (prev.status || "") || (data.phase || "") !== (prev.phase || "")) {
+        appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+      }
+      const prevSteps = new Map((prev.steps || []).map((s) => [String(s.step_key || ""), s]));
+      for (const s of data.steps || []) {
+        const key = String(s.step_key || "");
+        if (!key) continue;
+        const p = prevSteps.get(key);
+        const st = String(s.status || "");
+        const pst = String(p?.status || "");
+        if (!p || st !== pst) {
+          appendOrchestrationLiveLog(`шаг ${key}: ${st}`);
+        }
+        const out = String(s.output || "");
+        const pout = String(p?.output || "");
+        if (out.length > pout.length && st === "running") {
+          const delta = out.slice(pout.length).trim();
+          if (delta) {
+            const clip = delta.length > 220 ? `…${delta.slice(-220)}` : delta;
+            appendOrchestrationLiveLog(`${key}: ${clip}`);
+          }
+        }
+        if (s.error && s.error !== p?.error) {
+          appendOrchestrationLiveLog(`шаг ${key}: ошибка ${String(s.error)}`);
+        }
+      }
+      const prevExec = new Map((prev.execution_tasks || []).map((t) => [String(t.id || t.seq || ""), t]));
+      for (const t of data.execution_tasks || []) {
+        const id = String(t.id || t.seq || "");
+        const p = prevExec.get(id);
+        const st = String(t.status || "");
+        const pst = String((p as Record<string, unknown> | undefined)?.status || "");
+        if (!p || st !== pst) {
+          appendOrchestrationLiveLog(`worker task ${String(t.title || id)}: ${st}`);
+        }
+      }
+    }
+    orchStreamLastRun = data;
+
+    const now = Date.now();
+    if (now - orchBrowserLogsTs > 5000) {
+      orchBrowserLogsTs = now;
+      void loadBrowserLogs(runId);
+    }
+  };
+
+  const startOrchestrationStream = async (runId: string) => {
+    if (!currentProjectId || !runId) return;
+    stopOrchestrationStream();
+    const ctrl = new AbortController();
+    orchStreamAbort = ctrl;
+    try {
+      const resp = await fetch(
+        `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(runId)}/stream`,
+        { headers: authHeader(token()), signal: ctrl.signal },
+      );
+      if (!resp.ok || !resp.body) {
+        void pollOrchestration(runId);
+        orchPollTimer = window.setInterval(() => void pollOrchestration(runId), 900);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += dec.decode(value, { stream: true });
+        const parts = buffer.split("\n");
+        buffer = parts.pop() ?? "";
+        for (const raw of parts) {
+          const line = raw.trim();
+          if (!line) continue;
+          let ev: Record<string, unknown>;
+          try {
+            ev = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const typ = String(ev.type || "");
+          if (typ === "run" && ev.run && typeof ev.run === "object") {
+            const run = ev.run as OrchRunData;
+            applyOrchestrationRunRealtime(runId, run);
+          } else if (typ === "error") {
+            appendOrchestrationLiveLog(`stream error: ${String(ev.detail || "unknown")}`);
+          }
+        }
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) {
+        appendOrchestrationLiveLog(`stream disconnected: ${String(e)}`);
+        void pollOrchestration(runId);
+        orchPollTimer = window.setInterval(() => void pollOrchestration(runId), 900);
+      }
+    } finally {
+      if (orchStreamAbort === ctrl) {
+        orchStreamAbort = null;
       }
     }
   };
@@ -1615,9 +1808,7 @@ function renderPortal(): void {
         }
         return;
       }
-      renderOrchestrationPanel(data);
-      syncOrchestrationStepsToChat(runId, data);
-      void loadBrowserLogs(runId);
+      applyOrchestrationRunRealtime(runId, data);
       const st = data.status;
       if (st === "done" || st === "error" || st === "paused") {
         stopOrchestrationPoll();
@@ -2091,6 +2282,8 @@ function renderPortal(): void {
   const restoreOrchestrationForProject = () => {
     closeOrchNodeModal();
     stopOrchestrationPoll();
+    stopOrchestrationStream();
+    resetOrchestrationLiveLog();
     void loadTrackerItems();
     void loadDocumentsList();
     if (!currentProjectId) {
@@ -2101,9 +2294,8 @@ function renderPortal(): void {
     }
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
     if (last) {
-      void loadBrowserLogs(last);
-      void pollOrchestration(last);
-      orchPollTimer = window.setInterval(() => void pollOrchestration(last), 900);
+      appendOrchestrationLiveLog(`подключение к stream run ${last}…`);
+      void startOrchestrationStream(last);
       return;
     }
     void (async () => {
@@ -2124,6 +2316,12 @@ function renderPortal(): void {
               renderProjectAiChat();
             }
             syncOrchestrationStepsToChat(rid, j.run as { steps?: OrchStep[] });
+            const st = typeof j.run.status === "string" ? j.run.status : "";
+            if (st === "running") {
+              sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, rid);
+              appendOrchestrationLiveLog(`подключение к stream run ${rid}…`);
+              void startOrchestrationStream(rid);
+            }
           }
         } else {
           renderOrchestrationPanel(null);
@@ -2147,10 +2345,39 @@ function renderPortal(): void {
       return;
     }
     stopOrchestrationPoll();
+    stopOrchestrationStream();
     const stLine = document.getElementById("orchestration-status-line");
-    if (stLine) stLine.textContent = "Создание запуска…";
+    if (stLine) stLine.textContent = "Подготовка запуска…";
     try {
-      const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/start`, {
+      let endpoint = `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/start`;
+      let continueRunId = "";
+      const lastRunId = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`) || "";
+      if (lastRunId) {
+        try {
+          const rr = await fetch(
+            `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(lastRunId)}`,
+            { headers: authHeader(token()) },
+          );
+          if (rr.status === 404) {
+            sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
+          } else if (rr.ok) {
+            const rd = (await rr.json()) as { status?: string };
+            if (rd.status === "paused") {
+              continueRunId = lastRunId;
+              endpoint = `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(lastRunId)}/continue`;
+              if (stLine) stLine.textContent = "Продолжение приостановленного запуска…";
+              appendOrchestrationLiveLog(`resume run ${lastRunId}: отправлено уточнение пользователя`);
+            }
+          }
+        } catch {
+          /* ignore and start fresh */
+        }
+      }
+      if (!continueRunId) {
+        resetOrchestrationLiveLog();
+      }
+
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { ...authHeader(token()), "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg, history: [] }),
@@ -2174,9 +2401,10 @@ function renderPortal(): void {
       renderProjectAiChat();
       if (orchInp) orchInp.value = "";
       if (chatInp) chatInp.value = "";
-      sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, payload.run_id);
-      orchPollTimer = window.setInterval(() => void pollOrchestration(payload.run_id!), 700);
-      void pollOrchestration(payload.run_id);
+      const effectiveRunId = continueRunId || payload.run_id;
+      sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, effectiveRunId);
+      appendOrchestrationLiveLog(`stream run ${effectiveRunId}: подключение…`);
+      void startOrchestrationStream(effectiveRunId);
     } catch (e) {
       alert(String(e));
       if (stLine) stLine.textContent = "";
@@ -2272,10 +2500,13 @@ function renderPortal(): void {
     const resBody = document.getElementById("infra-resources-body");
     const gl = document.getElementById("infra-gitlab-target") as HTMLSelectElement | null;
     const nx = document.getElementById("infra-nexus-target") as HTMLSelectElement | null;
+    const tplTarget = document.getElementById("infra-template-target") as HTMLSelectElement | null;
     if (!currentProjectId) {
       if (resBody) resBody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
       if (gl) gl.innerHTML = `<option value="">— не назначен —</option>`;
       if (nx) nx.innerHTML = `<option value="">— не назначен —</option>`;
+      if (tplTarget) tplTarget.innerHTML = `<option value="">— выберите SSH-сервер —</option>`;
+      infraTemplateCatalogProjectId = "";
       void loadActivityLogs();
       return;
     }
@@ -2294,6 +2525,13 @@ function renderPortal(): void {
       .join("")}`;
     if (gl) gl.innerHTML = optHtml;
     if (nx) nx.innerHTML = optHtml;
+    if (tplTarget) tplTarget.innerHTML = `<option value="">— выберите SSH-сервер —</option>${sshTargets
+      .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
+      .join("")}`;
+    if (infraTemplateCatalogProjectId !== currentProjectId) {
+      infraTemplateCatalogProjectId = currentProjectId;
+      void loadInfraTemplateCatalog();
+    }
     let gitlabT = "";
     let nexusT = "";
     if (aRes.ok) {
@@ -2365,6 +2603,94 @@ function renderPortal(): void {
       }
     }
     void loadActivityLogs();
+  };
+
+  const renderInfraTemplateVars = () => {
+    const wrap = document.getElementById("infra-template-vars");
+    const hint = document.getElementById("infra-template-hint");
+    if (!wrap) return;
+    const entries = Object.entries(infraTemplateSchema || {});
+    if (entries.length === 0) {
+      wrap.innerHTML = `<p class="lp-muted" style="font-size:12px;">У выбранной роли нет обязательных пользовательских параметров.</p>`;
+      if (hint) hint.textContent = "";
+      return;
+    }
+    wrap.innerHTML = entries
+      .map(([k, spec]) => {
+        const req = spec?.required === true;
+        const typ = String(spec?.type || "string").toLowerCase();
+        const inputType = typ === "integer" || typ === "number" ? "number" : typ === "boolean" ? "checkbox" : "text";
+        if (inputType === "checkbox") {
+          return `<label class="lp-muted" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <input data-infra-var="${escapeHtml(k)}" data-infra-var-type="${escapeHtml(typ)}" type="checkbox" />
+            ${escapeHtml(k)}${req ? " *" : ""}
+          </label>`;
+        }
+        return `<div class="lp-field">
+          <label>${escapeHtml(k)}${req ? " *" : ""}</label>
+          <input class="lp-input" data-infra-var="${escapeHtml(k)}" data-infra-var-type="${escapeHtml(typ)}" type="${inputType}" />
+        </div>`;
+      })
+      .join("");
+    if (hint) hint.textContent = "Поля с * обычно требуются шаблоном. Базовые vars (ssh_user/server_host/project_*) заполняются автоматически.";
+  };
+
+  const loadInfraTemplateCatalog = async () => {
+    const sel = document.getElementById("infra-template-id") as HTMLSelectElement | null;
+    const hint = document.getElementById("infra-template-hint");
+    if (!sel) return;
+    if (!currentProjectId) {
+      sel.innerHTML = `<option value="">— выберите проект —</option>`;
+      infraTemplateCatalog = [];
+      infraTemplateSchema = {};
+      infraTemplateCatalogProjectId = "";
+      renderInfraTemplateVars();
+      return;
+    }
+    const r = await fetch(`${GATEWAY_BASE}/api/v1/ansible/swarm/catalog`, { headers: authHeader(token()) });
+    if (!r.ok) {
+      sel.innerHTML = `<option value="">— ошибка каталога (${r.status}) —</option>`;
+      if (hint) hint.textContent = `Ошибка загрузки каталога: ${r.status}`;
+      return;
+    }
+    const rows = (await r.json()) as InfraTemplateCatalogItem[];
+    infraTemplateCatalog = Array.isArray(rows) ? rows : [];
+    infraTemplateCatalogProjectId = currentProjectId;
+    sel.innerHTML = `<option value="">— выберите роль —</option>${infraTemplateCatalog
+      .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name || x.id)}</option>`)
+      .join("")}`;
+    const first = infraTemplateCatalog[0];
+    if (first) {
+      sel.value = first.id;
+      infraTemplateSchema = first.vars_schema || {};
+    } else {
+      infraTemplateSchema = {};
+    }
+    renderInfraTemplateVars();
+  };
+
+  const collectInfraTemplateVars = (): Record<string, unknown> => {
+    const wrap = document.getElementById("infra-template-vars");
+    const out: Record<string, unknown> = {};
+    if (!wrap) return out;
+    wrap.querySelectorAll("[data-infra-var]").forEach((el) => {
+      const key = (el as HTMLElement).getAttribute("data-infra-var") || "";
+      const typ = ((el as HTMLElement).getAttribute("data-infra-var-type") || "string").toLowerCase();
+      if (!key) return;
+      if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        out[key] = !!el.checked;
+        return;
+      }
+      const raw = el instanceof HTMLInputElement ? el.value.trim() : "";
+      if (!raw) return;
+      if (typ === "integer" || typ === "number") {
+        const n = Number(raw);
+        if (Number.isFinite(n)) out[key] = n;
+        return;
+      }
+      out[key] = raw;
+    });
+    return out;
   };
 
   const loadTargetsList = async () => {
@@ -2749,6 +3075,77 @@ function renderPortal(): void {
     }
   });
 
+  document.getElementById("infra-template-reload")?.addEventListener("click", () => void loadInfraTemplateCatalog());
+
+  document.getElementById("infra-template-id")?.addEventListener("change", (ev) => {
+    const id = (ev.target as HTMLSelectElement).value;
+    const found = infraTemplateCatalog.find((x) => x.id === id);
+    infraTemplateSchema = found?.vars_schema || {};
+    renderInfraTemplateVars();
+  });
+
+  document.getElementById("infra-template-run")?.addEventListener("click", async () => {
+    if (!currentProjectId) {
+      write({ error: "Выберите проект" });
+      return;
+    }
+    const targetId = (document.getElementById("infra-template-target") as HTMLSelectElement | null)?.value || "";
+    const templateId = (document.getElementById("infra-template-id") as HTMLSelectElement | null)?.value || "";
+    if (!targetId || !templateId) {
+      write({ error: "Выберите SSH-таргет и роль" });
+      return;
+    }
+    const vars = collectInfraTemplateVars();
+    const allowFallback = (document.getElementById("infra-template-fallback") as HTMLInputElement | null)?.checked === true;
+    const fallbackService =
+      (document.getElementById("infra-template-fallback-service") as HTMLSelectElement | null)?.value || "gitlab";
+    const gp = Number((document.getElementById("infra-gitlab-port") as HTMLInputElement).value || 8081);
+    const np = Number((document.getElementById("infra-nexus-port") as HTMLInputElement).value || 8082);
+    const runBtn = document.getElementById("infra-template-run") as HTMLButtonElement | null;
+    const statusEl = document.getElementById("infra-ansible-status");
+    const hint = document.getElementById("infra-template-hint");
+    if (runBtn) runBtn.disabled = true;
+    if (statusEl) statusEl.textContent = `Ansible: запуск ${templateId}…`;
+    try {
+      const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/infra/run-template`, {
+        method: "POST",
+        headers: { ...authHeader(token()), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_id: targetId,
+          template_id: templateId,
+          variables: vars,
+          gitlab_http_port: gp,
+          nexus_http_port: np,
+          allow_fallback: allowFallback,
+          fallback_service: fallbackService,
+        }),
+      });
+      const raw = await resp.text();
+      let data: unknown = raw;
+      try {
+        data = JSON.parse(raw) as unknown;
+      } catch {
+        /* keep text */
+      }
+      write(data);
+      if (resp.ok) {
+        if (statusEl) statusEl.textContent = `Ansible: ${templateId} завершён`;
+        if (hint) hint.textContent = "Роль выполнена. Смотрите журнал и ресурсы ниже.";
+      } else {
+        if (statusEl) statusEl.textContent = `Ansible: ошибка ${resp.status}`;
+        if (hint) hint.textContent = `Ошибка запуска: ${resp.status}`;
+      }
+      void refreshInfraUi();
+      void loadActivityLogs();
+    } catch (e) {
+      write({ error: String(e) });
+      if (statusEl) statusEl.textContent = "Ansible: сбой запроса";
+      if (hint) hint.textContent = String(e);
+    } finally {
+      if (runBtn) runBtn.disabled = false;
+    }
+  });
+
   const k8sInstallLogMax = 450_000;
 
   document.getElementById("k8s-install-run")?.addEventListener("click", async () => {
@@ -2994,6 +3391,26 @@ function renderPortal(): void {
     const inp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
     const userMsg = inp?.value?.trim() ?? "";
     if (!userMsg) return;
+    const activeRunId = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`) || "";
+    if (activeRunId) {
+      try {
+        const rr = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(activeRunId)}`,
+          { headers: authHeader(token()) },
+        );
+        if (rr.ok) {
+          const rd = (await rr.json()) as { status?: string };
+          if (rd.status === "paused") {
+            void startOrchestration();
+            return;
+          }
+        } else if (rr.status === 404) {
+          sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
+        }
+      } catch {
+        /* fallback to regular chat invoke */
+      }
+    }
     const historyPayload = projectAiChatHistory
       .filter((m): m is { role: "user" | "assistant"; content: string } => m.role === "user" || m.role === "assistant")
       .map(({ role, content }) => ({ role, content }));
@@ -3392,6 +3809,7 @@ function renderPortal(): void {
   });
 
   document.getElementById("load-swarm-catalog")?.addEventListener("click", async () => {
+    await loadInfraTemplateCatalog();
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/ansible/swarm/catalog`, { headers: authHeader(token()) });
     write(await resp.json());
   });

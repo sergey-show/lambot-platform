@@ -90,16 +90,20 @@ STEP_EXTRA: dict[str, str] = {
     "execution_plan": (
         "Это шаг ТОЛЬКО для машинного плана исполнения (отдельно от нарратива). "
         "Ответь строго одним JSON-объектом без markdown и без пояснений вокруг. Формат:\n"
-        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|adapter_agent_demo|noop|gitlab_pipeline","payload":{}}]}\n'
+        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|adapter_agent_demo|noop|gitlab_pipeline","payload":{}}]}\n'
         "Смысл action_kind:\n"
         "- ssh_run_command: реальный запуск команд на SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
         "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
         "- kubernetes_query: реальный kubectl через adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
+        "- ansible_run_template: запуск роли из внутреннего Ansible marketplace. payload: "
+        "{\"target_id\":\"<uuid>\",\"template_id\":\"provision-gitlab-omnibus\",\"variables\":{...},"
+        "\"allow_fallback\":true,\"fallback_service\":\"gitlab|docker|nexus\"}.\n"
         "- adapter_agent_demo: GitLab demo через платформу (нужен GitLab ресурс).\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
         "- gitlab_pipeline: зарезервировано.\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
-        "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query."
+        "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
+        "Если запрос про установку типовых сервисов (gitlab/docker/nexus) — предпочитай ansible_run_template."
     ),
     "implementation": (
         "Опирайся на блок «Факты исполнения» (структурированные задачи, воркеры) — что реально запускалось и с каким результатом. "
@@ -143,7 +147,8 @@ MAX_STEP_RETRIES = 3
 MAX_STEP_INVOCATIONS_PER_RUN = 4
 MAX_IDENTICAL_ERROR_REPEATS = 2
 MAX_IDENTICAL_OUTPUT_REPEATS = 2
-MAX_ORCHESTRATION_SECONDS = 1800
+MAX_ORCHESTRATION_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_MAX_SECONDS", "7200"))
+EXECUTION_TASKS_WAIT_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS", "3600"))
 MAX_PEER_QUERIES = 5
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
@@ -286,13 +291,47 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
     user_message = user_message.strip()
     cache_latest_run_id(pid, run_id)
     try:
-        team_patch_run(run_id, status="running", phase="pipeline")
+        existing_run = team_get_run(run_id) or {}
+        existing_status = str(existing_run.get("status") or "")
+        prev_steps_raw = existing_run.get("steps") if isinstance(existing_run.get("steps"), list) else []
+        prev_steps: list[dict[str, Any]] = [s for s in prev_steps_raw if isinstance(s, dict)]
+        paused_step_key = ""
+        if existing_status == "paused":
+            for s in sorted(prev_steps, key=lambda x: int(x.get("seq") or 999)):
+                st = str(s.get("status") or "")
+                structured = s.get("structured") if isinstance(s.get("structured"), dict) else {}
+                if st == "done" and structured.get("paused_for_user") is True:
+                    paused_step_key = str(s.get("step_key") or "").strip()
+                    break
+        resume_from_paused = bool(paused_step_key)
+        if resume_from_paused:
+            team_patch_run(run_id, status="running", phase="resume_pipeline")
+        else:
+            team_patch_run(run_id, status="running", phase="pipeline")
         tenant_id = fetch_project_tenant_id(pid)
         prompts = fetch_development_prompts()
         ctx = fetch_development_context_summary(pid)
         docs_ctx = fetch_documents_context_summary(pid, user_message)
         accumulated: dict[str, str] = {}
         execution_ctx = ""
+        if resume_from_paused:
+            original_user_message = str(existing_run.get("user_message") or "").strip()
+            base = original_user_message or user_message
+            user_message = f"{base}\n\nУточнение пользователя к приостановленному шагу:\n{user_message}"
+            for s in sorted(prev_steps, key=lambda x: int(x.get("seq") or 999)):
+                key = str(s.get("step_key") or "")
+                if not key or key == paused_step_key:
+                    break
+                if str(s.get("status") or "") != "done":
+                    continue
+                out = str(s.get("output") or "").strip()
+                if out:
+                    accumulated[key] = out
+            if isinstance(existing_run.get("execution_tasks"), list) and existing_run.get("execution_tasks"):
+                try:
+                    execution_ctx = format_execution_tasks_markdown(existing_run)
+                except Exception:
+                    execution_ctx = ""
         run_started = monotonic()
         step_invocations: dict[str, int] = {}
         step_error_signatures: dict[str, str] = {}
@@ -487,7 +526,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
                 return False, None, err, False
             if monotonic() - run_started > MAX_ORCHESTRATION_SECONDS:
-                err = "loop_detected: превышен лимит времени оркестрации"
+                err = (
+                    "loop_detected: превышен лимит времени оркестрации "
+                    f"({MAX_ORCHESTRATION_SECONDS}s)"
+                )
                 team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
@@ -584,7 +626,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             run_id=run_id,
                             tasks=etasks,
                         )
-                        wait_for_ai_team_execution_tasks(run_id)
+                        wait_done = wait_for_ai_team_execution_tasks(
+                            run_id,
+                            timeout_sec=EXECUTION_TASKS_WAIT_SECONDS,
+                        )
+                        if not wait_done:
+                            raise RuntimeError(
+                                "execution_timeout: задачи воркеров не завершились за "
+                                f"{EXECUTION_TASKS_WAIT_SECONDS}s"
+                            )
                         run_done = team_get_run(run_id) or run
                         exec_md = format_execution_tasks_markdown(run_done)
                         text = f"{text}\n\n---\n{exec_md}"
@@ -648,6 +698,128 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 team_patch_run(run_id, status="error", error=f"{label}: {last_err}", phase="failed")
             return False, None, last_err, False
 
+        def _finalize_success() -> None:
+            try:
+                _persist_docs_after_run()
+            except Exception as exc:
+                team_patch_run(run_id, phase=f"docs_sync_warning: {exc}"[:120])
+            team_patch_run(run_id, status="done", phase="done")
+
+        if resume_from_paused:
+            prev_status_map: dict[str, str] = {
+                str(s.get("step_key") or ""): str(s.get("status") or "")
+                for s in prev_steps
+                if isinstance(s, dict)
+            }
+            route_obj = existing_run.get("architecture_json") if isinstance(existing_run.get("architecture_json"), dict) else {}
+            route = route_obj.get("orchestration_route") if isinstance(route_obj.get("orchestration_route"), dict) else {}
+            if not route:
+                route = {"mode": "full"}
+
+            if route.get("mode") == "direct" and route.get("primary_role"):
+                _tail, specialist_key = pipeline_for_direct(str(route.get("primary_role")))
+                step_to_run = paused_step_key or specialist_key
+                if not step_to_run:
+                    team_patch_run(run_id, status="error", error="resume failed: no step to continue", phase="failed")
+                    return
+                ok_direct, _txt, _e, halt_direct = _execute_step(
+                    step_to_run,
+                    direct_answer=True,
+                    fail_run_on_error=True,
+                )
+                if not ok_direct or halt_direct:
+                    return
+                _finalize_success()
+                return
+
+            team_patch_run(run_id, phase="dag_resume")
+            paused_order = STEP_ORDER.get(paused_step_key, 0)
+            layers_to_run: list[tuple[str, ...]] = []
+            for layer in FULL_DAG_LAYERS:
+                keys: list[str] = []
+                for k in layer:
+                    if STEP_ORDER.get(k, 999) < paused_order:
+                        continue
+                    if k == paused_step_key:
+                        keys.append(k)
+                        continue
+                    if prev_status_map.get(k) == "done":
+                        continue
+                    keys.append(k)
+                if keys:
+                    layers_to_run.append(tuple(keys))
+
+            for layer in layers_to_run:
+                if len(layer) == 1:
+                    k = layer[0]
+                    ok_step, _txt, _e, halt_step = _execute_step(k)
+                    if not ok_step or halt_step:
+                        return
+                    continue
+
+                team_patch_run(run_id, phase="parallel_plans")
+                acc_snapshot = _accumulated_md()
+                results: dict[str, tuple[bool, str | None, str | None, bool]] = {}
+                with ThreadPoolExecutor(max_workers=len(layer)) as pool:
+                    futs = {
+                        pool.submit(
+                            _execute_step,
+                            k,
+                            direct_answer=False,
+                            fail_run_on_error=False,
+                            acc_override=acc_snapshot,
+                        ): k
+                        for k in layer
+                    }
+                    for fut in as_completed(futs):
+                        k = futs[fut]
+                        try:
+                            results[k] = fut.result()
+                        except Exception as exc:  # pragma: no cover
+                            results[k] = (False, None, str(exc), False)
+
+                if any(results.get(k, (False, None, None, False))[3] for k in layer):
+                    return
+
+                failed = [k for k in layer if not results.get(k, (False, None, "no result", False))[0]]
+                if failed:
+                    peer_outputs = []
+                    for k in layer:
+                        ok_peer, txt_peer, _, _hp = results.get(k, (False, None, None, False))
+                        if ok_peer and txt_peer:
+                            lbl, _task = STEP_META.get(k, (k, ""))
+                            peer_outputs.append(f"### {lbl}\n{txt_peer}")
+                    debug_hint = (
+                        "Коллеги уже выполнили часть параллельных шагов. "
+                        "Учти их вывод и помоги закрыть оставшиеся пробелы.\n\n"
+                        + "\n\n".join(peer_outputs)
+                    )[:12000]
+                    acc_for_retry = _accumulated_md()
+                    hard_failed: list[tuple[str, str]] = []
+                    for k in failed:
+                        ok_retry, _txt_retry, err_retry, _h = _execute_step(
+                            k,
+                            fail_run_on_error=False,
+                            acc_override=acc_for_retry,
+                            debug_hint=debug_hint,
+                        )
+                        if not ok_retry:
+                            hard_failed.append((k, err_retry or "unknown error"))
+                    if hard_failed:
+                        first_k, first_err = hard_failed[0]
+                        first_label, _task = STEP_META.get(first_k, (first_k, ""))
+                        team_patch_run(
+                            run_id,
+                            status="error",
+                            error=f"{first_label}: {first_err}",
+                            phase="failed",
+                        )
+                        return
+                team_patch_run(run_id, phase="parallel_done")
+
+            _finalize_success()
+            return
+
         ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
@@ -674,11 +846,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     return
                 if halt_direct:
                     return
-                try:
-                    _persist_docs_after_run()
-                except Exception as exc:
-                    team_patch_run(run_id, phase=f"docs_sync_warning: {exc}"[:120])
-                team_patch_run(run_id, status="done", phase="done")
+                _finalize_success()
                 return
 
         team_patch_run(run_id, phase="dag_full")
@@ -752,11 +920,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     return
             team_patch_run(run_id, phase="parallel_done")
 
-        try:
-            _persist_docs_after_run()
-        except Exception as exc:
-            team_patch_run(run_id, phase=f"docs_sync_warning: {exc}"[:120])
-        team_patch_run(run_id, status="done", phase="done")
+        _finalize_success()
     except Exception as exc:
         team_patch_run(run_id, status="error", error=str(exc), phase="failed")
 

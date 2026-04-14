@@ -5,11 +5,14 @@ LangGraph ReAct-агент с tool calling: инструменты платфо�
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Literal
 from uuid import UUID
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from services.agent_graph_service.graph_runner import invoke_graph
@@ -30,6 +33,10 @@ class ChatHistoryTurn(BaseModel):
 class GraphInvokeBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=32000)
     history: list[ChatHistoryTurn] = Field(default_factory=list, max_length=80)
+
+
+class OrchestrationContinueBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=32000)
 
 
 @app.get("/health")
@@ -69,6 +76,25 @@ def orchestrate_start(
     return {"run_id": run_id, "status": "pending"}
 
 
+@app.post("/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/continue")
+def orchestrate_continue(
+    project_id: UUID,
+    run_id: str,
+    body: OrchestrationContinueBody,
+    background_tasks: BackgroundTasks,
+) -> dict[str, str]:
+    msg = body.message.strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message is empty")
+    row = get_run(run_id)
+    if row is None or row.get("project_id") != str(project_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    if str(row.get("status") or "") != "paused":
+        raise HTTPException(status_code=409, detail="run is not paused")
+    background_tasks.add_task(run_orchestration_sync, project_id, run_id, msg)
+    return {"run_id": run_id, "status": "resuming"}
+
+
 @app.get("/api/v1/projects/{project_id}/ai-team/state")
 def ai_team_state(project_id: UUID) -> dict:
     """Последний прогон AI-команды по проекту (из Postgres)."""
@@ -82,3 +108,37 @@ def orchestrate_run_status(project_id: UUID, run_id: str) -> dict:
     if row is None or row.get("project_id") != str(project_id):
         raise HTTPException(status_code=404, detail="run not found")
     return row
+
+
+@app.get("/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream")
+async def orchestrate_run_stream(project_id: UUID, run_id: str):
+    """Поток NDJSON с обновлениями run (для realtime UI)."""
+    initial = get_run(run_id)
+    if initial is None or initial.get("project_id") != str(project_id):
+        raise HTTPException(status_code=404, detail="run not found")
+
+    async def generate():
+        prev_sig = ""
+        while True:
+            row = get_run(run_id)
+            if row is None:
+                payload = {"type": "error", "detail": "run not found"}
+                yield (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+                break
+            if row.get("project_id") != str(project_id):
+                payload = {"type": "error", "detail": "run does not belong to project"}
+                yield (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+                break
+
+            sig = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+            if sig != prev_sig:
+                prev_sig = sig
+                payload = {"type": "run", "run": row}
+                yield (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+            st = str(row.get("status") or "")
+            if st in ("done", "error", "paused"):
+                break
+            await asyncio.sleep(0.8)
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")

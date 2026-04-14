@@ -456,6 +456,49 @@ def _make_list_project_documents(pid: str):
     return list_project_documents
 
 
+def _make_ansible_run_template(pid: str):
+    @tool
+    def ansible_run_template(
+        target_id: str,
+        template_id: str,
+        variables_json: str = "{}",
+        allow_fallback: bool = False,
+        fallback_service: str = "",
+    ) -> str:
+        """Запустить Ansible-шаблон из внутреннего каталога marketplace на SSH target проекта. Если шаблон не найден и allow_fallback=true, можно выполнить fallback_service=gitlab|docker|nexus через SSH."""
+        tid = (target_id or "").strip()
+        tpl = (template_id or "").strip()
+        if not tid or not tpl:
+            return json.dumps({"error": "target_id and template_id are required"})
+        vars_dict: dict[str, Any] = {}
+        raw = (variables_json or "").strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    vars_dict = parsed
+            except Exception:
+                return json.dumps({"error": "variables_json must be valid JSON object"})
+        payload = {
+            "target_id": tid,
+            "template_id": tpl,
+            "variables": vars_dict,
+            "allow_fallback": bool(allow_fallback),
+            "fallback_service": (fallback_service or "").strip().lower() or None,
+        }
+        try:
+            r = httpx.post(
+                f"{ADAPTER_URL.rstrip('/')}/api/v1/projects/{pid}/infra/run-template",
+                json=payload,
+                timeout=1800.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return ansible_run_template
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "get_development_context": _make_get_development_context,
     "get_project_status": _make_get_project_status,
@@ -471,6 +514,7 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "get_project_docs_context": _make_get_project_docs_context,
     "upsert_project_document": _make_upsert_project_document,
     "list_project_documents": _make_list_project_documents,
+    "ansible_run_template": _make_ansible_run_template,
 }
 
 

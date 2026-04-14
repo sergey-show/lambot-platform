@@ -10,10 +10,13 @@ COPY alembic.ini /app/alembic.ini
 COPY ansible.cfg ansible-requirements-roles.yml ansible-requirements-collections.yml /app/
 
 ARG KUBECTL_VERSION=v1.29.6
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client git curl ca-certificates \
-    && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
-    && chmod +x /usr/local/bin/kubectl \
-    && rm -rf /var/lib/apt/lists/*
+ARG INSTALL_SYSTEM_DEPS=0
+RUN if [ "$INSTALL_SYSTEM_DEPS" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends openssh-client git curl ca-certificates \
+      && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+      && chmod +x /usr/local/bin/kubectl \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 RUN pip install --no-cache-dir -e .
 
