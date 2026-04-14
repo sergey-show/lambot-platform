@@ -7,7 +7,7 @@ from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
 
-VALID_PRIMARY_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend"})
+VALID_PRIMARY_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend", "qa"})
 
 # Роль из JSON → step_key в DEFAULT_PIPELINE
 PRIMARY_ROLE_TO_STEP: dict[str, str] = {
@@ -16,6 +16,7 @@ PRIMARY_ROLE_TO_STEP: dict[str, str] = {
     "devops": "devops_plan",
     "backend": "backend_plan",
     "frontend": "frontend_plan",
+    "qa": "qa_validation",
 }
 
 ALL_STEP_KEYS: list[str] = [s[0] for s in DEFAULT_PIPELINE]
@@ -30,6 +31,8 @@ def _normalize_role(raw: str | None) -> str | None:
         "dev_ops": "devops",
         "fe": "frontend",
         "be": "backend",
+        "tester": "qa",
+        "quality_assurance": "qa",
     }
     r = aliases.get(r, r)
     return r if r in VALID_PRIMARY_ROLES else None

@@ -15,6 +15,7 @@ _DEFAULTS: dict[str, str] = {
     "devops": "Ты DevOps: CI/CD и инфраструктура.",
     "backend": "Ты backend-разработчик: API и сервисы.",
     "frontend": "Ты frontend-разработчик: UI и интеграции.",
+    "qa": "Ты QA-инженер: тест-план, проверка качества и GO/NO_GO.",
 }
 
 

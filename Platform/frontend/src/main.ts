@@ -693,6 +693,7 @@ function renderPortal(): void {
               <option value="devops">DevOps</option>
               <option value="backend">Backend</option>
               <option value="frontend">Frontend</option>
+              <option value="qa">QA</option>
             </select>
           </div>
         </div>
@@ -726,6 +727,7 @@ function renderPortal(): void {
               <option value="devops">DevOps</option>
               <option value="backend">Backend</option>
               <option value="frontend">Frontend</option>
+              <option value="qa">QA</option>
             </select>
           </div>
           <div class="lp-row" style="gap:8px;margin-top:8px;">
@@ -1143,6 +1145,12 @@ function renderPortal(): void {
   const write = (payload: unknown) => {
     if (output) output.textContent = JSON.stringify(payload, null, 2);
   };
+  const isFetchNetworkError = (e: unknown) => {
+    const s = String(e || "");
+    return s.includes("Failed to fetch") || s.includes("NetworkError") || s.includes("TypeError: network error");
+  };
+  const fetchNetworkHint = (operation: string) =>
+    `Сетевой сбой (${operation}): браузер не смог достучаться до API. Обычно это перезапуск/недоступность api-gateway, обрыв сети или блокировка прокси/CORS. Проверьте сервисы docker compose и попробуйте повторить.`;
 
   let orchPollTimer: number | null = null;
   let orchStreamAbort: AbortController | null = null;
@@ -1253,8 +1261,9 @@ function renderPortal(): void {
     { key: "frontend_plan", label: "Frontend", lane: 3, order: 2 },
     { key: "execution_plan", label: "План исполнения", lane: 4, order: 0 },
     { key: "implementation", label: "Реализация", lane: 5, order: 0 },
-    { key: "deploy", label: "Деплой", lane: 6, order: 0 },
-    { key: "pm_summary", label: "PM итог", lane: 7, order: 0 },
+    { key: "qa_validation", label: "QA", lane: 6, order: 0 },
+    { key: "deploy", label: "Деплой", lane: 7, order: 0 },
+    { key: "pm_summary", label: "PM итог", lane: 8, order: 0 },
   ];
   const ORCH_LAYER_KEYS: string[][] = [
     ["intake"],
@@ -1263,6 +1272,7 @@ function renderPortal(): void {
     ["devops_plan", "backend_plan", "frontend_plan"],
     ["execution_plan"],
     ["implementation"],
+    ["qa_validation"],
     ["deploy"],
     ["pm_summary"],
   ];
@@ -1276,7 +1286,8 @@ function renderPortal(): void {
     ["backend_plan", "execution_plan"],
     ["frontend_plan", "execution_plan"],
     ["execution_plan", "implementation"],
-    ["implementation", "deploy"],
+    ["implementation", "qa_validation"],
+    ["qa_validation", "deploy"],
     ["deploy", "pm_summary"],
   ];
 
@@ -1343,6 +1354,52 @@ function renderPortal(): void {
     const task = step?.task_title || step?.task || "—";
     const output = step?.output ? String(step.output).trim() : "";
     const err = step?.error ? String(step.error).trim() : "";
+    const stObj = (step?.structured && typeof step.structured === "object"
+      ? (step.structured as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+    const attempt = Number(stObj.attempt || 0);
+    const maxAttempts = Number(stObj.max_attempts || 0);
+    const envelope = stObj.step_envelope && typeof stObj.step_envelope === "object"
+      ? (stObj.step_envelope as Record<string, unknown>)
+      : null;
+    const qfu = Array.isArray(stObj.questions_for_user)
+      ? stObj.questions_for_user.map((x) => String(x)).filter(Boolean)
+      : [];
+    const peerResp = Array.isArray(stObj.peer_responses)
+      ? stObj.peer_responses
+          .filter((x) => typeof x === "object" && x !== null)
+          .map((x) => x as Record<string, unknown>)
+      : [];
+    const qaGate = String(stObj.qa_gate || "");
+    const liveAction: string[] = [];
+    if ((step?.status || "") === "running") {
+      liveAction.push("Выполняет текущую задачу шага");
+    }
+    if (attempt > 0 && maxAttempts > 0) {
+      liveAction.push(`Попытка ${attempt}/${maxAttempts}`);
+    }
+    if (envelope) {
+      const ss = String(envelope.step_status || "");
+      if (ss) liveAction.push(`Step status: ${ss}`);
+    }
+    if (qfu.length) liveAction.push(`Ждёт уточнений пользователя: ${qfu.length}`);
+    if (peerResp.length) liveAction.push(`Синхронизация с коллегами: ${peerResp.length}`);
+    if (qaGate === "no_go") liveAction.push("QA gate: NO_GO (деплой блокирован)");
+    if (!liveAction.length) liveAction.push("Явных действий в structured-мета нет");
+    const outputLines = (output || "").split(/\r?\n/).filter((x) => x.trim());
+    const outputTail = outputLines.slice(-8).join("\n");
+    const execRows =
+      stepKey === "execution_plan" && Array.isArray(data.execution_tasks)
+        ? data.execution_tasks
+            .map((t) => {
+              const title = String(t.title || "task");
+              const kind = String(t.action_kind || "action");
+              const st = String(t.status || "pending");
+              const er = t.error ? ` · err: ${String(t.error)}` : "";
+              return `${title} (${kind}) — ${st}${er}`;
+            })
+            .join("\n")
+        : "";
     if (bodyEl) {
       bodyEl.innerHTML = `
         <div class="lp-orch-modal-grid">
@@ -1357,6 +1414,19 @@ function renderPortal(): void {
           <h4>С кем работает</h4>
           <p class="lp-muted">${peers.length ? escapeHtml(peers.join(" · ")) : "Этот шаг не имеет параллельных коллег в текущем DAG-слое."}</p>
         </div>
+        <div class="lp-orch-modal-block">
+          <h4>Чем занят агент сейчас</h4>
+          <pre class="lp-orch-pre">${escapeHtml(liveAction.join("\n"))}</pre>
+        </div>
+        <div class="lp-orch-modal-block">
+          <h4>Над чем работает</h4>
+          <pre class="lp-orch-pre">${escapeHtml(outputTail || "Пока нет live-вывода шага")}</pre>
+        </div>
+        ${
+          execRows
+            ? `<div class="lp-orch-modal-block"><h4>Текущие задачи исполнения</h4><pre class="lp-orch-pre">${escapeHtml(execRows)}</pre></div>`
+            : ""
+        }
         <div class="lp-orch-modal-block">
           <h4>Ошибка</h4>
           <pre class="lp-orch-pre lp-error">${escapeHtml(err || "Нет")}</pre>
@@ -1733,6 +1803,85 @@ function renderPortal(): void {
     }
   };
 
+  const cloneRunData = (r: OrchRunData): OrchRunData => JSON.parse(JSON.stringify(r)) as OrchRunData;
+
+  const runStateForDelta = (runId: string): OrchRunData => {
+    if (orchStreamLastRun && orchStreamLastRun.run_id === runId) {
+      return cloneRunData(orchStreamLastRun);
+    }
+    return {
+      run_id: runId,
+      status: "running",
+      phase: "stream",
+      steps: [],
+      execution_tasks: [],
+    };
+  };
+
+  const applyOrchestrationDeltaEvent = (runId: string, ev: Record<string, unknown>) => {
+    const typ = String(ev.type || "");
+    if (typ === "run" && ev.run && typeof ev.run === "object") {
+      applyOrchestrationRunRealtime(runId, ev.run as OrchRunData);
+      return;
+    }
+    if (typ === "run_meta" && ev.patch && typeof ev.patch === "object") {
+      const next = runStateForDelta(runId);
+      const patch = ev.patch as Record<string, unknown>;
+      for (const [k, v] of Object.entries(patch)) {
+        (next as Record<string, unknown>)[k] = v;
+      }
+      applyOrchestrationRunRealtime(runId, next);
+      return;
+    }
+    if (typ === "step_delta") {
+      const stepKey = String(ev.step_key || "").trim();
+      const patch = ev.patch as Record<string, unknown> | undefined;
+      if (!stepKey || !patch || typeof patch !== "object") return;
+      const next = runStateForDelta(runId);
+      const steps = (next.steps || []) as OrchStep[];
+      let s = steps.find((x) => String(x.step_key || "") === stepKey);
+      if (!s) {
+        s = { step_key: stepKey, status: "pending" };
+        steps.push(s);
+      }
+      if (patch.output_full !== undefined) {
+        s.output = String(patch.output_full ?? "");
+      } else if (typeof patch.output_append === "string") {
+        s.output = String(s.output || "") + patch.output_append;
+      }
+      for (const k of ["seq", "role_label", "task_title", "status", "error", "started_at", "finished_at", "structured"]) {
+        if (Object.prototype.hasOwnProperty.call(patch, k)) {
+          (s as Record<string, unknown>)[k] = patch[k];
+        }
+      }
+      next.steps = [...steps].sort((a, b) => Number((a as Record<string, unknown>).seq || 999) - Number((b as Record<string, unknown>).seq || 999));
+      applyOrchestrationRunRealtime(runId, next);
+      return;
+    }
+    if (typ === "execution_task_delta") {
+      const taskId = String(ev.task_id || "").trim();
+      const patch = ev.patch as Record<string, unknown> | undefined;
+      if (!taskId || !patch || typeof patch !== "object") return;
+      const next = runStateForDelta(runId);
+      const tasks = (next.execution_tasks || []) as Array<Record<string, unknown>>;
+      let t = tasks.find((x) => String(x.id || x.seq || "") === taskId);
+      if (!t) {
+        t = { id: taskId, seq: 999, status: "pending" };
+        tasks.push(t);
+      }
+      for (const [k, v] of Object.entries(patch)) {
+        t[k] = v;
+      }
+      next.execution_tasks = [...tasks].sort((a, b) => Number(a.seq || 999) - Number(b.seq || 999));
+      applyOrchestrationRunRealtime(runId, next);
+      return;
+    }
+    if (typ === "stream_end") {
+      appendOrchestrationLiveLog(`stream завершён: ${String(ev.status || "unknown")}`);
+      return;
+    }
+  };
+
   const startOrchestrationStream = async (runId: string) => {
     if (!currentProjectId || !runId) return;
     stopOrchestrationStream();
@@ -1767,17 +1916,17 @@ function renderPortal(): void {
             continue;
           }
           const typ = String(ev.type || "");
-          if (typ === "run" && ev.run && typeof ev.run === "object") {
-            const run = ev.run as OrchRunData;
-            applyOrchestrationRunRealtime(runId, run);
-          } else if (typ === "error") {
+          if (typ === "error") {
             appendOrchestrationLiveLog(`stream error: ${String(ev.detail || "unknown")}`);
+          } else {
+            applyOrchestrationDeltaEvent(runId, ev);
           }
         }
       }
     } catch (e) {
       if (!ctrl.signal.aborted) {
-        appendOrchestrationLiveLog(`stream disconnected: ${String(e)}`);
+        const msg = isFetchNetworkError(e) ? fetchNetworkHint("stream оркестрации") : String(e);
+        appendOrchestrationLiveLog(`stream disconnected: ${msg}`);
         void pollOrchestration(runId);
         orchPollTimer = window.setInterval(() => void pollOrchestration(runId), 900);
       }
@@ -2406,7 +2555,9 @@ function renderPortal(): void {
       appendOrchestrationLiveLog(`stream run ${effectiveRunId}: подключение…`);
       void startOrchestrationStream(effectiveRunId);
     } catch (e) {
-      alert(String(e));
+      const msg = isFetchNetworkError(e) ? fetchNetworkHint("запуск оркестрации") : String(e);
+      alert(msg);
+      write({ error: msg, raw_error: String(e) });
       if (stLine) stLine.textContent = "";
     }
   };
@@ -3416,11 +3567,25 @@ function renderPortal(): void {
       .map(({ role, content }) => ({ role, content }));
     setProjectAiChatBusy(true);
     try {
-      const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-graph/invoke`, {
-        method: "POST",
-        headers: { ...authHeader(token()), "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ message: userMsg, history: historyPayload }),
-      });
+      let resp: Response;
+      try {
+        resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-graph/invoke`, {
+          method: "POST",
+          headers: { ...authHeader(token()), "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ message: userMsg, history: historyPayload }),
+        });
+      } catch (e) {
+        if (isFetchNetworkError(e)) {
+          await new Promise((r) => window.setTimeout(r, 1200));
+          resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-graph/invoke`, {
+            method: "POST",
+            headers: { ...authHeader(token()), "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ message: userMsg, history: historyPayload }),
+          });
+        } else {
+          throw e;
+        }
+      }
       const raw = await resp.text();
       let data: { final_message?: string; detail?: string };
       try {
@@ -3448,13 +3613,13 @@ function renderPortal(): void {
       renderProjectAiChat();
       write(data);
     } catch (e) {
-      const err = String(e);
+      const err = isFetchNetworkError(e) ? fetchNetworkHint("чат с агентом") : String(e);
       if (inp) inp.value = "";
       projectAiChatHistory.push({ role: "user", content: userMsg });
       projectAiChatHistory.push({ role: "assistant", content: `Ошибка сети или запроса: ${err}` });
       saveProjectAiChat();
       renderProjectAiChat();
-      write({ error: err });
+      write({ error: err, raw_error: String(e) });
     } finally {
       setProjectAiChatBusy(false);
       void refreshStatus();

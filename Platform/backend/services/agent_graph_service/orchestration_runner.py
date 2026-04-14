@@ -51,6 +51,7 @@ STEP_PROMPT_ROLE: dict[str, str] = {
     "devops_plan": "devops",
     "backend_plan": "backend",
     "frontend_plan": "frontend",
+    "qa_validation": "qa",
     "execution_plan": "devops",
     "implementation": "devops",
     "deploy": "devops",
@@ -65,7 +66,7 @@ STEP_EXTRA: dict[str, str] = {
         '{"orchestration_route":{"mode":"full","reason":"кратко"}}\n'
         "или для узкого вопроса одному специалисту (без полного цикла продукт→архитектура→планы):\n"
         '{"orchestration_route":{"mode":"direct","primary_role":"backend","reason":"кратко"}}\n'
-        "primary_role: pm | architect | devops | backend | frontend — только при mode=direct.\n"
+        "primary_role: pm | architect | devops | backend | frontend | qa — только при mode=direct.\n"
         "mode=full если нужен продукт/архитектура/несколько ролей; mode=direct если достаточно одного ответа специалиста."
     ),
     "pm": (
@@ -74,7 +75,7 @@ STEP_EXTRA: dict[str, str] = {
     ),
     "architect": (
         "Опиши целевую архитектуру, стек технологий, границы сервисов, данные и интеграции. "
-        "Разбей работу на этапы. Явно сформулируй задачи для DevOps, Backend и Frontend (списком). "
+        "Разбей работу на этапы. Явно сформулируй задачи для DevOps, Backend, Frontend и QA (списком). "
         "Этот текст пойдёт в раздел «Архитектура» для пользователя."
     ),
     "devops_plan": (
@@ -86,6 +87,12 @@ STEP_EXTRA: dict[str, str] = {
     ),
     "frontend_plan": (
         "Составь план работ frontend: экраны, состояние, вызовы API. Кто что делает и когда."
+    ),
+    "qa_validation": (
+        "Проведи QA-валидацию перед релизом на основе результатов шагов и фактов исполнения. "
+        "Сформируй минимальный test plan (smoke/regression), риски и вердикт релиза. "
+        "В summary_md обязательно укажи строку: release_recommendation: go|no_go. "
+        "Если no_go — выставь pipeline_continue=false и добавь минимум 1 вопрос/блокер в questions_for_user."
     ),
     "execution_plan": (
         "Это шаг ТОЛЬКО для машинного плана исполнения (отдельно от нарратива). "
@@ -122,13 +129,14 @@ STEP_EXTRA: dict[str, str] = {
 
 STEP_META: dict[str, tuple[str, str]] = {k: (lbl, task) for k, lbl, task in DEFAULT_PIPELINE}
 STEP_ORDER: dict[str, int] = {k: i for i, (k, _lbl, _task) in enumerate(DEFAULT_PIPELINE)}
-DIRECT_TOOL_STEPS = frozenset({"devops_plan", "backend_plan", "frontend_plan"})
+DIRECT_TOOL_STEPS = frozenset({"devops_plan", "backend_plan", "frontend_plan", "qa_validation"})
 # Модель «для кода» из настроек платформы (coding_model) — только для инженерных шагов.
 CODING_MODEL_STEPS = frozenset(
     {
         "devops_plan",
         "backend_plan",
         "frontend_plan",
+        "qa_validation",
         "execution_plan",
         "implementation",
         "deploy",
@@ -140,6 +148,7 @@ FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("devops_plan", "backend_plan", "frontend_plan"),
     ("execution_plan",),
     ("implementation",),
+    ("qa_validation",),
     ("deploy",),
     ("pm_summary",),
 )
@@ -161,6 +170,7 @@ STRUCTURED_STEP_KEYS = frozenset(
         "devops_plan",
         "backend_plan",
         "frontend_plan",
+        "qa_validation",
         "implementation",
         "deploy",
         "pm_summary",
@@ -182,7 +192,7 @@ STEP_OUTPUT_JSON_INSTRUCTIONS = """
 Правила:
 - summary_md — главный передаваемый дальше контент; пиши сюда всё важное для команды.
 - Если нужен ответ пользователя до продолжения — step_status=need_user_clarification, заполни questions_for_user, pipeline_continue=false.
-- Если вопрос к другой роли команды (backend/frontend/devops/architect/pm) — добавь в peer_queries: [{"role":"backend","question":"..."}]. Оркестратор запросит коллегу автоматически; не жди пользователя.
+- Если вопрос к другой роли команды (backend/frontend/devops/architect/pm/qa) — добавь в peer_queries: [{"role":"backend","question":"..."}]. Оркестратор запросит коллегу автоматически; не жди пользователя.
 - Не задавай вопросы пользователю, если их можно закрыть через peer_queries.
 - При pipeline_continue=false пайплайн остановится до следующего сообщения пользователя.
 """
@@ -264,6 +274,7 @@ def _build_system(
         "devops_plan",
         "backend_plan",
         "frontend_plan",
+        "qa_validation",
     ):
         extra += (
             "\n\nРежим прямого ответа: пользователь задал узкий вопрос. Дай конкретный ответ по сути, "
@@ -444,6 +455,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     for x in [
                         accumulated.get("devops_plan") or "",
                         accumulated.get("backend_plan") or "",
+                        accumulated.get("qa_validation") or "",
                         impl,
                         deploy,
                     ]
@@ -591,6 +603,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 or bool(env.questions_for_user)
                                 or env.step_status == "need_user_clarification"
                             )
+                            if step_key == "qa_validation" and not halt_pipeline:
+                                sm = (env.summary_md or "").lower()
+                                if "release_recommendation" in sm and ("no_go" in sm or "no-go" in sm):
+                                    halt_pipeline = True
+                                    structured_payload["qa_gate"] = "no_go"
+                                    if not env.questions_for_user:
+                                        env.questions_for_user = [
+                                            "QA дал вердикт NO_GO. Укажите, какие дефекты блокируют релиз и как планируем исправление."
+                                        ]
+                                        structured_payload["questions_for_user"] = env.questions_for_user
                             if env.questions_for_user:
                                 structured_payload["questions_for_user"] = env.questions_for_user
 

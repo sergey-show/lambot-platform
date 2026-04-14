@@ -16,7 +16,7 @@ from shared.contracts.agent_task import TaskEnvelope, TaskType
 TRACKER_KIND_EPIC = "epic"
 TRACKER_KIND_TASK = "task"
 
-VALID_ASSIGNEE_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend"})
+VALID_ASSIGNEE_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend", "qa"})
 
 # Статусы карточки
 S_BACKLOG = "backlog"

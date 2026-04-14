@@ -156,7 +156,7 @@ class AgentSettingsInternalResponse(BaseModel):
 
 class AgentDevelopmentPromptsPublicResponse(BaseModel):
     prompts: dict[str, str] = Field(
-        description="Ключ — роль: devops, backend, frontend, architect, pm; значение — системный промпт"
+        description="Ключ — роль: devops, backend, frontend, qa, architect, pm; значение — системный промпт"
     )
 
 
@@ -629,7 +629,7 @@ def admin_put_agent_development_prompts(
     _: None = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    allowed = {"devops", "backend", "frontend", "architect", "pm"}
+    allowed = {"devops", "backend", "frontend", "qa", "architect", "pm"}
     for role, text in body.prompts.items():
         if role not in allowed:
             raise HTTPException(status_code=400, detail=f"Unknown role: {role}")
