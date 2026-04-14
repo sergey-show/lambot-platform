@@ -103,27 +103,31 @@ STEP_EXTRA: dict[str, str] = {
         "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
         "- kubernetes_query: реальный kubectl через adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
         "- ansible_run_template: запуск роли из внутреннего Ansible marketplace. payload: "
-        "{\"target_id\":\"<uuid>\",\"template_id\":\"provision-gitlab-omnibus\",\"variables\":{...},"
-        "\"allow_fallback\":true,\"fallback_service\":\"gitlab|docker|nexus\"}.\n"
+        "{\"target_id\":\"<uuid>\",\"template_id\":\"<template-id>\",\"variables\":{...},"
+        "\"allow_fallback\":true,\"fallback_service\":\"docker|gitlab|nexus\"}.\n"
         "- adapter_agent_demo: GitLab demo через платформу (нужен GitLab ресурс).\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
         "- gitlab_pipeline: зарезервировано.\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
-        "Если запрос про установку типовых сервисов (gitlab/docker/nexus) — предпочитай ansible_run_template."
+        "Если запрос про установку типовых сервисов (docker, GitLab, Nexus и т.п.) — предпочитай ansible_run_template, "
+        "но только для сервисов, которые реально есть в контексте или явно запрошены пользователем."
     ),
     "implementation": (
         "Опирайся на блок «Факты исполнения» (структурированные задачи, воркеры) — что реально запускалось и с каким результатом. "
-        "Дополни человекочитаемым планом: репозитории, пайплайны, Ansible. Если воркеры не запускались или упали — честно укажи."
+        "Дополни человекочитаемым планом: репозитории, пайплайны, Ansible. Если воркеры не запускались или упали — честно укажи. "
+        "Никогда не пиши, что сервис/деплой успешен, если в фактах исполнения есть ошибки или незавершённые задачи."
     ),
     "deploy": (
         "Опиши, как развернуть результат на сервере проекта, опираясь на контекст (targets, URL). "
-        "Если серверов нет — напиши, что сначала нужно зарегистрировать SSH target."
+        "Если серверов нет — напиши, что сначала нужно зарегистрировать SSH target. "
+        "Запрещено утверждать «успешно развернули», если в execution facts есть ошибки или нет подтверждённого успешного исполнения."
     ),
     "pm_summary": (
         "Финальный отчёт для заказчика без технического бэкграунда: что получилось, как попробовать продукт. "
         "URL, логины и пароли указывай ТОЛЬКО если они явно есть в контексте проекта ниже; иначе — честно напиши, "
-        "что учётные данные нужно получить у администратора или завести в GitLab/на сервере."
+        "что учётные данные нужно получить у администратора или завести в используемом репозитории/на сервере. "
+        "Не добавляй фиктивные фразы «успешно развернули», если предыдущие шаги содержат ошибки."
     ),
 }
 
@@ -379,7 +383,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             system_peer = (
                 f"{peer_prompt}\n\n---\n"
                 "Внутренний запрос от коллеги по AI-команде. Ответь кратко и по делу, чтобы коллега мог "
-                f"продолжить шаг «{requester_step}». Не обращайся к конечному пользователю — только ответ коллеге.\n\n"
+                f"продолжить шаг «{requester_step}». Не обращайся к конечному пользователю — только ответ коллеге.\n"
+                "Запрещено придумывать успешно выполненные действия, URL или результаты тестов без фактов из контекста.\n\n"
                 f"Контекст проекта:\n{peer_ctx}\n\n---\n"
                 f"Накопленные результаты шагов:\n{acc_now}\n\n---\n"
                 f"Вопрос от коллеги (шаг пайплайна: {requester_step}; консультант: {lbl}):\n{question.strip()}"
@@ -470,6 +475,37 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 change_summary="Auto-sync admin guide from orchestration run",
             )
 
+        def _execution_blockers(run_obj: dict[str, Any]) -> list[dict[str, str]]:
+            tasks = run_obj.get("execution_tasks") if isinstance(run_obj.get("execution_tasks"), list) else []
+            blockers: list[dict[str, str]] = []
+            for t in tasks:
+                if not isinstance(t, dict):
+                    continue
+                st = str(t.get("status") or "")
+                title = str(t.get("title") or "task")
+                kind = str(t.get("action_kind") or "action")
+                if st != "done":
+                    blockers.append(
+                        {
+                            "title": title,
+                            "action_kind": kind,
+                            "status": st or "unknown",
+                            "error": str(t.get("error") or ""),
+                        }
+                    )
+                    continue
+                res = t.get("result")
+                if isinstance(res, dict) and res.get("ok") is False:
+                    blockers.append(
+                        {
+                            "title": title,
+                            "action_kind": kind,
+                            "status": "done_but_not_ok",
+                            "error": str(t.get("error") or res.get("error") or ""),
+                        }
+                    )
+            return blockers
+
         def _run_single_step_text(
             step_key: str,
             *,
@@ -546,6 +582,35 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
                 return False, None, err, False
+            if step_key in ("deploy", "pm_summary"):
+                run_now = team_get_run(run_id) or {}
+                blockers_now = _execution_blockers(run_now)
+                if blockers_now:
+                    lines = []
+                    for b in blockers_now[:8]:
+                        er = f" · {b['error']}" if b.get("error") else ""
+                        lines.append(f"- {b['title']} (`{b['action_kind']}`): {b['status']}{er}")
+                    msg = (
+                        "Блокировка шага: в execution tasks есть ошибки/незавершённые задачи.\n"
+                        + "\n".join(lines)
+                    )
+                    team_patch_step(
+                        run_id,
+                        step_key,
+                        status="done",
+                        output_md=msg,
+                        structured={
+                            "paused_for_user": True,
+                            "execution_blockers": blockers_now,
+                            "questions_for_user": [
+                                "Для продолжения деплоя/итога сначала закройте блокеры исполнения: исправить окружение, повторить задачи или подтвердить ручной обход."
+                            ],
+                        },
+                        finished_at=_utc_iso(),
+                    )
+                    accumulated[step_key] = msg
+                    team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                    return True, msg, None, True
 
             team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
             last_err = "unknown error"
@@ -661,6 +726,35 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         exec_md = format_execution_tasks_markdown(run_done)
                         text = f"{text}\n\n---\n{exec_md}"
                         execution_ctx = exec_md
+                        blockers = _execution_blockers(run_done)
+                        if blockers:
+                            blocker_lines = []
+                            for b in blockers[:8]:
+                                er = f" · {b['error']}" if b.get("error") else ""
+                                blocker_lines.append(
+                                    f"- {b['title']} (`{b['action_kind']}`): {b['status']}{er}"
+                                )
+                            structured_payload["execution_blockers"] = blockers
+                            structured_payload["paused_for_user"] = True
+                            structured_payload["questions_for_user"] = [
+                                "Исполнение завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."
+                            ]
+                            text = (
+                                f"{text}\n\n---\n### Блокеры исполнения\n"
+                                + "\n".join(blocker_lines)
+                                + "\n\nПайплайн приостановлен до решения блокеров."
+                            )
+                            team_patch_step(
+                                run_id,
+                                step_key,
+                                status="done",
+                                output_md=text,
+                                structured=structured_payload,
+                                finished_at=_utc_iso(),
+                            )
+                            accumulated[step_key] = text
+                            team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                            return True, text, None, True
                         team_patch_run(
                             run_id,
                             phase="execution_done"
