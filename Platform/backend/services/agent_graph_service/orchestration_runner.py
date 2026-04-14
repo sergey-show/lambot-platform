@@ -67,7 +67,10 @@ STEP_EXTRA: dict[str, str] = {
         "или для узкого вопроса одному специалисту (без полного цикла продукт→архитектура→планы):\n"
         '{"orchestration_route":{"mode":"direct","primary_role":"backend","reason":"кратко"}}\n'
         "primary_role: pm | architect | devops | backend | frontend | qa — только при mode=direct.\n"
-        "mode=full если нужен продукт/архитектура/несколько ролей; mode=direct если достаточно одного ответа специалиста."
+        "mode=full если нужен продукт/архитектура/несколько ролей; mode=direct если достаточно одного ответа специалиста.\n"
+        "Если запрос про малую правку существующего проекта/кода — допускается mode=direct, "
+        "но с последующим execution-хвостом (execution_plan + implementation + pm_summary). "
+        "Для крупных изменений/рефакторинга выбирай mode=full."
     ),
     "pm": (
         "Собери функциональные и нефункциональные требования, аудиторию, границы MVP. "
@@ -76,7 +79,9 @@ STEP_EXTRA: dict[str, str] = {
     "architect": (
         "Опиши целевую архитектуру, стек технологий, границы сервисов, данные и интеграции. "
         "Разбей работу на этапы. Явно сформулируй задачи для DevOps, Backend, Frontend и QA (списком). "
-        "Этот текст пойдёт в раздел «Архитектура» для пользователя."
+        "Этот текст пойдёт в раздел «Архитектура» для пользователя.\n"
+        "Добавь полную структуру проекта: ключевые директории/сервисы, назначение модулей, контракты между ними, "
+        "основные API/таблицы/очереди и где выполняется деплой."
     ),
     "devops_plan": (
         "Составь план работ DevOps: CI/CD, инфраструктура, секреты, окружения, деплой. "
@@ -89,7 +94,7 @@ STEP_EXTRA: dict[str, str] = {
         "Составь план работ frontend: экраны, состояние, вызовы API. Кто что делает и когда."
     ),
     "qa_validation": (
-        "Проведи QA-валидацию перед релизом на основе результатов шагов и фактов исполнения. "
+        "Проведи QA-валидацию после фактического деплоя на основе результатов шагов и фактов исполнения. "
         "Сформируй минимальный test plan (smoke/regression), риски и вердикт релиза. "
         "В summary_md обязательно укажи строку: release_recommendation: go|no_go. "
         "Если no_go — выставь pipeline_continue=false и добавь минимум 1 вопрос/блокер в questions_for_user."
@@ -111,7 +116,9 @@ STEP_EXTRA: dict[str, str] = {
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
         "Если запрос про установку типовых сервисов (docker, GitLab, Nexus и т.п.) — предпочитай ansible_run_template, "
-        "но только для сервисов, которые реально есть в контексте или явно запрошены пользователем."
+        "но только для сервисов, которые реально есть в контексте или явно запрошены пользователем.\n"
+        "Если запрос — правка уже существующего приложения на сервере, сформируй ssh_run_command с конкретными шагами "
+        "правки файлов/конфигов, проверкой результата и перезапуском нужного сервиса."
     ),
     "implementation": (
         "Опирайся на блок «Факты исполнения» (структурированные задачи, воркеры) — что реально запускалось и с каким результатом. "
@@ -146,14 +153,15 @@ CODING_MODEL_STEPS = frozenset(
         "deploy",
     }
 )
+EXECUTABLE_ACTION_KINDS = frozenset({"ssh_run_command", "kubernetes_query", "ansible_run_template"})
 FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("pm",),
     ("architect",),
     ("devops_plan", "backend_plan", "frontend_plan"),
     ("execution_plan",),
     ("implementation",),
-    ("qa_validation",),
     ("deploy",),
+    ("qa_validation",),
     ("pm_summary",),
 )
 MAX_STEP_RETRIES = 3
@@ -242,6 +250,43 @@ def _ctx_trim(ctx: str, max_chars: int) -> str:
     if len(c) <= max_chars:
         return c
     return c[:max_chars] + "\n… [контекст обрезан для шага маршрутизации]"
+
+
+def _looks_like_execution_change_request(text: str) -> bool:
+    t = (text or "").lower()
+    if not t:
+        return False
+    markers = (
+        "убер",
+        "удал",
+        "исправ",
+        "измени",
+        "доработ",
+        "правк",
+        "fix",
+        "remove",
+        "delete",
+        "update",
+        "deploy",
+        "frontend",
+        "backend",
+        "api",
+        "endpoint",
+        "график",
+        "компонент",
+        "сервер",
+        "ssh",
+    )
+    return any(m in t for m in markers)
+
+
+def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        if str(t.get("action_kind") or "").strip().lower() in EXECUTABLE_ACTION_KINDS:
+            return True
+    return False
 
 
 def _build_system(
@@ -437,11 +482,23 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             summary = (accumulated.get("pm_summary") or "").strip()
             if not (arch or impl or deploy or summary):
                 return
+            architecture_doc = "\n\n".join(
+                [
+                    x
+                    for x in [
+                        arch,
+                        accumulated.get("devops_plan") or "",
+                        accumulated.get("backend_plan") or "",
+                        accumulated.get("frontend_plan") or "",
+                    ]
+                    if (x or "").strip()
+                ]
+            ).strip()
             _upsert_doc(
                 doc_type="architecture",
                 title="Architecture Overview",
                 slug="architecture-overview",
-                content_md=arch or summary,
+                content_md=architecture_doc or summary,
                 change_summary="Auto-sync architecture from orchestration run",
             )
             user_doc = "\n\n".join(
@@ -460,9 +517,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     for x in [
                         accumulated.get("devops_plan") or "",
                         accumulated.get("backend_plan") or "",
-                        accumulated.get("qa_validation") or "",
                         impl,
                         deploy,
+                        accumulated.get("qa_validation") or "",
                     ]
                     if (x or "").strip()
                 ]
@@ -701,6 +758,55 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         parsed = parse_execution_plan_json(text)
                         if not parsed:
                             parsed = default_execution_tasks_if_empty(ctx)
+                        if _looks_like_execution_change_request(user_message) and not _has_executable_execution_tasks(parsed):
+                            recheck_hint = (
+                                "Self-check: в плане нет ни одной исполнимой задачи "
+                                "(ssh_run_command|kubernetes_query|ansible_run_template) для запроса на правку. "
+                                "Пересобери execution_plan так, чтобы он содержал реальные шаги исполнения."
+                            )
+                            retry_text = _run_single_step_text(
+                                step_key,
+                                direct_answer=direct_answer,
+                                acc_override=acc_override,
+                                debug_hint=recheck_hint,
+                            )
+                            retry_parsed = parse_execution_plan_json(retry_text)
+                            if not retry_parsed:
+                                retry_parsed = default_execution_tasks_if_empty(ctx)
+                            if _has_executable_execution_tasks(retry_parsed):
+                                text = retry_text
+                                parsed = retry_parsed
+                                structured_payload["execution_plan_self_check"] = {
+                                    "triggered": True,
+                                    "reason": "missing_executable_tasks",
+                                    "fixed": True,
+                                }
+                            else:
+                                msg = (
+                                    "Execution plan не содержит исполнимых задач для запроса на правку. "
+                                    "Агент выполнил самопроверку, но не смог сформировать runnable-план.\n\n"
+                                    "Нужно: добавить SSH/K8s target проекта или уточнить, где выполнять изменения."
+                                )
+                                structured_payload["execution_plan_self_check"] = {
+                                    "triggered": True,
+                                    "reason": "missing_executable_tasks",
+                                    "fixed": False,
+                                }
+                                structured_payload["paused_for_user"] = True
+                                structured_payload["questions_for_user"] = [
+                                    "Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."
+                                ]
+                                team_patch_step(
+                                    run_id,
+                                    step_key,
+                                    status="done",
+                                    output_md=msg,
+                                    structured=structured_payload,
+                                    finished_at=_utc_iso(),
+                                )
+                                accumulated[step_key] = msg
+                                team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                                return True, msg, None, True
                         team_replace_execution_tasks(run_id, parsed)
                         run = team_get_run(run_id)
                         if not run:
@@ -944,7 +1050,24 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         if route.get("mode") == "direct" and route.get("primary_role"):
             tail, specialist_key = pipeline_for_direct(route["primary_role"])
             if tail and specialist_key:
-                for skip_k in step_keys_to_skip_when_direct(specialist_key):
+                direct_with_execution = (
+                    specialist_key in ("devops_plan", "backend_plan", "frontend_plan")
+                    and _looks_like_execution_change_request(user_message)
+                )
+                if direct_with_execution:
+                    keep = {
+                        specialist_key,
+                        "intake",
+                        "execution_plan",
+                        "implementation",
+                        "deploy",
+                        "qa_validation",
+                        "pm_summary",
+                    }
+                    skip_keys = [k for k in STEP_ORDER.keys() if k not in keep]
+                else:
+                    skip_keys = step_keys_to_skip_when_direct(specialist_key)
+                for skip_k in skip_keys:
                     team_patch_step(
                         run_id,
                         skip_k,
@@ -952,16 +1075,21 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         output_md="Пропущено: простой запрос — прямой ответ выбранного специалиста.",
                         finished_at=_utc_iso(),
                     )
-                team_patch_run(run_id, phase="routing_direct")
+                team_patch_run(run_id, phase="routing_direct_execute" if direct_with_execution else "routing_direct")
                 ok_direct, _txt, _e, halt_direct = _execute_step(
                     specialist_key,
-                    direct_answer=True,
+                    direct_answer=not direct_with_execution,
                     fail_run_on_error=True,
                 )
                 if not ok_direct:
                     return
                 if halt_direct:
                     return
+                if direct_with_execution:
+                    for k in ("execution_plan", "implementation", "deploy", "qa_validation", "pm_summary"):
+                        ok_step, _txt_step, _err_step, halt_step = _execute_step(k)
+                        if not ok_step or halt_step:
+                            return
                 _finalize_success()
                 return
 

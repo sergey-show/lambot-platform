@@ -35,13 +35,16 @@ RUN if [ "$INSTALL_PLAYWRIGHT" = "1" ]; then \
 # ANSIBLE_CONFIG до RUN — чтобы ansible-galaxy читал [galaxy] timeout из ansible.cfg.
 # Повторы: таймауты/обрывы при скачивании артефактов с galaxy.ansible.com во время docker build.
 ENV ANSIBLE_CONFIG=/app/ansible.cfg
-RUN mkdir -p /app/ansible/roles /app/ansible/collections \
-    && ansible-galaxy role install -r /app/ansible-requirements-roles.yml -p /app/ansible/roles \
-    && for attempt in 1 2 3 4 5; do \
-         ansible-galaxy collection install --timeout 300 -r /app/ansible-requirements-collections.yml -p /app/ansible/collections && break; \
-         if [ "$attempt" -eq 5 ]; then exit 1; fi; \
-         echo "ansible-galaxy collection install failed (attempt $attempt), retry in 30s..."; \
-         sleep 30; \
-       done
+ARG INSTALL_ANSIBLE_GALAXY=0
+RUN if [ "$INSTALL_ANSIBLE_GALAXY" = "1" ]; then \
+      mkdir -p /app/ansible/roles /app/ansible/collections \
+      && ansible-galaxy role install -r /app/ansible-requirements-roles.yml -p /app/ansible/roles \
+      && for attempt in 1 2 3 4 5; do \
+           ansible-galaxy collection install --timeout 300 -r /app/ansible-requirements-collections.yml -p /app/ansible/collections && break; \
+           if [ "$attempt" -eq 5 ]; then exit 1; fi; \
+           echo "ansible-galaxy collection install failed (attempt $attempt), retry in 30s..."; \
+           sleep 30; \
+         done; \
+    fi
 
 ENV PYTHONUNBUFFERED=1

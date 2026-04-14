@@ -1261,8 +1261,8 @@ function renderPortal(): void {
     { key: "frontend_plan", label: "Frontend", lane: 3, order: 2 },
     { key: "execution_plan", label: "План исполнения", lane: 4, order: 0 },
     { key: "implementation", label: "Реализация", lane: 5, order: 0 },
-    { key: "qa_validation", label: "QA", lane: 6, order: 0 },
-    { key: "deploy", label: "Деплой", lane: 7, order: 0 },
+    { key: "deploy", label: "Деплой", lane: 6, order: 0 },
+    { key: "qa_validation", label: "QA", lane: 7, order: 0 },
     { key: "pm_summary", label: "PM итог", lane: 8, order: 0 },
   ];
   const ORCH_LAYER_KEYS: string[][] = [
@@ -1272,8 +1272,8 @@ function renderPortal(): void {
     ["devops_plan", "backend_plan", "frontend_plan"],
     ["execution_plan"],
     ["implementation"],
-    ["qa_validation"],
     ["deploy"],
+    ["qa_validation"],
     ["pm_summary"],
   ];
   const ORCH_GRAPH_EDGES: Array<[string, string]> = [
@@ -1286,9 +1286,9 @@ function renderPortal(): void {
     ["backend_plan", "execution_plan"],
     ["frontend_plan", "execution_plan"],
     ["execution_plan", "implementation"],
-    ["implementation", "qa_validation"],
-    ["qa_validation", "deploy"],
-    ["deploy", "pm_summary"],
+    ["implementation", "deploy"],
+    ["deploy", "qa_validation"],
+    ["qa_validation", "pm_summary"],
   ];
 
   const orchStatusLabel = (raw: string | undefined): string => {
