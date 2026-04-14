@@ -355,6 +355,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         existing_status = str(existing_run.get("status") or "")
         prev_steps_raw = existing_run.get("steps") if isinstance(existing_run.get("steps"), list) else []
         prev_steps: list[dict[str, Any]] = [s for s in prev_steps_raw if isinstance(s, dict)]
+        incoming_message = user_message
+        original_user_message = str(existing_run.get("user_message") or "").strip()
         paused_step_key = ""
         if existing_status == "paused":
             for s in sorted(prev_steps, key=lambda x: int(x.get("seq") or 999)):
@@ -364,8 +366,19 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     paused_step_key = str(s.get("step_key") or "").strip()
                     break
         resume_from_paused = bool(paused_step_key)
+        continue_existing_run = existing_status in ("done", "error")
+        if resume_from_paused:
+            base = original_user_message or incoming_message
+            user_message = f"{base}\n\nУточнение пользователя к приостановленному шагу:\n{incoming_message}"
+        elif continue_existing_run:
+            base = original_user_message or incoming_message
+            user_message = f"{base}\n\nНовое сообщение пользователя в рамках того же run:\n{incoming_message}"
+        else:
+            user_message = incoming_message
         if resume_from_paused:
             team_patch_run(run_id, status="running", phase="resume_pipeline")
+        elif continue_existing_run:
+            team_patch_run(run_id, status="running", phase="continue_pipeline", error="")
         else:
             team_patch_run(run_id, status="running", phase="pipeline")
         tenant_id = fetch_project_tenant_id(pid)
@@ -375,14 +388,24 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         accumulated: dict[str, str] = {}
         execution_ctx = ""
         if resume_from_paused:
-            original_user_message = str(existing_run.get("user_message") or "").strip()
-            base = original_user_message or user_message
-            user_message = f"{base}\n\nУточнение пользователя к приостановленному шагу:\n{user_message}"
             for s in sorted(prev_steps, key=lambda x: int(x.get("seq") or 999)):
                 key = str(s.get("step_key") or "")
                 if not key or key == paused_step_key:
                     break
                 if str(s.get("status") or "") != "done":
+                    continue
+                out = str(s.get("output") or "").strip()
+                if out:
+                    accumulated[key] = out
+            if isinstance(existing_run.get("execution_tasks"), list) and existing_run.get("execution_tasks"):
+                try:
+                    execution_ctx = format_execution_tasks_markdown(existing_run)
+                except Exception:
+                    execution_ctx = ""
+        elif continue_existing_run:
+            for s in sorted(prev_steps, key=lambda x: int(x.get("seq") or 999)):
+                key = str(s.get("step_key") or "")
+                if not key or str(s.get("status") or "") != "done":
                     continue
                 out = str(s.get("output") or "").strip()
                 if out:

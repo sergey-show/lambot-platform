@@ -90,10 +90,11 @@ def orchestrate_continue(
     row = get_run(run_id)
     if row is None or row.get("project_id") != str(project_id):
         raise HTTPException(status_code=404, detail="run not found")
-    if str(row.get("status") or "") != "paused":
-        raise HTTPException(status_code=409, detail="run is not paused")
+    st = str(row.get("status") or "")
+    if st not in ("paused", "done", "error"):
+        raise HTTPException(status_code=409, detail="run is not continuable")
     background_tasks.add_task(run_orchestration_sync, project_id, run_id, msg)
-    return {"run_id": run_id, "status": "resuming"}
+    return {"run_id": run_id, "status": "resuming" if st == "paused" else "continuing"}
 
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")

@@ -2511,11 +2511,19 @@ function renderPortal(): void {
             sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
           } else if (rr.ok) {
             const rd = (await rr.json()) as { status?: string };
-            if (rd.status === "paused") {
+            const st = String(rd.status || "").toLowerCase();
+            if (st === "paused" || st === "done" || st === "error") {
               continueRunId = lastRunId;
               endpoint = `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(lastRunId)}/continue`;
-              if (stLine) stLine.textContent = "Продолжение приостановленного запуска…";
-              appendOrchestrationLiveLog(`resume run ${lastRunId}: отправлено уточнение пользователя`);
+              if (stLine) stLine.textContent = st === "paused" ? "Продолжение приостановленного запуска…" : "Продолжение run по новому сообщению…";
+              appendOrchestrationLiveLog(
+                `${st === "paused" ? "resume" : "continue"} run ${lastRunId}: отправлено сообщение пользователя`,
+              );
+            } else if (st === "running") {
+              if (stLine) stLine.textContent = `run ${lastRunId} уже выполняется — дождитесь завершения шага`;
+              appendOrchestrationLiveLog(`run ${lastRunId} уже running: новое сообщение будет доступно после завершения текущего цикла`);
+              void startOrchestrationStream(lastRunId);
+              return;
             }
           }
         } catch {
@@ -3550,11 +3558,8 @@ function renderPortal(): void {
           { headers: authHeader(token()) },
         );
         if (rr.ok) {
-          const rd = (await rr.json()) as { status?: string };
-          if (rd.status === "paused") {
-            void startOrchestration();
-            return;
-          }
+          void startOrchestration();
+          return;
         } else if (rr.status === 404) {
           sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
         }
@@ -3733,8 +3738,11 @@ function renderPortal(): void {
   document.getElementById("project-ai-chat-clear")?.addEventListener("click", () => {
     if (!currentProjectId) return;
     if (!confirm("Очистить историю чата для этого проекта?")) return;
+    stopOrchestrationPoll();
+    stopOrchestrationStream();
     projectAiChatHistory = [];
     sessionStorage.removeItem(projectAiChatStorageKey(currentProjectId));
+    sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
     /* Ключи syncOrchestrationStepsToChat не сбрасываем: иначе следующий poll снова подтянет шаги ИИ Команды в чат. */
     renderProjectAiChat();
   });
