@@ -85,13 +85,22 @@ STEP_EXTRA: dict[str, str] = {
     ),
     "devops_plan": (
         "Составь план работ DevOps: CI/CD, инфраструктура, секреты, окружения, деплой. "
-        "Кто что делает и в каком порядке (можно таблицей или списком). Согласуй с архитектурой выше."
+        "Кто что делает и в каком порядке (можно таблицей или списком). Согласуй с архитектурой выше.\n"
+        "Для задач по изменению существующего проекта сначала сделай анализ текущего состояния на основе фактов "
+        "(контекст/доки/инструменты), затем давай план. В ответе обязательно разделы: "
+        "«Анализ текущего состояния (факты)» и «План изменений»."
     ),
     "backend_plan": (
-        "Составь план работ backend: API, БД, интеграции. Кто что делает и когда. Согласуй с архитектурой."
+        "Составь план работ backend: API, БД, интеграции. Кто что делает и когда. Согласуй с архитектурой.\n"
+        "Для задач по изменению существующего проекта сначала сделай анализ текущего кода/контрактов на основе фактов "
+        "(контекст/документация/инструменты), затем давай план. В ответе обязательно разделы: "
+        "«Анализ текущего кода (факты)» и «План изменений»."
     ),
     "frontend_plan": (
-        "Составь план работ frontend: экраны, состояние, вызовы API. Кто что делает и когда."
+        "Составь план работ frontend: экраны, состояние, вызовы API. Кто что делает и когда.\n"
+        "Для задач по изменению существующего проекта сначала сделай анализ текущего UI-кода на основе фактов "
+        "(контекст/документация/инструменты), затем давай план. В ответе обязательно разделы: "
+        "«Анализ текущего кода (факты)» и «План изменений»."
     ),
     "qa_validation": (
         "Проведи QA-валидацию после фактического деплоя на основе результатов шагов и фактов исполнения. "
@@ -287,6 +296,12 @@ def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
         if str(t.get("action_kind") or "").strip().lower() in EXECUTABLE_ACTION_KINDS:
             return True
     return False
+
+
+def _should_force_tool_analysis(step_key: str, user_message: str) -> bool:
+    if step_key not in ("devops_plan", "backend_plan", "frontend_plan"):
+        return False
+    return _looks_like_execution_change_request(user_message)
 
 
 def _build_system(
@@ -613,6 +628,38 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if step_key == "intake"
                 else f"Выполни шаг «{label}» ({step_key})."
             )
+            if _should_force_tool_analysis(step_key, user_message):
+                analysis_prompt = (
+                    f"{user_message}\n\n"
+                    "Это задача изменения существующего проекта. "
+                    "Шаг 1 (обязательный): собери факты через доступные инструменты. "
+                    "Шаг 2: сделай анализ текущего состояния по фактам. "
+                    "Не придумывай факты, пути файлов и результаты."
+                )
+                graph_result = invoke_graph(project_id, analysis_prompt)
+                analysis_text = _extract_graph_text(graph_result)
+                if not analysis_text:
+                    return (
+                        "Инструментальный анализ выполнен, но не вернулся итоговый текст ответа. "
+                        "Повторите запрос, чтобы агент сформировал вывод по фактам."
+                    )
+                model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
+                final_messages = [
+                    SystemMessage(content=system_full),
+                    HumanMessage(
+                        content=(
+                            f"Выполни шаг «{label}» ({step_key}) на основе фактов ниже.\n\n"
+                            "Обязательный формат ответа:\n"
+                            "1) Анализ текущего состояния (факты)\n"
+                            "2) План изменений\n"
+                            "3) Проверка себя (что может быть неверно/что проверить дополнительно)\n\n"
+                            f"Факты инструментального анализа:\n{analysis_text}"
+                        )
+                    ),
+                ]
+                resp = model.invoke(final_messages)
+                text = resp.content if isinstance(resp.content, str) else str(resp.content)
+                return (text or "").strip()
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
                 graph_result = invoke_graph(project_id, user_message)
                 text = _extract_graph_text(graph_result)

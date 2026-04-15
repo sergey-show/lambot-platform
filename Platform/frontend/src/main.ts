@@ -546,10 +546,19 @@ function renderPortal(): void {
       </div>
       </div>
       <div id="view-team" class="lp-portal-view">
+      <div class="lp-panel">
+        <div class="lp-field">
+          <label for="orchestration-user-message">Запрос для оркестрации</label>
+          <textarea class="lp-textarea" id="orchestration-user-message" rows="3" placeholder="Сформулируйте задачу (можно скопировать из чата по проекту)"></textarea>
+        </div>
+        <div class="lp-row" style="margin-bottom:12px;">
+          <button type="button" class="lp-btn" id="project-orchestrate-btn" title="PM → Архитектор → DevOps → Backend → Frontend">Запустить оркестрацию</button>
+        </div>
+      </div>
       <div class="lp-panel" id="orchestration-panel">
         <h2>ИИ Команда</h2>
         <p class="lp-muted">
-          Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → QA → итоговый отчёт PM. Промпты ролей — в Superadmin. Запуск и продолжение происходят автоматически из чата по проекту.
+          Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → QA → итоговый отчёт PM. Промпты ролей — в Superadmin. Можно запускать из чата автоматически или вручную кнопкой выше.
         </p>
         <p class="lp-muted" id="orchestration-status-line" style="font-size:13px;margin-bottom:8px;"></p>
         <details id="orchestration-live-log-wrap" style="margin:0 0 10px;">
@@ -2477,10 +2486,11 @@ function renderPortal(): void {
       alert("Выберите проект");
       return;
     }
+    const orchInp = document.getElementById("orchestration-user-message") as HTMLTextAreaElement | null;
     const chatInp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
-    const msg = (chatInp?.value?.trim() || "").trim();
+    const msg = (orchInp?.value?.trim() || chatInp?.value?.trim() || "").trim();
     if (!msg) {
-      alert("Введите сообщение в чате по проекту");
+      alert("Введите запрос в поле оркестрации или сообщение в чате по проекту");
       return;
     }
     stopOrchestrationPoll();
@@ -2546,6 +2556,7 @@ function renderPortal(): void {
       projectAiChatHistory.push({ role: "user", content: msg });
       saveProjectAiChat();
       renderProjectAiChat();
+      if (orchInp) orchInp.value = "";
       if (chatInp) chatInp.value = "";
       const effectiveRunId = continueRunId || payload.run_id;
       sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, effectiveRunId);
@@ -3539,89 +3550,13 @@ function renderPortal(): void {
     const inp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
     const userMsg = inp?.value?.trim() ?? "";
     if (!userMsg) return;
-    const activeRunId = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`) || "";
-    if (activeRunId) {
-      try {
-        const rr = await fetch(
-          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(activeRunId)}`,
-          { headers: authHeader(token()) },
-        );
-        if (rr.ok) {
-          void startOrchestration();
-          return;
-        } else if (rr.status === 404) {
-          sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
-        }
-      } catch {
-        /* fallback to regular chat invoke */
-      }
-    }
-    const historyPayload = projectAiChatHistory
-      .filter((m): m is { role: "user" | "assistant"; content: string } => m.role === "user" || m.role === "assistant")
-      .map(({ role, content }) => ({ role, content }));
-    setProjectAiChatBusy(true);
-    try {
-      let resp: Response;
-      try {
-        resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-graph/invoke`, {
-          method: "POST",
-          headers: { ...authHeader(token()), "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ message: userMsg, history: historyPayload }),
-        });
-      } catch (e) {
-        if (isFetchNetworkError(e)) {
-          await new Promise((r) => window.setTimeout(r, 1200));
-          resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-graph/invoke`, {
-            method: "POST",
-            headers: { ...authHeader(token()), "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ message: userMsg, history: historyPayload }),
-          });
-        } else {
-          throw e;
-        }
-      }
-      const raw = await resp.text();
-      let data: { final_message?: string; detail?: string };
-      try {
-        data = JSON.parse(raw) as { final_message?: string; detail?: string };
-      } catch {
-        const isHtml = raw.trimStart().startsWith("<");
-        const hint = isHtml
-          ? `Сервер вернул HTML (HTTP ${resp.status}) вместо JSON — часто это недоступный gateway, 502/504 или SPA отдаёт index.html на /api. Проверьте, что запросы идут на api-gateway (в dev — прокси Vite /api → :8000; в prod — nginx проксирует /api).`
-          : `Ответ не JSON (HTTP ${resp.status}): ${raw.slice(0, 500)}`;
-        if (inp) inp.value = "";
-        projectAiChatHistory.push({ role: "user", content: userMsg });
-        projectAiChatHistory.push({ role: "assistant", content: hint });
-        saveProjectAiChat();
-        renderProjectAiChat();
-        write({ error: hint, status: resp.status, contentType: resp.headers.get("content-type") });
-        return;
-      }
-      if (inp) inp.value = "";
-      projectAiChatHistory.push({ role: "user", content: userMsg });
-      const reply =
-        (typeof data.final_message === "string" && data.final_message.trim()) ||
-        (resp.ok ? JSON.stringify(data, null, 2) : `Ошибка ${resp.status}: ${data.detail || JSON.stringify(data)}`);
-      projectAiChatHistory.push({ role: "assistant", content: reply });
-      saveProjectAiChat();
-      renderProjectAiChat();
-      write(data);
-    } catch (e) {
-      const err = isFetchNetworkError(e) ? fetchNetworkHint("чат с агентом") : String(e);
-      if (inp) inp.value = "";
-      projectAiChatHistory.push({ role: "user", content: userMsg });
-      projectAiChatHistory.push({ role: "assistant", content: `Ошибка сети или запроса: ${err}` });
-      saveProjectAiChat();
-      renderProjectAiChat();
-      write({ error: err, raw_error: String(e) });
-    } finally {
-      setProjectAiChatBusy(false);
-      void refreshStatus();
-      void refreshWorkspaceHint();
-    }
+    await startOrchestration();
+    void refreshStatus();
+    void refreshWorkspaceHint();
   };
 
   document.getElementById("project-ai-chat-send")?.addEventListener("click", () => void sendProjectAiChat());
+  document.getElementById("project-orchestrate-btn")?.addEventListener("click", () => void startOrchestration());
   document.getElementById("orch-node-modal-close")?.addEventListener("click", () => closeOrchNodeModal());
   document.getElementById("orchestration-node-modal")?.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement | null;
