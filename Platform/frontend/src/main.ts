@@ -3287,12 +3287,18 @@ function renderPortal(): void {
         /* keep text */
       }
       write(data);
-      if (resp.ok) {
+      const obj = (data && typeof data === "object" ? (data as Record<string, unknown>) : null);
+      const okFlag = obj && typeof obj.ok === "boolean" ? obj.ok : undefined;
+      const detailText =
+        (obj && typeof obj.detail === "string" && obj.detail.trim()) ||
+        (obj && typeof obj.error === "string" && obj.error.trim()) ||
+        "";
+      if (resp.ok && okFlag !== false) {
         if (statusEl) statusEl.textContent = `Ansible: ${templateId} завершён`;
         if (hint) hint.textContent = "Роль выполнена. Смотрите журнал и ресурсы ниже.";
       } else {
         if (statusEl) statusEl.textContent = `Ansible: ошибка ${resp.status}`;
-        if (hint) hint.textContent = `Ошибка запуска: ${resp.status}`;
+        if (hint) hint.textContent = detailText ? `Ошибка запуска: ${detailText}` : `Ошибка запуска: ${resp.status}`;
       }
       void refreshInfraUi();
       void loadActivityLogs();

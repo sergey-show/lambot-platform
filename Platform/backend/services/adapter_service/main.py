@@ -1969,9 +1969,17 @@ def run_infra_template(
             "template_id": PREPARE_DOCKER_TEMPLATE_ID,
         }
         if rc_p != 0:
+            prep_err = str(prep_result.get("stderr") or "").strip()
+            prep_out = str(prep_result.get("stdout") or "").strip()
+            tail = prep_err or prep_out
+            if len(tail) > 600:
+                tail = tail[-600:]
             raise HTTPException(
                 status_code=500,
-                detail=f"prepare-docker-host failed (rc={rc_p})",
+                detail=(
+                    f"prepare-docker-host failed (rc={rc_p})"
+                    + (f": {tail}" if tail else "")
+                ),
             )
 
     bundle = _orchestrator_prepare_bundle(template_id, variables, row)
