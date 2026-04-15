@@ -540,25 +540,16 @@ function renderPortal(): void {
             <button type="button" class="lp-btn" id="project-ai-chat-send">Отправить</button>
             <button type="button" class="lp-btn lp-btn-ghost" id="project-ai-chat-clear">Очистить чат</button>
           </div>
-          <p class="lp-muted" style="font-size:12px;margin-top:6px;">Оркестрацию ролей запускайте в разделе <strong>ИИ Команда</strong> слева.</p>
+          <p class="lp-muted" style="font-size:12px;margin-top:6px;">Оркестрация запускается автоматически из этого чата в рамках текущего run.</p>
         </div>
         <p class="lp-muted" id="project-ai-chat-status" style="font-size:12px;margin-top:8px;"></p>
       </div>
       </div>
       <div id="view-team" class="lp-portal-view">
-      <div class="lp-panel">
-        <div class="lp-field">
-          <label for="orchestration-user-message">Запрос для оркестрации</label>
-          <textarea class="lp-textarea" id="orchestration-user-message" rows="3" placeholder="Сформулируйте задачу (можно скопировать из чата на главной)"></textarea>
-        </div>
-        <div class="lp-row" style="margin-bottom:12px;">
-          <button type="button" class="lp-btn" id="project-orchestrate-btn" title="PM → Архитектор → DevOps → Backend → Frontend">Запустить оркестрацию</button>
-        </div>
-      </div>
       <div class="lp-panel" id="orchestration-panel">
         <h2>ИИ Команда</h2>
         <p class="lp-muted">
-          Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → итоговый отчёт PM. Промпты ролей — в Superadmin. Нажмите «Запустить оркестрацию» выше.
+          Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → QA → итоговый отчёт PM. Промпты ролей — в Superadmin. Запуск и продолжение происходят автоматически из чата по проекту.
         </p>
         <p class="lp-muted" id="orchestration-status-line" style="font-size:13px;margin-bottom:8px;"></p>
         <details id="orchestration-live-log-wrap" style="margin:0 0 10px;">
@@ -2486,11 +2477,10 @@ function renderPortal(): void {
       alert("Выберите проект");
       return;
     }
-    const orchInp = document.getElementById("orchestration-user-message") as HTMLTextAreaElement | null;
     const chatInp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
-    const msg = (orchInp?.value?.trim() || chatInp?.value?.trim() || "").trim();
+    const msg = (chatInp?.value?.trim() || "").trim();
     if (!msg) {
-      alert("Введите запрос в разделе «ИИ Команда» или сообщение в чате на главной");
+      alert("Введите сообщение в чате по проекту");
       return;
     }
     stopOrchestrationPoll();
@@ -2556,7 +2546,6 @@ function renderPortal(): void {
       projectAiChatHistory.push({ role: "user", content: msg });
       saveProjectAiChat();
       renderProjectAiChat();
-      if (orchInp) orchInp.value = "";
       if (chatInp) chatInp.value = "";
       const effectiveRunId = continueRunId || payload.run_id;
       sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, effectiveRunId);
@@ -3633,7 +3622,6 @@ function renderPortal(): void {
   };
 
   document.getElementById("project-ai-chat-send")?.addEventListener("click", () => void sendProjectAiChat());
-  document.getElementById("project-orchestrate-btn")?.addEventListener("click", () => void startOrchestration());
   document.getElementById("orch-node-modal-close")?.addEventListener("click", () => closeOrchNodeModal());
   document.getElementById("orchestration-node-modal")?.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement | null;
