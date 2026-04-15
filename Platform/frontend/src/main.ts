@@ -1156,6 +1156,9 @@ function renderPortal(): void {
   let orchStreamAbort: AbortController | null = null;
   let orchStreamLastRun: OrchRunData | null = null;
   let orchBrowserLogsTs = 0;
+  let orchModalStepKey = "";
+  let orchModalRunId = "";
+  let orchModalReasoningMode: "brief" | "detailed" = "brief";
   const orchLiveLogMax = 180_000;
 
   const stopOrchestrationPoll = () => {
@@ -1362,6 +1365,17 @@ function renderPortal(): void {
     const envelope = stObj.step_envelope && typeof stObj.step_envelope === "object"
       ? (stObj.step_envelope as Record<string, unknown>)
       : null;
+    const envelopeSummary = envelope ? String(envelope.summary_md || "").trim() : "";
+    const envelopeStatus = envelope ? String(envelope.step_status || "").trim() : "";
+    const envelopeContinue =
+      envelope && typeof envelope.pipeline_continue === "boolean"
+        ? Boolean(envelope.pipeline_continue)
+        : null;
+    const envelopePeerQueries = envelope && Array.isArray(envelope.peer_queries)
+      ? envelope.peer_queries
+          .filter((x) => typeof x === "object" && x !== null)
+          .map((x) => x as Record<string, unknown>)
+      : [];
     const qfu = Array.isArray(stObj.questions_for_user)
       ? stObj.questions_for_user.map((x) => String(x)).filter(Boolean)
       : [];
@@ -1386,6 +1400,78 @@ function renderPortal(): void {
     if (peerResp.length) liveAction.push(`Синхронизация с коллегами: ${peerResp.length}`);
     if (qaGate === "no_go") liveAction.push("QA gate: NO_GO (деплой блокирован)");
     if (!liveAction.length) liveAction.push("Явных действий в structured-мета нет");
+    const reasoningBrief: string[] = [];
+    const reasoningDetailed: string[] = [];
+    if ((step?.status || "") === "running") {
+      reasoningBrief.push("Шаг активен.");
+      reasoningDetailed.push("Шаг активен: агент выполняет текущую задачу.");
+    }
+    if (attempt > 0 && maxAttempts > 0) {
+      reasoningBrief.push(`Повторная попытка ${attempt}/${maxAttempts}.`);
+      reasoningDetailed.push(`Повторная попытка: ${attempt}/${maxAttempts}.`);
+    }
+    if (envelopeStatus) {
+      const statusLabel =
+        envelopeStatus === "need_user_clarification"
+          ? "нужно уточнение от пользователя"
+          : envelopeStatus === "need_peer_sync"
+            ? "нужна синхронизация с коллегами"
+            : "шаг завершен";
+      reasoningBrief.push(`Решение шага: ${statusLabel}.`);
+      reasoningDetailed.push(`Решение шага: ${statusLabel}.`);
+    }
+    if (envelopeContinue !== null) {
+      reasoningBrief.push(`Продолжение пайплайна: ${envelopeContinue ? "да" : "нет"}.`);
+      reasoningDetailed.push(`Продолжение пайплайна: ${envelopeContinue ? "да" : "нет"}.`);
+    }
+    if (envelopePeerQueries.length) {
+      reasoningBrief.push(`Запросы к коллегам: ${envelopePeerQueries.length}.`);
+      const peerQueryRows = envelopePeerQueries
+        .map((x, idx) => {
+          const role = String(x.role || "").trim() || "роль";
+          const question = String(x.question || "").replace(/\s+/g, " ").trim();
+          return `   ${idx + 1}. запрос к ${role}: ${question || "без текста"}`;
+        })
+        .join("\n");
+      reasoningDetailed.push(`Запросы к коллегам:\n${peerQueryRows}`);
+    }
+    if (peerResp.length) {
+      reasoningBrief.push(`Ответы коллег: ${peerResp.length}.`);
+      const peerRespRows = peerResp
+        .map((x, idx) => {
+          const role = String(x.role || "").trim() || "роль";
+          const answerRaw = String(x.answer || "").replace(/\s+/g, " ").trim();
+          const answer = answerRaw.length > 280 ? `${answerRaw.slice(0, 280)}…` : answerRaw;
+          return `   ${idx + 1}. ответ ${role}: ${answer || "пусто"}`;
+        })
+        .join("\n");
+      reasoningDetailed.push(`Полученные ответы:\n${peerRespRows}`);
+    }
+    if (qfu.length) {
+      reasoningBrief.push(`Нужны уточнения пользователя: ${qfu.length}.`);
+      const qRows = qfu.map((x, idx) => `   ${idx + 1}. ${String(x)}`).join("\n");
+      reasoningDetailed.push(`Что нужно от пользователя:\n${qRows}`);
+    }
+    if (qaGate === "no_go") {
+      reasoningBrief.push("QA gate: NO_GO.");
+      reasoningDetailed.push("QA gate: NO_GO — релиз заблокирован до исправлений.");
+    }
+    if (envelopeSummary) {
+      reasoningBrief.push("Есть краткое обоснование шага.");
+      const summary = envelopeSummary.length > 1200 ? `${envelopeSummary.slice(0, 1200)}\n…` : envelopeSummary;
+      reasoningDetailed.push(`Краткое обоснование шага:\n${summary}`);
+    }
+    if (!reasoningBrief.length) {
+      reasoningBrief.push("Явный structured-трейс пока не сформирован.");
+    }
+    if (!reasoningDetailed.length) {
+      reasoningDetailed.push("Явный structured-трейс пока не сформирован.");
+    }
+    const reasoningText = orchModalReasoningMode === "brief"
+      ? reasoningBrief.join("\n")
+      : reasoningDetailed.join("\n\n");
+    const briefBtnClass = orchModalReasoningMode === "brief" ? "lp-btn" : "lp-btn lp-btn-ghost";
+    const detailedBtnClass = orchModalReasoningMode === "detailed" ? "lp-btn" : "lp-btn lp-btn-ghost";
     const outputLines = (output || "").split(/\r?\n/).filter((x) => x.trim());
     const outputTail = outputLines.slice(-8).join("\n");
     const execRows =
@@ -1419,6 +1505,16 @@ function renderPortal(): void {
           <pre class="lp-orch-pre">${escapeHtml(liveAction.join("\n"))}</pre>
         </div>
         <div class="lp-orch-modal-block">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <h4 style="margin:0;">Ход рассуждений</h4>
+            <div style="display:flex;gap:6px;">
+              <button type="button" id="orch-reasoning-brief" class="${briefBtnClass}" style="padding:4px 8px;font-size:12px;">Кратко</button>
+              <button type="button" id="orch-reasoning-detailed" class="${detailedBtnClass}" style="padding:4px 8px;font-size:12px;">Подробно</button>
+            </div>
+          </div>
+          <pre class="lp-orch-pre">${escapeHtml(reasoningText)}</pre>
+        </div>
+        <div class="lp-orch-modal-block">
           <h4>Над чем работает</h4>
           <pre class="lp-orch-pre">${escapeHtml(outputTail || "Пока нет live-вывода шага")}</pre>
         </div>
@@ -1436,7 +1532,19 @@ function renderPortal(): void {
           <pre class="lp-orch-pre">${escapeHtml(output || "Пока нет вывода")}</pre>
         </div>
       `;
+      const briefBtn = bodyEl.querySelector("#orch-reasoning-brief");
+      const detailedBtn = bodyEl.querySelector("#orch-reasoning-detailed");
+      briefBtn?.addEventListener("click", () => {
+        orchModalReasoningMode = "brief";
+        openOrchNodeModal(stepKey, data);
+      });
+      detailedBtn?.addEventListener("click", () => {
+        orchModalReasoningMode = "detailed";
+        openOrchNodeModal(stepKey, data);
+      });
     }
+    orchModalStepKey = stepKey;
+    orchModalRunId = String(data.run_id || "");
     root.removeAttribute("hidden");
     document.body.classList.add("lp-modal-open");
   };
@@ -1446,6 +1554,8 @@ function renderPortal(): void {
     if (!root) return;
     root.setAttribute("hidden", "hidden");
     document.body.classList.remove("lp-modal-open");
+    orchModalStepKey = "";
+    orchModalRunId = "";
   };
 
   const renderOrchestrationGraph = (data: OrchRunData | null) => {
@@ -1752,6 +1862,14 @@ function renderPortal(): void {
   const applyOrchestrationRunRealtime = (runId: string, data: OrchRunData) => {
     renderOrchestrationPanel(data);
     syncOrchestrationStepsToChat(runId, data);
+    if (orchModalStepKey) {
+      const modalRoot = document.getElementById("orchestration-node-modal");
+      if (modalRoot && !modalRoot.hasAttribute("hidden")) {
+        if (!orchModalRunId || orchModalRunId === runId) {
+          openOrchNodeModal(orchModalStepKey, data);
+        }
+      }
+    }
 
     const prev = orchStreamLastRun;
     if (!prev) {

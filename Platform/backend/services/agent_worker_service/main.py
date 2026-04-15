@@ -100,6 +100,7 @@ async def _run_ssh_action(project_id: str, payload: dict[str, Any]) -> dict[str,
         raise ValueError("ssh_run_command: payload.command or payload.commands required")
 
     out: list[dict[str, Any]] = []
+    overall_ok = True
     async with httpx.AsyncClient(timeout=600.0) as client:
         for c in commands:
             first = await _ssh_exec_once(
@@ -122,9 +123,17 @@ async def _run_ssh_action(project_id: str, payload: dict[str, Any]) -> dict[str,
                     confirmation_token=tok,
                 )
                 out.append({"command": c, "response": second, "auto_confirmed": True})
+                if not bool(second.get("ok", False)):
+                    overall_ok = False
+                if int(second.get("exit_code") or 0) != 0:
+                    overall_ok = False
             else:
                 out.append({"command": c, "response": first, "auto_confirmed": False})
-    return {"ok": True, "mode": "ssh_run_command", "target_id": target_id, "results": out}
+                if not bool(first.get("ok", False)):
+                    overall_ok = False
+                if int(first.get("exit_code") or 0) != 0:
+                    overall_ok = False
+    return {"ok": overall_ok, "mode": "ssh_run_command", "target_id": target_id, "results": out}
 
 
 async def _run_k8s_action(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -174,7 +183,37 @@ async def _run_ansible_template_action(project_id: str, payload: dict[str, Any])
         )
         r.raise_for_status()
         data = r.json()
-    return {"ok": True, "mode": "ansible_run_template", "request": req, "response": data}
+    result_ok = bool(data.get("ok")) if isinstance(data, dict) and "ok" in data else True
+    return {"ok": result_ok, "mode": "ansible_run_template", "request": req, "response": data}
+
+
+def _result_error_hint(action: str, result: dict[str, Any]) -> str:
+    if action == "ansible_run_template":
+        resp = result.get("response") if isinstance(result.get("response"), dict) else {}
+        if isinstance(resp, dict):
+            if isinstance(resp.get("detail"), str) and resp.get("detail").strip():
+                return str(resp.get("detail"))
+            fb = resp.get("fallback_result") if isinstance(resp.get("fallback_result"), dict) else {}
+            if isinstance(fb, dict):
+                stderr = str(fb.get("stderr") or "").strip()
+                stdout = str(fb.get("stdout") or "").strip()
+                return stderr or stdout or "ansible fallback failed"
+        return "ansible template failed"
+    if action == "ssh_run_command":
+        rows = result.get("results") if isinstance(result.get("results"), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            resp = row.get("response") if isinstance(row.get("response"), dict) else {}
+            if not isinstance(resp, dict):
+                continue
+            if bool(resp.get("ok", False)) and int(resp.get("exit_code") or 0) == 0:
+                continue
+            stderr = str(resp.get("stderr") or "").strip()
+            stdout = str(resp.get("stdout") or "").strip()
+            return stderr or stdout or f"ssh command failed: {row.get('command')}"
+        return "ssh command failed"
+    return "task result is not ok"
 
 
 async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str, Any]) -> None:
@@ -320,6 +359,9 @@ async def _handle_ai_team_execution(envelope: TaskEnvelope) -> tuple[TaskStatus,
             result = await _run_ansible_template_action(project_id, payload)
         else:
             raise ValueError(f"unknown ai_team_action: {action}")
+
+        if isinstance(result, dict) and result.get("ok") is False:
+            raise RuntimeError(_result_error_hint(action, result))
 
         await _patch_ai_team_task(
             task_id,

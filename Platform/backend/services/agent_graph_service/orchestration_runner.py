@@ -73,8 +73,9 @@ STEP_EXTRA: dict[str, str] = {
         "Для крупных изменений/рефакторинга выбирай mode=full."
     ),
     "pm": (
-        "Собери функциональные и нефункциональные требования, аудиторию, границы MVP. "
-        "Структурируй: продукт, пользователи, ключевые сценарии, NFR (производительность, безопасность, доступность)."
+        "Ты PM-координатор. Сконцентрируйся на управлении ходом работ: декомпозиция задач, приоритеты, зависимости, "
+        "контроль последовательности шагов и критерии готовности для команды. "
+        "Не выдумывай технические детали кода/инфраструктуры — их формируют профильные роли."
     ),
     "architect": (
         "Опиши целевую архитектуру, стек технологий, границы сервисов, данные и интеграции. "
@@ -111,21 +112,20 @@ STEP_EXTRA: dict[str, str] = {
     "execution_plan": (
         "Это шаг ТОЛЬКО для машинного плана исполнения (отдельно от нарратива). "
         "Ответь строго одним JSON-объектом без markdown и без пояснений вокруг. Формат:\n"
-        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|adapter_agent_demo|noop|gitlab_pipeline","payload":{}}]}\n'
+        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|noop","payload":{}}]}\n'
         "Смысл action_kind:\n"
         "- ssh_run_command: реальный запуск команд на SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
         "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
         "- kubernetes_query: реальный kubectl через adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
         "- ansible_run_template: запуск роли из внутреннего Ansible marketplace. payload: "
         "{\"target_id\":\"<uuid>\",\"template_id\":\"<template-id>\",\"variables\":{...},"
-        "\"allow_fallback\":true,\"fallback_service\":\"docker|gitlab|nexus\"}.\n"
-        "- adapter_agent_demo: GitLab demo через платформу (нужен GitLab ресурс).\n"
+        "\"allow_fallback\":true,\"fallback_service\":\"<service-id>\"}.\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
-        "- gitlab_pipeline: зарезервировано.\n"
+        "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, использовать только по явному запросу пользователя и при наличии соответствующих ресурсов.\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
-        "Если запрос про установку типовых сервисов (docker, GitLab, Nexus и т.п.) — предпочитай ansible_run_template, "
-        "но только для сервисов, которые реально есть в контексте или явно запрошены пользователем.\n"
+        "Если запрос про установку типовых сервисов — предпочитай ansible_run_template, "
+        "но только для сервисов, которые реально есть в контексте/каталоге или явно запрошены пользователем.\n"
         "Если запрос — правка уже существующего приложения на сервере, сформируй ssh_run_command с конкретными шагами "
         "правки файлов/конфигов, проверкой результата и перезапуском нужного сервиса."
     ),
@@ -180,6 +180,7 @@ MAX_IDENTICAL_OUTPUT_REPEATS = 2
 MAX_ORCHESTRATION_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_MAX_SECONDS", "7200"))
 EXECUTION_TASKS_WAIT_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS", "3600"))
 MAX_PEER_QUERIES = 5
+INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "260"))
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
@@ -317,17 +318,14 @@ def _build_system(
 ) -> str:
     if step_key == "intake":
         extra = STEP_EXTRA.get("intake", "")
-        ctx_use = _ctx_trim(ctx, 4500)
-        docs_use = _ctx_trim(docs_ctx, 2500)
         return (
             "Ты маршрутизатор запроса к AI-команде. Нужно только определить: полный пайплайн (full) или "
             "ответ одного специалиста (direct) и при direct — какая роль. Не расписывай этапы работ, "
             "не собирай требования к продукту — это следующие шаги.\n\n"
             f"{extra}\n\n---\n"
-            f"Контекст проекта:\n{ctx_use}\n\n---\n"
-            f"Документация проекта:\n{docs_use}\n\n---\n"
+            "Для intake запрещено опираться на контекст проекта/документацию — только формулировка запроса пользователя.\n\n"
             "Ответь по-русски: короткая преамбула, затем JSON orchestration_route. "
-            "Не выдумывай факты — опирайся на контекст и формулировку запроса.\n\n"
+            "Не выдумывай факты — опирайся только на формулировку запроса.\n\n"
             f"Запрос пользователя:\n{user_message.strip()}"
         )
 
@@ -398,8 +396,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             team_patch_run(run_id, status="running", phase="pipeline")
         tenant_id = fetch_project_tenant_id(pid)
         prompts = fetch_development_prompts()
-        ctx = fetch_development_context_summary(pid)
-        docs_ctx = fetch_documents_context_summary(pid, user_message)
+        ctx = ""
+        docs_ctx = ""
         accumulated: dict[str, str] = {}
         execution_ctx = ""
         if resume_from_paused:
@@ -599,6 +597,53 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             "error": str(t.get("error") or res.get("error") or ""),
                         }
                     )
+                    continue
+                # Доп. защита от "ложного ok": старые/нестандартные результаты могли быть done,
+                # но с ошибкой во вложенном payload.
+                if kind == "ssh_run_command" and isinstance(res, dict):
+                    rows = res.get("results") if isinstance(res.get("results"), list) else []
+                    nested_bad = False
+                    nested_err = ""
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        r = row.get("response") if isinstance(row.get("response"), dict) else {}
+                        if not isinstance(r, dict):
+                            continue
+                        ok_nested = bool(r.get("ok", False))
+                        rc_nested = int(r.get("exit_code") or 0)
+                        if ok_nested and rc_nested == 0:
+                            continue
+                        nested_bad = True
+                        nested_err = str(r.get("stderr") or r.get("stdout") or "").strip()
+                        break
+                    if nested_bad:
+                        blockers.append(
+                            {
+                                "title": title,
+                                "action_kind": kind,
+                                "status": "done_but_nested_error",
+                                "error": nested_err[:600],
+                            }
+                        )
+                        continue
+                if kind == "ansible_run_template" and isinstance(res, dict):
+                    rr = res.get("response") if isinstance(res.get("response"), dict) else {}
+                    if isinstance(rr, dict) and rr.get("ok") is False:
+                        fb = rr.get("fallback_result") if isinstance(rr.get("fallback_result"), dict) else {}
+                        err = ""
+                        if isinstance(fb, dict):
+                            err = str(fb.get("stderr") or fb.get("stdout") or "").strip()
+                        if not err:
+                            err = str(rr.get("detail") or "").strip()
+                        blockers.append(
+                            {
+                                "title": title,
+                                "action_kind": kind,
+                                "status": "done_but_nested_error",
+                                "error": err[:600],
+                            }
+                        )
             return blockers
 
         def _run_single_step_text(
@@ -608,9 +653,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             acc_override: str | None = None,
             debug_hint: str = "",
         ) -> str:
+            nonlocal ctx, docs_ctx
             label, _task = STEP_META.get(step_key, (step_key, ""))
             pr_key = STEP_PROMPT_ROLE.get(step_key, "pm")
             role_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
+            if step_key != "intake" and not ctx:
+                ctx = fetch_development_context_summary(pid)
+            if step_key != "intake" and not docs_ctx:
+                docs_ctx = fetch_documents_context_summary(pid, user_message)
             system_full = _build_system(
                 step_key,
                 role_prompt,
@@ -674,7 +724,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 SystemMessage(content=system_full),
                 HumanMessage(content=human_content),
             ]
-            invoker = model.bind(max_tokens=900, temperature=0) if step_key == "intake" else model
+            invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0) if step_key == "intake" else model
             resp = invoker.invoke(messages)
             text = resp.content if isinstance(resp.content, str) else str(resp.content)
             return (text or "").strip()

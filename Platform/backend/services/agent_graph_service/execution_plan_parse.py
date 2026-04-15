@@ -54,7 +54,6 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
 
 def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str, Any]]:
     """Если LLM не вернул JSON — стараемся дать исполняемую задачу по доступным tool-таргетам."""
-    ctx = dev_context_summary.lower()
     ssh_target_id = ""
     k8s_target_id = ""
     try:
@@ -74,21 +73,6 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
     except Exception:
         pass
 
-    if ssh_target_id and ("gitlab" in ctx or "git lab" in ctx):
-        return [
-            {
-                "title": "Установка GitLab через Ansible marketplace",
-                "action_kind": "ansible_run_template",
-                "payload": {
-                    "target_id": ssh_target_id,
-                    "template_id": "provision-gitlab-omnibus",
-                    "allow_fallback": True,
-                    "fallback_service": "gitlab",
-                    "variables": {},
-                },
-                "plan_summary": "Автовыбор: найден SSH target и запрос про GitLab — сначала marketplace роль.",
-            }
-        ]
     if ssh_target_id:
         return [
             {
@@ -113,21 +97,12 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
                 "plan_summary": "Автовыбор: найден Kubernetes target в контексте.",
             }
         ]
-    if "gitlab" in ctx or "git lab" in ctx:
-        return [
-            {
-                "title": "Репозиторий и CI в GitLab (agent-demo)",
-                "action_kind": "adapter_agent_demo",
-                "payload": {},
-                "plan_summary": "Автовыбор: в контексте упомянут GitLab",
-            }
-        ]
     return [
         {
-            "title": "Ожидание: нет GitLab в контексте",
+            "title": "Ожидание: нет исполнимых target в контексте",
             "action_kind": "noop",
             "payload": {},
-            "plan_summary": "Нет интеграции для автозапуска",
+            "plan_summary": "Нет SSH/Kubernetes target для автозапуска",
         }
     ]
 
