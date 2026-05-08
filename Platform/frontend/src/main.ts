@@ -565,6 +565,10 @@ function renderPortal(): void {
           <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Realtime лог действий агента</summary>
           <pre id="orchestration-live-log" class="lp-pre" style="max-height:260px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
         </details>
+        <details id="orchestration-state-wrap" style="margin:0 0 10px;">
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">DAG state (live JSON)</summary>
+          <pre id="orchestration-state-json" class="lp-pre" style="max-height:340px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
+        </details>
         <div id="orchestration-graph-wrap"></div>
         <div id="orchestration-arch-wrap"></div>
         <div id="orchestration-exec-wrap"></div>
@@ -1006,7 +1010,27 @@ function renderPortal(): void {
 
   const output = document.getElementById("portal-output");
   const tokenInput = document.getElementById("user-token") as HTMLInputElement | null;
-  let currentProjectId = "";
+  const SELECTED_PROJECT_STORAGE_KEY = "lambot_selected_project_id";
+  const readSelectedProjectId = (): string => {
+    try {
+      return String(sessionStorage.getItem(SELECTED_PROJECT_STORAGE_KEY) || "").trim();
+    } catch {
+      return "";
+    }
+  };
+  const writeSelectedProjectId = (projectId: string) => {
+    try {
+      const id = String(projectId || "").trim();
+      if (id) {
+        sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, id);
+      } else {
+        sessionStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+      }
+    } catch {
+      /* unavailable storage */
+    }
+  };
+  let currentProjectId = readSelectedProjectId();
   let currentTargetId = "";
   let statusPoll: number | null = null;
   let lastActivityItems: Array<Record<string, unknown>> = [];
@@ -1160,6 +1184,7 @@ function renderPortal(): void {
   let orchModalRunId = "";
   let orchModalReasoningMode: "brief" | "detailed" = "brief";
   const orchLiveLogMax = 180_000;
+  const orchStateMax = 260_000;
 
   const stopOrchestrationPoll = () => {
     if (orchPollTimer !== null) {
@@ -1196,6 +1221,26 @@ function renderPortal(): void {
     if (pre) pre.textContent = "";
     orchStreamLastRun = null;
     orchBrowserLogsTs = 0;
+  };
+
+  const renderOrchestrationStateLive = (data: OrchRunData | null) => {
+    const pre = document.getElementById("orchestration-state-json");
+    if (!pre) return;
+    if (!data) {
+      pre.textContent = "";
+      return;
+    }
+    let pretty = "";
+    try {
+      pretty = JSON.stringify(data, null, 2);
+    } catch {
+      pretty = String(data);
+    }
+    if (pretty.length > orchStateMax) {
+      pretty = `${pretty.slice(0, orchStateMax)}\n... [truncated]`;
+    }
+    pre.textContent = pretty;
+    pre.scrollTop = pre.scrollHeight;
   };
 
   type OrchStep = {
@@ -1262,18 +1307,16 @@ function renderPortal(): void {
     { key: "devops_plan", label: "DevOps", lane: 3, order: 0 },
     { key: "backend_plan", label: "Backend", lane: 3, order: 1 },
     { key: "frontend_plan", label: "Frontend", lane: 3, order: 2 },
-    { key: "execution_plan", label: "План исполнения", lane: 4, order: 0 },
-    { key: "implementation", label: "Реализация", lane: 5, order: 0 },
-    { key: "deploy", label: "Деплой", lane: 6, order: 0 },
-    { key: "qa_validation", label: "QA", lane: 7, order: 0 },
-    { key: "pm_summary", label: "PM итог", lane: 8, order: 0 },
+    { key: "implementation", label: "Реализация", lane: 4, order: 0 },
+    { key: "deploy", label: "Деплой", lane: 5, order: 0 },
+    { key: "qa_validation", label: "QA", lane: 6, order: 0 },
+    { key: "pm_summary", label: "PM итог", lane: 7, order: 0 },
   ];
   const ORCH_LAYER_KEYS: string[][] = [
     ["intake"],
     ["pm"],
     ["architect"],
     ["devops_plan", "backend_plan", "frontend_plan"],
-    ["execution_plan"],
     ["implementation"],
     ["deploy"],
     ["qa_validation"],
@@ -1285,10 +1328,9 @@ function renderPortal(): void {
     ["architect", "devops_plan"],
     ["architect", "backend_plan"],
     ["architect", "frontend_plan"],
-    ["devops_plan", "execution_plan"],
-    ["backend_plan", "execution_plan"],
-    ["frontend_plan", "execution_plan"],
-    ["execution_plan", "implementation"],
+    ["devops_plan", "implementation"],
+    ["backend_plan", "implementation"],
+    ["frontend_plan", "implementation"],
     ["implementation", "deploy"],
     ["deploy", "qa_validation"],
     ["qa_validation", "pm_summary"],
@@ -1801,10 +1843,12 @@ function renderPortal(): void {
     if (!data) {
       stepsEl.innerHTML = `<p class="lp-muted">Выберите проект. Запуск — «Оркестрация ролей» (то же сообщение, что для чата).</p>`;
       if (statusEl) statusEl.textContent = "";
+      renderOrchestrationStateLive(null);
       renderOrchestrationGraph(null);
       void loadBrowserLogs("");
       return;
     }
+    renderOrchestrationStateLive(data);
     renderOrchestrationGraph(data);
     if (statusEl) {
       statusEl.textContent = `Прогон: ${data.status || "—"} · фаза ${data.phase || "—"} · run ${data.run_id || ""}${data.error && data.status === "error" ? ` · ${data.error}` : ""}`;
@@ -3076,7 +3120,14 @@ function renderPortal(): void {
     }
     const rows = (await r.json()) as { id: string; name: string }[];
     sel.innerHTML = `<option value="">— выберите —</option>${rows.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}`;
-    if (currentProjectId) sel.value = currentProjectId;
+    const hasCurrent = !!currentProjectId && rows.some((p) => p.id === currentProjectId);
+    if (hasCurrent) {
+      sel.value = currentProjectId;
+    } else if (currentProjectId) {
+      currentProjectId = "";
+      writeSelectedProjectId("");
+      sel.value = "";
+    }
     loadProjectAiChatForProject(currentProjectId);
     renderProjectAiChat();
     setProjectAiChatBusy(false);
@@ -3125,6 +3176,7 @@ function renderPortal(): void {
 
   document.getElementById("project-select")?.addEventListener("change", (ev) => {
     currentProjectId = (ev.target as HTMLSelectElement).value;
+    writeSelectedProjectId(currentProjectId);
     loadProjectAiChatForProject(currentProjectId);
     renderProjectAiChat();
     setProjectAiChatBusy(false);
@@ -3160,6 +3212,7 @@ function renderPortal(): void {
       return;
     }
     currentProjectId = payload.id || "";
+    writeSelectedProjectId(currentProjectId);
     await loadProjectList();
     const sel = document.getElementById("project-select") as HTMLSelectElement | null;
     if (sel && currentProjectId) sel.value = currentProjectId;

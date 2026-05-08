@@ -54,20 +54,44 @@ def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
     Ищет в тексте intake JSON с полем orchestration_route.
     Возвращает mode (full|direct), primary_role, reason.
     """
-    default: dict[str, Any] = {"mode": "full", "primary_role": None, "reason": ""}
+    default: dict[str, Any] = {"mode": "full", "primary_role": None, "roles": [], "reason": ""}
     text = _strip_markdown_fences(intake_output or "")
+
+    def _normalize_roles(raw: Any) -> list[str]:
+        vals: list[str] = []
+        if isinstance(raw, list):
+            vals = [str(x) for x in raw]
+        elif isinstance(raw, str):
+            vals = [x.strip() for x in raw.split(",")]
+        out: list[str] = []
+        seen: set[str] = set()
+        for v in vals:
+            r = _normalize_role(v)
+            if not r or r in seen:
+                continue
+            seen.add(r)
+            out.append(r)
+        return out
 
     def _from_flat(obj: dict[str, Any]) -> dict[str, Any]:
         mode = str(obj.get("mode", "full")).lower().strip()
         if mode not in ("full", "direct"):
             mode = "full"
         role = _normalize_role(obj.get("primary_role") or obj.get("role"))
+        roles = _normalize_roles(obj.get("roles") or obj.get("needed_roles"))
         reason = str(obj.get("reason", ""))[:800]
-        out = {**default, "reason": reason}
+        out = {**default, "reason": reason, "roles": roles}
         out["mode"] = mode
         out["primary_role"] = role
+        if not role and len(roles) == 1:
+            role = roles[0]
+            out["primary_role"] = role
+        if mode == "full" and role and len(out["roles"]) <= 1:
+            out["mode"] = "direct"
         if mode == "direct" and not role:
             out["mode"] = "full"
+        if mode == "full" and role and not roles:
+            out["roles"] = [role]
         return out
 
     if '"orchestration_route"' not in text and "'orchestration_route'" not in text:

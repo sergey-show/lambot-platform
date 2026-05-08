@@ -10,15 +10,29 @@ from typing import Any
 from services.agent_graph_service.team_client import team_get_run
 
 
+def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
+    """Пытается достать первый JSON-объект даже при префиксе/суффиксе текста."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
+    if fenced:
+        text = fenced.group(1).strip()
+    start = text.find("{")
+    if start == -1:
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        obj, _idx = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
     """Извлекает список задач из ответа LLM (JSON в тексте или в fenced block)."""
-    raw = text.strip()
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
-    if m:
-        raw = m.group(1).strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    data = _extract_first_json_object(text)
+    if not isinstance(data, dict):
         return []
     tasks = data.get("tasks")
     if not isinstance(tasks, list):

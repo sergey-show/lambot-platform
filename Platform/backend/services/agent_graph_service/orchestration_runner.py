@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import json
 import os
 import re
 from time import monotonic
@@ -60,17 +61,15 @@ STEP_PROMPT_ROLE: dict[str, str] = {
 
 STEP_EXTRA: dict[str, str] = {
     "intake": (
-        "Сделай только решение о маршруте (без развёрнутого плана команды и без MVP).\n"
-        "Сначала 1–3 коротких предложения: что хочет пользователь и почему full или direct.\n"
-        "Затем в конце ответа ОДИН JSON-объект в одну строку или блок, без markdown-ограждений:\n"
-        '{"orchestration_route":{"mode":"full","reason":"кратко"}}\n'
-        "или для узкого вопроса одному специалисту (без полного цикла продукт→архитектура→планы):\n"
-        '{"orchestration_route":{"mode":"direct","primary_role":"backend","reason":"кратко"}}\n'
-        "primary_role: pm | architect | devops | backend | frontend | qa — только при mode=direct.\n"
-        "mode=full если нужен продукт/архитектура/несколько ролей; mode=direct если достаточно одного ответа специалиста.\n"
-        "Если запрос про малую правку существующего проекта/кода — допускается mode=direct, "
-        "но с последующим execution-хвостом (execution_plan + implementation + pm_summary). "
-        "Для крупных изменений/рефакторинга выбирай mode=full."
+        "Сделай только маршрутизацию: кто нужен для решения задачи.\n"
+        "Верни СТРОГО один JSON-объект, без преамбулы и без markdown.\n"
+        "Формат:\n"
+        '{"orchestration_route":{"mode":"full|direct","roles":["pm|architect|devops|backend|frontend|qa"],"primary_role":"pm|architect|devops|backend|frontend|qa|null","reason":"кратко"}}\n'
+        "rules:\n"
+        "- roles: список реально нужных ролей для задачи (без лишних).\n"
+        "- если нужна ровно одна роль -> mode=direct и primary_role=<эта роль>.\n"
+        "- если нужно 2+ роли -> mode=full.\n"
+        "- Никакого плана/анализа/архитектуры на intake."
     ),
     "pm": (
         "Ты PM-координатор. Сконцентрируйся на управлении ходом работ: декомпозиция задач, приоритеты, зависимости, "
@@ -88,7 +87,7 @@ STEP_EXTRA: dict[str, str] = {
         "Составь план работ DevOps: CI/CD, инфраструктура, секреты, окружения, деплой. "
         "Кто что делает и в каком порядке (можно таблицей или списком). Согласуй с архитектурой выше.\n"
         "Для задач по изменению существующего проекта сначала сделай анализ текущего состояния на основе фактов "
-        "(контекст/доки/инструменты), затем давай план. В ответе обязательно разделы: "
+        "опирайся только на (контекст/доки/инструменты), затем давай план. В ответе обязательно разделы: "
         "«Анализ текущего состояния (факты)» и «План изменений»."
     ),
     "backend_plan": (
@@ -167,20 +166,20 @@ FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("pm",),
     ("architect",),
     ("devops_plan", "backend_plan", "frontend_plan"),
-    ("execution_plan",),
     ("implementation",),
     ("deploy",),
     ("qa_validation",),
     ("pm_summary",),
 )
 MAX_STEP_RETRIES = 3
+MAX_INTAKE_RETRIES = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_RETRIES", "1"))
 MAX_STEP_INVOCATIONS_PER_RUN = 4
 MAX_IDENTICAL_ERROR_REPEATS = 2
 MAX_IDENTICAL_OUTPUT_REPEATS = 2
 MAX_ORCHESTRATION_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_MAX_SECONDS", "7200"))
 EXECUTION_TASKS_WAIT_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS", "3600"))
 MAX_PEER_QUERIES = 5
-INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "260"))
+INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "120"))
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
@@ -223,6 +222,15 @@ STEP_OUTPUT_JSON_INSTRUCTIONS = """
 def _text_fingerprint(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").strip().lower())
     return t[:1200]
+
+
+def _sanitize_model_text(text: str) -> str:
+    """Убирает служебные токены провайдера из ответа модели."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"<\|[^|>]+?\|>", "", t)
+    return t.strip()
 
 
 def _extract_graph_text(graph_result: dict[str, Any]) -> str:
@@ -299,6 +307,145 @@ def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _infer_infra_restrictions(ctx: str) -> str:
+    """Явно запрещает LLM придумывать GitLab/Nexus, если их нет в project context."""
+    try:
+        obj = json.loads(ctx) if ctx else {}
+    except Exception:
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+    roles: set[str] = set()
+    for row in obj.get("service_assignments") or []:
+        if isinstance(row, dict):
+            v = str(row.get("service_role") or "").strip().lower()
+            if v:
+                roles.add(v)
+    for row in obj.get("infra_resources") or []:
+        if not isinstance(row, dict):
+            continue
+        for key in ("category", "resource_type", "id", "name", "title"):
+            val = str(row.get(key) or "").strip().lower()
+            if "gitlab" in val:
+                roles.add("gitlab")
+            if "nexus" in val:
+                roles.add("nexus")
+    missing: list[str] = []
+    if "gitlab" not in roles:
+        missing.append("GitLab/GitLab CI")
+    if "nexus" not in roles:
+        missing.append("Nexus")
+    if not missing:
+        return ""
+    return (
+        "Ограничение по фактам контекста: "
+        + ", ".join(missing)
+        + " отсутствуют в проектных ресурсах. Не упоминай их как существующие."
+    )
+
+
+def _extract_text_blobs(obj: Any) -> str:
+    if obj is None:
+        return ""
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, (int, float, bool)):
+        return str(obj)
+    if isinstance(obj, list):
+        return "\n".join(_extract_text_blobs(x) for x in obj)
+    if isinstance(obj, dict):
+        return "\n".join(_extract_text_blobs(v) for v in obj.values())
+    return ""
+
+
+def _collect_graph_execution_evidence(graph_result: dict[str, Any]) -> dict[str, Any]:
+    messages = graph_result.get("messages") if isinstance(graph_result.get("messages"), list) else []
+    tool_names: list[str] = []
+    tool_calls_count = 0
+    tool_results_count = 0
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        t = str(m.get("type") or "").strip().lower()
+        if t == "tool":
+            tool_results_count += 1
+        tc = m.get("tool_calls")
+        if not isinstance(tc, list):
+            continue
+        for item in tc:
+            if not isinstance(item, dict):
+                continue
+            nm = str(item.get("name") or "").strip()
+            if not nm:
+                continue
+            tool_calls_count += 1
+            tool_names.append(nm)
+    unique_names = sorted({x for x in tool_names if x})
+    exec_tools = {"ssh_run_command", "kubernetes_query", "ansible_run_template"}
+    return {
+        "tool_calls_count": tool_calls_count,
+        "tool_results_count": tool_results_count,
+        "tool_names": unique_names,
+        "has_execution_tool_call": any(x in exec_tools for x in unique_names),
+    }
+
+
+def _task_is_diagnostic_only(task: dict[str, Any]) -> bool:
+    kind = str(task.get("action_kind") or "").strip().lower()
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    if kind == "ansible_run_template":
+        return False
+    if kind == "kubernetes_query":
+        op = str(payload.get("operation") or "").strip().lower()
+        return op in {"nodes", "pods", "events", "version", "namespaces", "cluster-info", "cluster_info"}
+    if kind != "ssh_run_command":
+        return False
+    commands: list[str] = []
+    one = str(payload.get("command") or "").strip()
+    if one:
+        commands.append(one)
+    many = payload.get("commands")
+    if isinstance(many, list):
+        commands.extend(str(x or "").strip() for x in many if str(x or "").strip())
+    if not commands:
+        return False
+    action_markers = (
+        "docker compose up",
+        "docker-compose up",
+        "docker run",
+        "docker pull",
+        "docker build",
+        "kubectl apply",
+        "helm upgrade",
+        "ansible-playbook",
+        "systemctl restart",
+        "systemctl start",
+        "git clone",
+        "git pull",
+        "npm run build",
+        "npm run start",
+        "pm2 restart",
+        "nginx -s reload",
+    )
+    diagnostic_markers = (
+        "uname",
+        "whoami",
+        "pwd",
+        "ls ",
+        "docker --version",
+        "kubectl version",
+        "echo docker_not_found",
+    )
+    has_action = any(any(m in c.lower() for m in action_markers) for c in commands)
+    if has_action:
+        return False
+    return all(any(m in c.lower() for m in diagnostic_markers) for c in commands)
+
+
+def _active_dag_layers() -> tuple[tuple[str, ...], ...]:
+    return FULL_DAG_LAYERS
+
+
 def _should_force_tool_analysis(step_key: str, user_message: str) -> bool:
     if step_key not in ("devops_plan", "backend_plan", "frontend_plan"):
         return False
@@ -315,6 +462,7 @@ def _build_system(
     *,
     execution_ctx: str = "",
     direct_answer: bool = False,
+    infra_restrictions: str = "",
 ) -> str:
     if step_key == "intake":
         extra = STEP_EXTRA.get("intake", "")
@@ -324,7 +472,7 @@ def _build_system(
             "не собирай требования к продукту — это следующие шаги.\n\n"
             f"{extra}\n\n---\n"
             "Для intake запрещено опираться на контекст проекта/документацию — только формулировка запроса пользователя.\n\n"
-            "Ответь по-русски: короткая преамбула, затем JSON orchestration_route. "
+            "Ответь только JSON orchestration_route. "
             "Не выдумывай факты — опирайся только на формулировку запроса.\n\n"
             f"Запрос пользователя:\n{user_message.strip()}"
         )
@@ -344,8 +492,10 @@ def _build_system(
         )
     acc = accumulated_md.strip() or "(предыдущие шаги ещё не дали выводов)"
     ex = execution_ctx.strip() or "(ещё нет — шаг execution_plan и воркеры не завершены)"
+    restrictions = f"{infra_restrictions}\n\n---\n" if infra_restrictions else ""
     tail = (
         f"{role_prompt}\n\n---\n{extra}\n\n---\n"
+        f"{restrictions}"
         f"Контекст проекта (development-context):\n{ctx}\n\n---\n"
         f"Документация проекта (wiki / RAG):\n{docs_ctx}\n\n---\n"
         f"Накопленные результаты шагов:\n{acc}\n\n---\n"
@@ -398,6 +548,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         prompts = fetch_development_prompts()
         ctx = ""
         docs_ctx = ""
+        infra_restrictions = ""
         accumulated: dict[str, str] = {}
         execution_ctx = ""
         if resume_from_paused:
@@ -434,6 +585,19 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         step_error_repeats: dict[str, int] = {}
         step_output_signatures: dict[str, str] = {}
         step_output_repeats: dict[str, int] = {}
+        role_execution_evidence: dict[str, dict[str, Any]] = {}
+        dag_layers = _active_dag_layers()
+        role_execution_mode = _looks_like_execution_change_request(user_message)
+        for s in prev_steps:
+            if not isinstance(s, dict):
+                continue
+            key = str(s.get("step_key") or "").strip()
+            if not key:
+                continue
+            structured = s.get("structured") if isinstance(s.get("structured"), dict) else {}
+            ev = structured.get("role_execution_evidence") if isinstance(structured, dict) else None
+            if isinstance(ev, dict):
+                role_execution_evidence[key] = ev
         
         def _accumulated_md(extra: dict[str, str] | None = None) -> str:
             merged = dict(accumulated)
@@ -646,6 +810,57 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         )
             return blockers
 
+        def _execution_real_work_issues(run_obj: dict[str, Any]) -> list[str]:
+            tasks = run_obj.get("execution_tasks") if isinstance(run_obj.get("execution_tasks"), list) else []
+            if not tasks:
+                roles = ("devops_plan", "backend_plan", "frontend_plan")
+                done_roles = [r for r in roles if str((next((x for x in prev_steps if str(x.get("step_key") or "") == r), {}) or {}).get("status") or "") == "done"]
+                if not done_roles and not any(k in role_execution_evidence for k in roles):
+                    return ["Нет execution_tasks и нет подтверждённых evidence от профильных ролей."]
+                ev_rows = [role_execution_evidence.get(r, {}) for r in roles]
+                has_exec = any(isinstance(ev, dict) and ev.get("has_execution_tool_call") is True for ev in ev_rows)
+                has_tool_results = any(int(ev.get("tool_results_count") or 0) > 0 for ev in ev_rows if isinstance(ev, dict))
+                if not has_exec:
+                    return ["Профильные роли не выполнили реальных инструментальных действий (ssh/k8s/ansible)."]
+                if not has_tool_results:
+                    return ["У профильных ролей нет результатов tool-вызовов; фактическое выполнение не подтверждено."]
+                return []
+            executable = [
+                t
+                for t in tasks
+                if isinstance(t, dict)
+                and str(t.get("action_kind") or "").strip().lower() in EXECUTABLE_ACTION_KINDS
+            ]
+            if not executable:
+                return ["В execution_tasks нет исполнимых действий (ssh/k8s/ansible)."]
+            done_exec = [t for t in executable if str(t.get("status") or "") == "done"]
+            if not done_exec:
+                return ["Исполнимые действия есть, но ни одно не завершилось со статусом done."]
+            if all(_task_is_diagnostic_only(t) for t in done_exec):
+                return ["Выполнены только диагностические проверки, а не шаги развёртывания/изменений."]
+            evidence_text = _extract_text_blobs(done_exec).lower()
+            if "docker_not_found" in evidence_text:
+                return ["На целевом хосте отсутствует Docker (docker_not_found), деплой не мог быть выполнен."]
+            return []
+
+        def _pause_run_with_question(step_key: str, questions: list[str] | None = None, fallback: str = "") -> None:
+            label, _task = STEP_META.get(step_key, (step_key, ""))
+            q0 = ""
+            if isinstance(questions, list):
+                for q in questions:
+                    s = str(q or "").strip()
+                    if s:
+                        q0 = s
+                        break
+            if not q0:
+                q0 = (fallback or "Нужно уточнение от пользователя для продолжения шага.").strip()
+            team_patch_run(
+                run_id,
+                status="paused",
+                phase="awaiting_clarification",
+                error=f"{label}: {q0}"[:1200],
+            )
+
         def _run_single_step_text(
             step_key: str,
             *,
@@ -653,7 +868,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             acc_override: str | None = None,
             debug_hint: str = "",
         ) -> str:
-            nonlocal ctx, docs_ctx
+            nonlocal ctx, docs_ctx, infra_restrictions, role_execution_evidence
             label, _task = STEP_META.get(step_key, (step_key, ""))
             pr_key = STEP_PROMPT_ROLE.get(step_key, "pm")
             role_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
@@ -661,6 +876,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 ctx = fetch_development_context_summary(pid)
             if step_key != "intake" and not docs_ctx:
                 docs_ctx = fetch_documents_context_summary(pid, user_message)
+            if step_key != "intake" and not infra_restrictions:
+                infra_restrictions = _infer_infra_restrictions(ctx)
             system_full = _build_system(
                 step_key,
                 role_prompt,
@@ -670,11 +887,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 user_message,
                 execution_ctx=execution_ctx,
                 direct_answer=direct_answer,
+                infra_restrictions=infra_restrictions,
             )
             if debug_hint:
                 system_full += f"\n\n---\nСовместная отладка между ролями:\n{debug_hint}"
             human_content = (
-                "Маршрутизация: только JSON и краткая преамбула по инструкции system."
+                "Маршрутизация: только JSON по инструкции system."
                 if step_key == "intake"
                 else f"Выполни шаг «{label}» ({step_key})."
             )
@@ -709,16 +927,17 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 ]
                 resp = model.invoke(final_messages)
                 text = resp.content if isinstance(resp.content, str) else str(resp.content)
-                return (text or "").strip()
+                return _sanitize_model_text(text)
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
                 graph_result = invoke_graph(project_id, user_message)
+                role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
                 text = _extract_graph_text(graph_result)
                 if not text:
                     return (
                         "Инструментальный прогон выполнен, но не вернулся итоговый текст ответа. "
                         "Повторите запрос, чтобы агент сформировал финальный вывод из результатов инструментов."
                     )
-                return text
+                return _sanitize_model_text(text)
             model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
             messages = [
                 SystemMessage(content=system_full),
@@ -727,7 +946,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0) if step_key == "intake" else model
             resp = invoker.invoke(messages)
             text = resp.content if isinstance(resp.content, str) else str(resp.content)
-            return (text or "").strip()
+            return _sanitize_model_text(text)
 
         def _execute_step(
             step_key: str,
@@ -759,9 +978,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if fail_run_on_error:
                     team_patch_run(run_id, status="error", error=f"{label}: {err}", phase="failed")
                 return False, None, err, False
-            if step_key in ("deploy", "pm_summary"):
+            if step_key in ("implementation", "deploy", "qa_validation", "pm_summary"):
                 run_now = team_get_run(run_id) or {}
                 blockers_now = _execution_blockers(run_now)
+                real_work_issues = (
+                    _execution_real_work_issues(run_now) if _looks_like_execution_change_request(user_message) else []
+                )
                 if blockers_now:
                     lines = []
                     for b in blockers_now[:8]:
@@ -786,12 +1008,43 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         finished_at=_utc_iso(),
                     )
                     accumulated[step_key] = msg
-                    team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                    _pause_run_with_question(
+                        step_key,
+                        ["Для продолжения деплоя/итога сначала закройте блокеры исполнения: исправить окружение, повторить задачи или подтвердить ручной обход."],
+                        "Есть блокеры исполнения.",
+                    )
+                    return True, msg, None, True
+                if real_work_issues:
+                    msg = (
+                        "Блокировка шага: нет подтверждения фактического выполнения изменений.\n"
+                        + "\n".join(f"- {x}" for x in real_work_issues)
+                    )
+                    team_patch_step(
+                        run_id,
+                        step_key,
+                        status="done",
+                        output_md=msg,
+                        structured={
+                            "paused_for_user": True,
+                            "execution_real_work_issues": real_work_issues,
+                            "questions_for_user": [
+                                "Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). Разрешить повтор профильных шагов с обязательным tool-calling?"
+                            ],
+                        },
+                        finished_at=_utc_iso(),
+                    )
+                    accumulated[step_key] = msg
+                    _pause_run_with_question(
+                        step_key,
+                        ["Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). Разрешить повтор профильных шагов с обязательным tool-calling?"],
+                        "Нет подтверждения фактического выполнения изменений.",
+                    )
                     return True, msg, None, True
 
             team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
             last_err = "unknown error"
-            for attempt in range(1, MAX_STEP_RETRIES + 1):
+            max_retries = MAX_INTAKE_RETRIES if step_key == "intake" else MAX_STEP_RETRIES
+            for attempt in range(1, max_retries + 1):
                 try:
                     text = _run_single_step_text(
                         step_key,
@@ -806,15 +1059,51 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     else:
                         step_output_signatures[step_key] = sig_out
                         step_output_repeats[step_key] = 1
-                    if step_output_repeats.get(step_key, 1) >= MAX_IDENTICAL_OUTPUT_REPEATS and attempt < MAX_STEP_RETRIES:
+                    if step_output_repeats.get(step_key, 1) >= MAX_IDENTICAL_OUTPUT_REPEATS and attempt < max_retries:
                         raise RuntimeError(
                             "loop_detected: модель повторяет одинаковый вывод, пробую переформулировать шаг"
                         )
 
                     structured_payload: dict[str, Any] = {
                         "attempt": attempt,
-                        "max_attempts": MAX_STEP_RETRIES,
+                        "max_attempts": max_retries,
                     }
+                    if direct_answer and step_key in ("devops_plan", "backend_plan", "frontend_plan"):
+                        ev = role_execution_evidence.get(step_key)
+                        if isinstance(ev, dict):
+                            structured_payload["role_execution_evidence"] = ev
+                        if role_execution_mode:
+                            calls = int((ev or {}).get("tool_calls_count") or 0)
+                            results = int((ev or {}).get("tool_results_count") or 0)
+                            has_exec = bool((ev or {}).get("has_execution_tool_call"))
+                            if calls <= 0 or results <= 0 or not has_exec:
+                                msg = (
+                                    "Блокировка шага: профильная роль не подтвердила фактическое выполнение.\n"
+                                    f"- tool_calls: {calls}\n"
+                                    f"- tool_results: {results}\n"
+                                    f"- execution_tool_call: {'yes' if has_exec else 'no'}\n\n"
+                                    "Нужно выполнить реальные инструментальные действия по своей зоне (ssh/k8s/ansible), "
+                                    "а не только текстовый отчёт."
+                                )
+                                structured_payload["paused_for_user"] = True
+                                structured_payload["questions_for_user"] = [
+                                    f"Разрешить повторить шаг {step_key} с обязательным tool-calling и фактическими результатами?"
+                                ]
+                                team_patch_step(
+                                    run_id,
+                                    step_key,
+                                    status="done",
+                                    output_md=msg,
+                                    structured=structured_payload,
+                                    finished_at=_utc_iso(),
+                                )
+                                accumulated[step_key] = msg
+                                _pause_run_with_question(
+                                    step_key,
+                                    [f"Разрешить повторить шаг {step_key} с обязательным tool-calling и фактическими результатами?"],
+                                    "Профильная роль не подтвердила фактическое выполнение.",
+                                )
+                                return True, msg, None, True
                     halt_pipeline = False
                     apply_structured = step_key in STRUCTURED_STEP_KEYS and not (
                         direct_answer and step_key in DIRECT_TOOL_STEPS
@@ -871,7 +1160,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         accumulated[step_key] = text
                         if step_key == "architect":
                             team_patch_run(run_id, architecture_md=text, phase="architecture_done")
-                        team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                        _pause_run_with_question(
+                            step_key,
+                            structured_payload.get("questions_for_user") if isinstance(structured_payload.get("questions_for_user"), list) else None,
+                            "Шаг ожидает уточнения от пользователя.",
+                        )
                         return True, text, None, True
 
                     if step_key == "execution_plan":
@@ -925,7 +1218,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     finished_at=_utc_iso(),
                                 )
                                 accumulated[step_key] = msg
-                                team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                                _pause_run_with_question(
+                                    step_key,
+                                    ["Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."],
+                                    "Не удалось сформировать исполнимый план.",
+                                )
                                 return True, msg, None, True
                         team_replace_execution_tasks(run_id, parsed)
                         run = team_get_run(run_id)
@@ -979,7 +1276,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 finished_at=_utc_iso(),
                             )
                             accumulated[step_key] = text
-                            team_patch_run(run_id, status="paused", phase="awaiting_clarification")
+                            _pause_run_with_question(
+                                step_key,
+                                ["Исполнение завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."],
+                                "Исполнение завершилось с ошибками.",
+                            )
                             return True, text, None, True
                         team_patch_run(
                             run_id,
@@ -1016,16 +1317,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     if step_error_repeats.get(step_key, 1) >= MAX_IDENTICAL_ERROR_REPEATS:
                         last_err = f"loop_detected: повторяющаяся ошибка шага ({last_err})"
                         break
-                    if attempt < MAX_STEP_RETRIES:
+                    if attempt < max_retries:
                         team_patch_step(
                             run_id,
                             step_key,
                             status="running",
                             output_md=(
-                                f"Попытка {attempt}/{MAX_STEP_RETRIES} завершилась ошибкой: {last_err}\n"
-                                f"Перезапуск шага (попытка {attempt + 1}/{MAX_STEP_RETRIES})…"
+                                f"Попытка {attempt}/{max_retries} завершилась ошибкой: {last_err}\n"
+                                f"Перезапуск шага (попытка {attempt + 1}/{max_retries})…"
                             ),
-                            structured={"attempt": attempt, "max_attempts": MAX_STEP_RETRIES},
+                            structured={"attempt": attempt, "max_attempts": max_retries},
                         )
 
             team_patch_step(
@@ -1033,7 +1334,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 step_key,
                 status="error",
                 error=last_err,
-                structured={"attempt": MAX_STEP_RETRIES, "max_attempts": MAX_STEP_RETRIES},
+                structured={"attempt": max_retries, "max_attempts": max_retries},
                 finished_at=_utc_iso(),
             )
             if fail_run_on_error:
@@ -1075,9 +1376,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 return
 
             team_patch_run(run_id, phase="dag_resume")
-            paused_order = STEP_ORDER.get(paused_step_key, 0)
+            if paused_step_key == "execution_plan":
+                paused_order = STEP_ORDER.get("implementation", 0)
+            else:
+                paused_order = STEP_ORDER.get(paused_step_key, 0)
             layers_to_run: list[tuple[str, ...]] = []
-            for layer in FULL_DAG_LAYERS:
+            for layer in dag_layers:
                 keys: list[str] = []
                 for k in layer:
                     if STEP_ORDER.get(k, 999) < paused_order:
@@ -1094,7 +1398,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             for layer in layers_to_run:
                 if len(layer) == 1:
                     k = layer[0]
-                    ok_step, _txt, _e, halt_step = _execute_step(k)
+                    ok_step, _txt, _e, halt_step = _execute_step(
+                        k,
+                        direct_answer=role_execution_mode and k in ("devops_plan", "backend_plan", "frontend_plan"),
+                    )
                     if not ok_step or halt_step:
                         return
                     continue
@@ -1107,7 +1414,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         pool.submit(
                             _execute_step,
                             k,
-                            direct_answer=False,
+                            direct_answer=role_execution_mode and k in ("devops_plan", "backend_plan", "frontend_plan"),
                             fail_run_on_error=False,
                             acc_override=acc_snapshot,
                         ): k
@@ -1178,7 +1485,6 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     keep = {
                         specialist_key,
                         "intake",
-                        "execution_plan",
                         "implementation",
                         "deploy",
                         "qa_validation",
@@ -1206,7 +1512,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if halt_direct:
                     return
                 if direct_with_execution:
-                    for k in ("execution_plan", "implementation", "deploy", "qa_validation", "pm_summary"):
+                    tail_steps = ("implementation", "deploy", "qa_validation", "pm_summary")
+                    for k in tail_steps:
                         ok_step, _txt_step, _err_step, halt_step = _execute_step(k)
                         if not ok_step or halt_step:
                             return
@@ -1214,10 +1521,13 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 return
 
         team_patch_run(run_id, phase="dag_full")
-        for layer in FULL_DAG_LAYERS:
+        for layer in dag_layers:
             if len(layer) == 1:
                 k = layer[0]
-                ok_step, _txt, _e, halt_step = _execute_step(k)
+                ok_step, _txt, _e, halt_step = _execute_step(
+                    k,
+                    direct_answer=role_execution_mode and k in ("devops_plan", "backend_plan", "frontend_plan"),
+                )
                 if not ok_step:
                     return
                 if halt_step:
@@ -1232,7 +1542,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     pool.submit(
                         _execute_step,
                         k,
-                        direct_answer=False,
+                        direct_answer=role_execution_mode and k in ("devops_plan", "backend_plan", "frontend_plan"),
                         fail_run_on_error=False,
                         acc_override=acc_snapshot,
                     ): k
