@@ -71,6 +71,44 @@ if __name__ == "__main__":
 '''
 
 
+def run_ssh_command(
+    host: str,
+    port: int,
+    username: str,
+    auth_type: str,
+    secret: str,
+    command: str,
+    *,
+    timeout: float = 120.0,
+    max_output_chars: int = 200_000,
+) -> tuple[int, str, str]:
+    """
+    Выполняет одну команду на удалённом хосте через bash -lc (как в shell).
+    Возвращает (exit_code, stdout, stderr), вывод обрезается.
+    """
+    cmd = (command or "").strip()
+    if not cmd:
+        return 127, "", "empty command"
+    client = ssh_connect(host, port, username, auth_type, secret, timeout=30.0)
+    try:
+        wrapped = f"bash -lc {shlex.quote(cmd)}"
+        stdin, stdout, stderr = client.exec_command(wrapped, get_pty=True)
+        if timeout and float(timeout) > 0:
+            stdout.channel.settimeout(float(timeout))
+        out_b = stdout.read()
+        err_b = stderr.read()
+        code = stdout.channel.recv_exit_status()
+        out = out_b.decode(errors="replace")
+        err = err_b.decode(errors="replace")
+        if len(out) > max_output_chars:
+            out = out[: max_output_chars - 60] + "\n… [stdout обрезан]"
+        if len(err) > max_output_chars:
+            err = err[: max_output_chars - 60] + "\n… [stderr обрезан]"
+        return code, out, err
+    finally:
+        client.close()
+
+
 def _load_pkey(pem_or_password: str, auth_type: str):
     if auth_type != "key":
         return None
@@ -115,44 +153,6 @@ def ssh_connect(
         kw["password"] = secret
     client.connect(**kw)
     return client
-
-
-def run_ssh_command(
-    host: str,
-    port: int,
-    username: str,
-    auth_type: str,
-    secret: str,
-    command: str,
-    *,
-    timeout: float = 120.0,
-    max_output_chars: int = 200_000,
-) -> tuple[int, str, str]:
-    """
-    Выполняет одну команду на удалённом хосте через bash -lc (как в shell).
-    Возвращает (exit_code, stdout, stderr), вывод обрезается.
-    """
-    cmd = (command or "").strip()
-    if not cmd:
-        return 127, "", "empty command"
-    client = ssh_connect(host, port, username, auth_type, secret, timeout=30.0)
-    try:
-        wrapped = f"bash -lc {shlex.quote(cmd)}"
-        stdin, stdout, stderr = client.exec_command(wrapped, get_pty=True)
-        if timeout and float(timeout) > 0:
-            stdout.channel.settimeout(float(timeout))
-        out_b = stdout.read()
-        err_b = stderr.read()
-        code = stdout.channel.recv_exit_status()
-        out = out_b.decode(errors="replace")
-        err = err_b.decode(errors="replace")
-        if len(out) > max_output_chars:
-            out = out[: max_output_chars - 60] + "\n… [stdout обрезан]"
-        if len(err) > max_output_chars:
-            err = err[: max_output_chars - 60] + "\n… [stderr обрезан]"
-        return code, out, err
-    finally:
-        client.close()
 
 
 def test_ssh_connection(
@@ -209,6 +209,7 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 """
+
     client = ssh_connect(host, port, username, auth_type, secret, timeout=60.0)
     try:
         sftp = client.open_sftp()
@@ -256,7 +257,6 @@ def ssh_read_remote_file(
     try:
         client = ssh_connect(host, port, username, auth_type, secret, timeout=timeout)
         try:
-            # shell quote path
             safe = remote_path.replace("'", "'\"'\"'")
             cmd = f"cat '{safe}' 2>/dev/null"
             stdin, stdout, stderr = client.exec_command(cmd, get_pty=False)

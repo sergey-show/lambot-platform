@@ -1485,6 +1485,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     keep = {
                         specialist_key,
                         "intake",
+                        "execution_plan",
                         "implementation",
                         "deploy",
                         "qa_validation",
@@ -1512,7 +1513,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if halt_direct:
                     return
                 if direct_with_execution:
-                    tail_steps = ("implementation", "deploy", "qa_validation", "pm_summary")
+                    # В direct-with-execution сначала обязателен execution_plan,
+                    # чтобы появились реальные execution_tasks и подтверждение выполнения.
+                    tail_steps = ("execution_plan", "implementation", "deploy", "qa_validation", "pm_summary")
                     for k in tail_steps:
                         ok_step, _txt_step, _err_step, halt_step = _execute_step(k)
                         if not ok_step or halt_step:
