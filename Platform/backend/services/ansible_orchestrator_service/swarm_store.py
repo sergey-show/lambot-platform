@@ -321,5 +321,5 @@ def render_playbook(template_id: str, variables: dict[str, Any], *, require_acti
 
 def render_inventory_ini(host: str, ssh_user: str, ssh_port: int = 22) -> str:
     return f"""[target]
-{host} ansible_user={ssh_user} ansible_port={ssh_port} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+{host} ansible_user={ssh_user} ansible_port={ssh_port} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 """
