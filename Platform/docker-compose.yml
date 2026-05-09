@@ -306,7 +306,7 @@ services:
       ADMIN_SERVICE_URL: http://admin-service:8006
       ADAPTER_SERVICE_URL: http://adapter-service:8008
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
-      AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-0}
+      AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-1}
       AGENT_WORKER_SEED_SAMPLE: ${AGENT_WORKER_SEED_SAMPLE:-1}
     depends_on:
       kafka:
