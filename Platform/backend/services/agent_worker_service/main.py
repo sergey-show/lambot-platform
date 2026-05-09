@@ -255,7 +255,30 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
         return TaskStatus.FAILED, {"mode": "tracker", "error": f"patch_started: {exc}"}
 
     prompt = _prompt_from_task(envelope)
-    result_inline: dict[str, Any] = {"mode": "tracker", "dry_run": True}
+    title = str(inline.get("title") or "").strip()
+    role = str(inline.get("assignee_role") or "").strip()
+    result_inline: dict[str, Any] = {
+        "mode": "tracker",
+        "dry_run": True,
+        "commentary": (
+            "Задача принята и обработана воркером в режиме dry-run: "
+            "фактическое выполнение через LLM отключено (AGENT_WORKER_USE_LLM=0)."
+        ),
+        "work_done": [
+            "Карточка поставлена в очередь и обработана воркером",
+            "Статус исполнения обновлён в трекере",
+        ],
+        "dod": {
+            "status": "not_evaluated",
+            "done": False,
+            "criteria": [
+                "Сформирован агентный ответ по задаче",
+                "Получен проверяемый результат выполнения",
+            ],
+            "notes": "Для проверки DoD включите AGENT_WORKER_USE_LLM=1.",
+        },
+        "task_context": {"title": title, "assignee_role": role},
+    }
     status = TaskStatus.SUCCEEDED
 
     if USE_LLM:
@@ -273,11 +296,30 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
                 )
                 resp.raise_for_status()
                 body = resp.json()
+            output = str(body.get("output", "") or "").strip()
             result_inline = {
                 "mode": "tracker",
                 "dry_run": False,
-                "output": body.get("output", ""),
+                "output": output,
                 "provider": body.get("provider", ""),
+                "commentary": output[:1200],
+                "work_done": [
+                    "Задача обработана агентом с использованием LLM",
+                    "Сформирован текстовый результат по задаче",
+                ],
+                "dod": {
+                    "status": "self_reported",
+                    "done": bool(output),
+                    "criteria": [
+                        "Результат по задаче сформирован",
+                        "Комментарий исполнителя сохранён в трекере",
+                    ],
+                    "notes": (
+                        "Статус DoD выставлен по факту наличия результата агента. "
+                        "При необходимости добавьте human-review."
+                    ),
+                },
+                "task_context": {"title": title, "assignee_role": role},
             }
         except Exception as exc:
             logger.exception("tracker LLM failed")

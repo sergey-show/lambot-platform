@@ -5,6 +5,13 @@ import {
   setEditorContent,
   type AnsibleSwarmEditorPair,
 } from "./ansibleSwarmEditor";
+import {
+  getDocsMarkdownContent,
+  mountDocsMarkdownEditor,
+  setDocsMarkdownContent,
+} from "./docsMarkdownEditor";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { escapeHtml } from "./shared/html";
 import { GATEWAY_BASE } from "./infrastructure/gateway";
 import {
@@ -43,6 +50,14 @@ type AiTeamLiveRun = {
   created_at?: string | null;
   error?: string | null;
 };
+
+marked.setOptions({ gfm: true, breaks: true });
+
+function renderMarkdownHtml(input: string): string {
+  const src = String(input || "");
+  const parsed = marked.parse(src, { async: false }) as string;
+  return DOMPurify.sanitize(parsed, { USE_PROFILES: { html: true } });
+}
 
 function projectAiChatStorageKey(projectId: string): string {
   return `lambot_project_ai_chat_v1_${projectId}`;
@@ -659,7 +674,15 @@ function renderPortal(): void {
         </div>
         <div class="lp-field">
           <label>Содержимое (Markdown)</label>
-          <textarea class="lp-textarea" id="docs-edit-content" rows="12" placeholder="# Заголовок&#10;&#10;Текст..."></textarea>
+          <div class="lp-row" style="gap:10px;align-items:stretch;">
+            <div style="flex:1;min-width:320px;">
+              <div id="docs-md-editor" class="ansible-ide-editor" aria-label="markdown editor"></div>
+            </div>
+            <div style="flex:1;min-width:320px;">
+              <div class="lp-muted" style="font-size:12px;margin-bottom:6px;">Preview</div>
+              <div id="docs-md-preview" class="lp-markdown lp-pre" style="max-height:420px;overflow:auto;"></div>
+            </div>
+          </div>
         </div>
         <div class="lp-field">
           <label>Комментарий версии</label>
@@ -1206,6 +1229,7 @@ function renderPortal(): void {
   let orchModalStepKey = "";
   let orchModalRunId = "";
   let orchModalReasoningMode: "brief" | "detailed" = "brief";
+  let docsMdEditor: ReturnType<typeof mountDocsMarkdownEditor> | null = null;
   const orchLiveLogMax = 180_000;
   const orchStateMax = 260_000;
 
@@ -1579,11 +1603,11 @@ function renderPortal(): void {
               <button type="button" id="orch-reasoning-detailed" class="${detailedBtnClass}" style="padding:4px 8px;font-size:12px;">Подробно</button>
             </div>
           </div>
-          <pre class="lp-orch-pre">${escapeHtml(reasoningText)}</pre>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(reasoningText)}</div>
         </div>
         <div class="lp-orch-modal-block">
           <h4>Над чем работает</h4>
-          <pre class="lp-orch-pre">${escapeHtml(outputTail || "Пока нет live-вывода шага")}</pre>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(outputTail || "Пока нет live-вывода шага")}</div>
         </div>
         ${
           execRows
@@ -1596,7 +1620,7 @@ function renderPortal(): void {
         </div>
         <div class="lp-orch-modal-block">
           <h4>Результат шага</h4>
-          <pre class="lp-orch-pre">${escapeHtml(output || "Пока нет вывода")}</pre>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(output || "Пока нет вывода")}</div>
         </div>
       `;
       const briefBtn = bodyEl.querySelector("#orch-reasoning-brief");
@@ -1879,7 +1903,7 @@ function renderPortal(): void {
       statusEl.textContent = `Прогон: ${data.status || "—"} · фаза ${data.phase || "—"} · run ${data.run_id || ""}${data.error && data.status === "error" ? ` · ${data.error}` : ""}`;
     }
     if (archWrap && data.architecture_md) {
-      archWrap.innerHTML = `<div class="lp-orch-arch"><h3 style="margin:0 0 8px;font-size:15px;">Архитектура</h3><pre class="lp-orch-pre" style="max-height:360px;">${escapeHtml(data.architecture_md)}</pre></div>`;
+      archWrap.innerHTML = `<div class="lp-orch-arch"><h3 style="margin:0 0 8px;font-size:15px;">Архитектура</h3><div class="lp-markdown lp-orch-pre" style="max-height:360px;overflow:auto;">${renderMarkdownHtml(String(data.architecture_md || ""))}</div></div>`;
     }
     const execTasks = data.execution_tasks;
     if (execWrap && execTasks && execTasks.length > 0) {
@@ -1904,7 +1928,7 @@ function renderPortal(): void {
         const body = s.error
           ? `<pre class="lp-orch-pre lp-error">${escapeHtml(s.error)}</pre>`
           : s.output
-            ? `<pre class="lp-orch-pre">${escapeHtml(s.output)}</pre>`
+            ? `<div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(String(s.output || ""))}</div>`
             : `<p class="lp-muted" style="margin:0;font-size:12px;">${
                 st === "running"
                   ? "Выполняется…"
@@ -1921,7 +1945,7 @@ function renderPortal(): void {
       if (data.status === "paused") {
         finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и нажмите «Запустить ИИ команду» — цепочка продолжится с текущего шага.</p></div>`;
       } else if (fin && (data.status === "done" || data.status === "running")) {
-        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><pre class="lp-orch-pre">${escapeHtml(fin)}</pre></div>`;
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(String(fin || ""))}</div></div>`;
       } else {
         finalWrap.innerHTML = "";
       }
@@ -2170,20 +2194,41 @@ function renderPortal(): void {
     }
   };
 
+  const renderDocsMarkdownPreview = () => {
+    const preview = document.getElementById("docs-md-preview");
+    if (!preview) return;
+    const markdown = docsMdEditor ? getDocsMarkdownContent(docsMdEditor) : "";
+    if (!markdown.trim()) {
+      preview.innerHTML = `<p class="lp-muted">Предпросмотр появится здесь…</p>`;
+      return;
+    }
+    preview.innerHTML = renderMarkdownHtml(markdown);
+  };
+
+  const ensureDocsMarkdownEditor = () => {
+    if (docsMdEditor) return;
+    const host = document.getElementById("docs-md-editor");
+    if (!host) return;
+    docsMdEditor = mountDocsMarkdownEditor(host, "");
+    docsMdEditor.onDidChangeModelContent(() => renderDocsMarkdownPreview());
+    renderDocsMarkdownPreview();
+  };
+
   const resetDocsEditor = () => {
     currentDocId = "";
     const idEl = document.getElementById("docs-edit-id") as HTMLInputElement | null;
     const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
     const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
     const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
-    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
     const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
     const versionsWrap = document.getElementById("docs-versions-wrap");
     if (idEl) idEl.value = "";
     if (titleEl) titleEl.value = "";
     if (typeEl) typeEl.value = "architecture";
     if (slugEl) slugEl.value = "";
-    if (contentEl) contentEl.value = "";
+    ensureDocsMarkdownEditor();
+    if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, "");
+    renderDocsMarkdownPreview();
     if (chgEl) chgEl.value = "Создано/обновлено вручную";
     if (versionsWrap) versionsWrap.innerHTML = `<p class="lp-muted">Выберите документ в списке слева.</p>`;
   };
@@ -2234,8 +2279,9 @@ function renderPortal(): void {
         }
         const payload = (await r.json()) as { version?: Record<string, unknown> };
         const content = String(payload.version?.content_md ?? "");
-        const cEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
-        if (cEl) cEl.value = content;
+        ensureDocsMarkdownEditor();
+        if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, content);
+        renderDocsMarkdownPreview();
       });
     });
   };
@@ -2258,13 +2304,14 @@ function renderPortal(): void {
     const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
     const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
     const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
-    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
     const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
     if (idEl) idEl.value = currentDocId;
     if (titleEl) titleEl.value = String(doc.title ?? "");
     if (typeEl) typeEl.value = String(doc.doc_type ?? "other");
     if (slugEl) slugEl.value = String(doc.slug ?? "");
-    if (contentEl) contentEl.value = String(ver.content_md ?? "");
+    ensureDocsMarkdownEditor();
+    if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, String(ver.content_md ?? ""));
+    renderDocsMarkdownPreview();
     if (chgEl) chgEl.value = "Обновлено вручную";
     await loadDocumentVersions(currentDocId);
   };
@@ -2346,7 +2393,8 @@ function renderPortal(): void {
     const title = (document.getElementById("docs-edit-title") as HTMLInputElement | null)?.value.trim() || "";
     const docType = (document.getElementById("docs-edit-type") as HTMLSelectElement | null)?.value || "other";
     const slug = (document.getElementById("docs-edit-slug") as HTMLInputElement | null)?.value.trim() || "";
-    const content = (document.getElementById("docs-edit-content") as HTMLTextAreaElement | null)?.value || "";
+    ensureDocsMarkdownEditor();
+    const content = docsMdEditor ? getDocsMarkdownContent(docsMdEditor) : "";
     const changeSummary =
       (document.getElementById("docs-edit-change-summary") as HTMLInputElement | null)?.value.trim() || "Updated";
     if (!title || !content.trim()) {
@@ -2502,6 +2550,19 @@ function renderPortal(): void {
         ? (meta.last_result as Record<string, unknown>)
         : {}) as Record<string, unknown>;
       const lastErr = String(meta.last_error || "");
+      const commentary = String(resultObj.commentary || resultObj.output || "").trim();
+      const workDone = Array.isArray(resultObj.work_done)
+        ? resultObj.work_done.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      const dodObj = resultObj.dod && typeof resultObj.dod === "object"
+        ? (resultObj.dod as Record<string, unknown>)
+        : null;
+      const dodDone = Boolean(dodObj?.done);
+      const dodStatus = String(dodObj?.status || "").trim();
+      const dodNotes = String(dodObj?.notes || "").trim();
+      const dodCriteria = Array.isArray(dodObj?.criteria)
+        ? (dodObj?.criteria as unknown[]).map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
       const resultJson = resultObj && Object.keys(resultObj).length > 0 ? JSON.stringify(resultObj, null, 2) : "";
       const events = Array.isArray(evData.events) ? evData.events : [];
       const eventsHtml = events.length
@@ -2539,10 +2600,35 @@ function renderPortal(): void {
           <article class="lp-orch-card">
             <h4 style="margin:0 0 8px;font-size:14px;">Результат агента</h4>
             ${
-              resultJson
-                ? `<pre class="lp-orch-pre">${escapeHtml(resultJson)}</pre>`
-                : `<p class="lp-muted">Результат ещё не сформирован.</p>`
+              commentary
+                ? `<p style="margin:0 0 10px;font-size:13px;white-space:pre-wrap;">${escapeHtml(commentary)}</p>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">Комментарий агента пока отсутствует.</p>`
             }
+            <h4 style="margin:0 0 8px;font-size:14px;">Что было сделано</h4>
+            ${
+              workDone.length
+                ? `<ul style="margin:0 0 10px 18px;padding:0;">${workDone
+                    .map((row) => `<li style="margin:0 0 4px;">${escapeHtml(row)}</li>`)
+                    .join("")}</ul>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">Нет явного списка выполненных действий.</p>`
+            }
+            <h4 style="margin:0 0 8px;font-size:14px;">DoD</h4>
+            <p style="margin:0 0 8px;font-size:13px;">
+              <span class="lp-orch-badge ${dodDone ? "ok" : "wait"}">${escapeHtml(dodDone ? "DONE" : "NOT DONE")}</span>
+              <span class="lp-muted" style="margin-left:8px;">${escapeHtml(dodStatus || "unknown")}</span>
+            </p>
+            ${
+              dodCriteria.length
+                ? `<ul style="margin:0 0 10px 18px;padding:0;">${dodCriteria
+                    .map((row) => `<li style="margin:0 0 4px;">${escapeHtml(row)}</li>`)
+                    .join("")}</ul>`
+                : ""
+            }
+            ${dodNotes ? `<p class="lp-muted" style="margin:0 0 10px;">${escapeHtml(dodNotes)}</p>` : ""}
+            <details>
+              <summary class="lp-muted" style="cursor:pointer;">Показать raw result JSON</summary>
+              ${resultJson ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(resultJson)}</pre>` : `<p class="lp-muted">Результат ещё не сформирован.</p>`}
+            </details>
             ${lastErr ? `<h4 style="margin:12px 0 8px;font-size:14px;">Ошибка</h4><pre class="lp-orch-pre lp-error">${escapeHtml(lastErr)}</pre>` : ""}
           </article>
         </div>
