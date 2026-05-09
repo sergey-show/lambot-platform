@@ -275,32 +275,190 @@ def _ctx_trim(ctx: str, max_chars: int) -> str:
     return c[:max_chars] + "\n… [контекст обрезан для шага маршрутизации]"
 
 
-def _looks_like_execution_change_request(text: str) -> bool:
+def _execution_change_request_heuristic(text: str) -> bool:
+    """Запрос «правим уже развёрнутое / выполняем ops» по ключевым маркерам (fallback без LLM)."""
+    if os.getenv("AGENT_ORCHESTRATION_LEGACY_BROAD_EXEC_HEURISTIC", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        t = (text or "").lower()
+        if not t:
+            return False
+        legacy = (
+            "убер",
+            "удал",
+            "исправ",
+            "измени",
+            "доработ",
+            "правк",
+            "fix",
+            "remove",
+            "delete",
+            "update",
+            "deploy",
+            "frontend",
+            "backend",
+            "api",
+            "endpoint",
+            "график",
+            "компонент",
+            "сервер",
+            "ssh",
+        )
+        return any(m in t for m in legacy)
+
     t = (text or "").lower()
     if not t:
         return False
-    markers = (
-        "убер",
-        "удал",
+    infra_markers = (
+        "ssh",
+        "kubectl",
+        "ansible",
+        "deploy",
+        "деплой",
+        "разверни",
+        "развернуть",
+        "на сервер",
+        "на сервере",
+        "продакш",
+        "production",
+        "ingress",
+        "helm ",
+        "docker compose",
+        "docker-compose",
+        "kubernetes",
+        "k8s",
+        "playbook",
+        "ansible-playbook",
+    )
+    if any(m in t for m in infra_markers):
+        return True
+    maintenance_ru = (
+        "убери",
+        "уберите",
+        "удали",
+        "удалить",
+        "удалите",
         "исправ",
-        "измени",
+        "исправь",
+        "исправьте",
         "доработ",
         "правк",
-        "fix",
-        "remove",
-        "delete",
-        "update",
-        "deploy",
-        "frontend",
-        "backend",
-        "api",
-        "endpoint",
-        "график",
-        "компонент",
-        "сервер",
-        "ssh",
+        "почини",
+        "почините",
+        "не работает",
+        "сломан",
+        "сломано",
+        "сломал",
+        "баг",
+        "баги",
+        "регресс",
+        "hotfix",
+        "хотфикс",
+        "откат",
+        "rollback",
+        "костыль",
     )
-    return any(m in t for m in markers)
+    maintenance_en = (
+        "fix ",
+        "fix:",
+        "fixed ",
+        "remove ",
+        "remove:",
+        "delete ",
+        "broken",
+        "rollback",
+        "patch ",
+        "patch:",
+        "hotfix",
+        "regression",
+    )
+    if any(m in t for m in maintenance_ru):
+        return True
+    if any(m in t for m in maintenance_en):
+        return True
+    existing_markers = (
+        "существующ",
+        "текущий код",
+        "в коде",
+        "в репозитор",
+        "этот компонент",
+        "этот endpoint",
+        "этот api",
+        "эту страницу",
+        "эту форму",
+        "уже развернут",
+        "уже задеплоен",
+    )
+    return any(m in t for m in existing_markers)
+
+
+def _parse_execution_change_llm_payload(raw: str) -> bool | None:
+    """Достаёт execution_change из ответа модели (JSON или regex)."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if "```" in s:
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s)
+        if m:
+            s = m.group(1).strip()
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict) and "execution_change" in obj:
+            return bool(obj["execution_change"])
+    except Exception:
+        pass
+    m = re.search(r'"execution_change"\s*:\s*(true|false|null)', s, re.I)
+    if m:
+        if m.group(1).lower() == "null":
+            return None
+        return m.group(1).lower() == "true"
+    return None
+
+
+def _classify_execution_change_llm(text: str) -> bool | None:
+    """Один короткий вызов default-модели: нужен ли режим «живого» infra/tool-доказательства."""
+    if not (text or "").strip():
+        return False
+    try:
+        model = build_chat_model(purpose="default")
+        small = model.bind(max_tokens=200, temperature=0)
+        body = (text or "").strip()[:12000]
+        sys = (
+            "Ты классификатор запроса пользователя к оркестратору AI-команды. "
+            "Ответь ТОЛЬКО одним JSON-объектом, без markdown и без текста вокруг:\n"
+            '{"execution_change": <true|false>}\n\n'
+            "execution_change=true — пользователь ожидает реальных операций на инфраструктуре: правки уже "
+            "развёрнутого, деплой, команды на сервере, SSH/kubectl/ansible, проверка живого окружения; "
+            "нельзя обойтись одним текстовым планом.\n"
+            "execution_change=false — новый продукт/MVP, идеи, архитектура, фичи с нуля, графики/бэкенд/админка "
+            "как функциональные требования без акцента на «почини прод сейчас».\n"
+            "При сомнении выбери false."
+        )
+        resp = small.invoke(
+            [
+                SystemMessage(content=sys),
+                HumanMessage(content=f"Сообщение пользователя:\n{body}"),
+            ]
+        )
+        content = resp.content if isinstance(resp.content, str) else str(resp.content)
+        return _parse_execution_change_llm_payload(content)
+    except Exception:
+        return None
+
+
+def _looks_like_execution_change_request(text: str) -> bool:
+    """Нужен ли «режим исполнения» (инструменты/инфра): сначала LLM, иначе эвристика.
+
+    LLM отключается: AGENT_EXEC_INTENT_USE_LLM=0. Сбой LLM → fallback на эвристику.
+    """
+    use_llm = os.getenv("AGENT_EXEC_INTENT_USE_LLM", "1").strip().lower() not in ("0", "false", "no", "off", "")
+    if use_llm:
+        llm = _classify_execution_change_llm(text)
+        if llm is not None:
+            return llm
+    return _execution_change_request_heuristic(text)
 
 
 def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
@@ -1081,14 +1239,23 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             calls = int((ev or {}).get("tool_calls_count") or 0)
                             results = int((ev or {}).get("tool_results_count") or 0)
                             has_exec = bool((ev or {}).get("has_execution_tool_call"))
-                            if calls <= 0 or results <= 0 or not has_exec:
+                            # Только devops_plan обязан подтвердить infra-инструментами; backend/frontend
+                            # могут опираться на контекст через get_development_context/http_request и т.д.
+                            missing_any_tools = calls <= 0 or results <= 0
+                            missing_infra_tools = step_key == "devops_plan" and not has_exec
+                            if missing_any_tools or missing_infra_tools:
                                 msg = (
                                     "Блокировка шага: профильная роль не подтвердила фактическое выполнение.\n"
                                     f"- tool_calls: {calls}\n"
                                     f"- tool_results: {results}\n"
-                                    f"- execution_tool_call: {'yes' if has_exec else 'no'}\n\n"
-                                    "Нужно выполнить реальные инструментальные действия по своей зоне (ssh/k8s/ansible), "
-                                    "а не только текстовый отчёт."
+                                    f"- execution_tool_call (ssh/k8s/ansible): {'yes' if has_exec else 'no'}\n\n"
+                                    + (
+                                        "Нужно выполнить реальные инструментальные действия по своей зоне (ssh/k8s/ansible), "
+                                        "а не только текстовый отчёт."
+                                        if step_key == "devops_plan"
+                                        else "Нужно вызвать хотя бы один инструмент платформы (контекст проекта, docs, http, sandbox) "
+                                        "и получить результат, а не только текстовый отчёт."
+                                    )
                                 )
                                 structured_payload["paused_for_user"] = True
                                 structured_payload["questions_for_user"] = [
