@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +12,18 @@ from langgraph.prebuilt import create_react_agent
 
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.platform_tools import build_platform_tools
+
+def _react_recursion_limit() -> int:
+    """Макс. шагов графа ReAct (tool + ответ). Раньше было 25 — мало для цепочки инструментов."""
+    raw = os.getenv("LANGGRAPH_RECURSION_LIMIT", "").strip()
+    if not raw:
+        return 100
+    try:
+        n = int(raw)
+    except ValueError:
+        return 100
+    return max(5, min(n, 500))
+
 
 SYSTEM_PROMPT = """Ты мультиагентный ассистент платформы Lambot: замена IT-команды для основателя без глубокой техники.
 Инструменты: планирование продукта (MVP, шаг IDEA→PLAN), контекст разработки, статус workflow, инфраструктура, журнал операций, метрики агентов, SSH (ssh_run_command на сохранённый SSH target — опасные команды могут авто-подтверждаться платформой), Kubernetes (kubernetes_query по kubeconfig), Ansible marketplace (ansible_run_template по каталогу ролей), песочница Python, универсальный HTTP (http_request через безопасный executor), браузерный Playwright (browser_session), wiki-документация проекта (get_project_docs_context/list_project_documents/upsert_project_document).
@@ -68,7 +81,7 @@ def invoke_graph(
     msgs.append(HumanMessage(content=user_message.strip()))
     result = graph.invoke(
         {"messages": msgs},
-        config={"recursion_limit": 25},
+        config={"recursion_limit": _react_recursion_limit()},
     )
     messages = result.get("messages") or []
     return {

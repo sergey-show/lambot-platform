@@ -2108,11 +2108,14 @@ function renderPortal(): void {
 
   const inspectOrchestrationRun = async (runId: string): Promise<void> => {
     if (!currentProjectId || !runId) return;
+    if (!route().startsWith("/portal/team")) {
+      location.hash = "#/portal/team";
+    }
     stopOrchestrationPoll();
     stopOrchestrationStream();
     resetOrchestrationLiveLog();
     sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, runId);
-    appendOrchestrationLiveLog(`ручной просмотр run ${runId}: подключение к stream…`);
+    appendOrchestrationLiveLog(`ручной просмотр run ${runId}: подключение к stream LLM…`);
     await pollOrchestration(runId);
     void loadBrowserLogs(runId);
     void startOrchestrationStream(runId);
