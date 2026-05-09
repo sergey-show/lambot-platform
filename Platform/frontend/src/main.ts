@@ -1926,7 +1926,7 @@ function renderPortal(): void {
         const tsk = s.task_title || s.task || "";
         const badge = orchBadgeClass(st);
         const body = s.error
-          ? `<pre class="lp-orch-pre lp-error">${escapeHtml(s.error)}</pre>`
+          ? `<div class="lp-markdown lp-orch-pre lp-error">${renderMarkdownHtml(String(s.error || ""))}</div>`
           : s.output
             ? `<div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(String(s.output || ""))}</div>`
             : `<p class="lp-muted" style="margin:0;font-size:12px;">${
