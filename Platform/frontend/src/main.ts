@@ -29,6 +29,20 @@ type ProjectRow = {
 };
 
 let lastAdminProjectsSnapshot: ProjectRow[] = [];
+let superadminPhasePollTimer: number | null = null;
+
+type AiTeamLiveRun = {
+  run_id: string;
+  project_id: string;
+  project_name?: string;
+  status: string;
+  phase?: string | null;
+  iteration?: number;
+  batch_status?: string;
+  updated_at?: string | null;
+  created_at?: string | null;
+  error?: string | null;
+};
 
 function projectAiChatStorageKey(projectId: string): string {
   return `lambot_project_ai_chat_v1_${projectId}`;
@@ -741,6 +755,15 @@ function renderPortal(): void {
         </div>
         <div id="tracker-items-list" class="lp-orch-grid"></div>
       </div>
+      <div id="tracker-task-modal" class="lp-modal-backdrop" hidden>
+        <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="tracker-task-modal-title">
+          <div class="lp-modal-head">
+            <h3 id="tracker-task-modal-title" style="margin:0;">Результат задачи</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-task-modal-close">Закрыть</button>
+          </div>
+          <div id="tracker-task-modal-body"></div>
+        </div>
+      </div>
       </div>
       <div id="view-servers" class="lp-portal-view">
       <div class="lp-panel">
@@ -1266,6 +1289,8 @@ function renderPortal(): void {
     final_message?: string | null;
     error?: string | null;
     phase?: string | null;
+    iteration?: number;
+    batch_status?: string;
     execution_tasks?: Array<Record<string, unknown>>;
   };
 
@@ -1916,11 +1941,19 @@ function renderPortal(): void {
     }
 
     const prev = orchStreamLastRun;
+    const iter = Number(data.iteration || 0);
+    const batchStatus = String(data.batch_status || "—");
+    const runLine = `run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")} · iteration ${iter} · batch ${batchStatus}`;
     if (!prev) {
-      appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+      appendOrchestrationLiveLog(runLine);
     } else {
-      if ((data.status || "") !== (prev.status || "") || (data.phase || "") !== (prev.phase || "")) {
-        appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+      if (
+        (data.status || "") !== (prev.status || "") ||
+        (data.phase || "") !== (prev.phase || "") ||
+        Number(data.iteration || 0) !== Number(prev.iteration || 0) ||
+        String(data.batch_status || "") !== String(prev.batch_status || "")
+      ) {
+        appendOrchestrationLiveLog(runLine);
       }
       const prevSteps = new Map((prev.steps || []).map((s) => [String(s.step_key || ""), s]));
       for (const s of data.steps || []) {
@@ -1975,6 +2008,8 @@ function renderPortal(): void {
       run_id: runId,
       status: "running",
       phase: "stream",
+      iteration: 0,
+      batch_status: "streaming",
       steps: [],
       execution_tasks: [],
     };
@@ -2040,6 +2075,12 @@ function renderPortal(): void {
     }
     if (typ === "stream_end") {
       appendOrchestrationLiveLog(`stream завершён: ${String(ev.status || "unknown")}`);
+      return;
+    }
+    if (typ === "agent_trace") {
+      const stepKey = String(ev.step_key || "agent");
+      const message = String(ev.message || "").trim();
+      if (message) appendOrchestrationLiveLog(`[trace:${stepKey}] ${message}`);
       return;
     }
   };
@@ -2413,6 +2454,106 @@ function renderPortal(): void {
     });
   };
 
+  const closeTrackerTaskModal = () => {
+    const root = document.getElementById("tracker-task-modal");
+    if (!root) return;
+    root.setAttribute("hidden", "");
+    document.body.classList.remove("lp-modal-open");
+  };
+
+  const openTrackerTaskModal = async (itemId: string) => {
+    if (!currentProjectId || !itemId) return;
+    const root = document.getElementById("tracker-task-modal");
+    const body = document.getElementById("tracker-task-modal-body");
+    if (!root || !body) return;
+    body.innerHTML = `<p class="lp-muted">Загрузка…</p>`;
+    root.removeAttribute("hidden");
+    document.body.classList.add("lp-modal-open");
+    try {
+      const [itemResp, eventsResp] = await Promise.all([
+        fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/tracker/items/${encodeURIComponent(itemId)}`, {
+          headers: authHeader(token()),
+        }),
+        fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/tracker/items/${encodeURIComponent(itemId)}/events?limit=60`,
+          { headers: authHeader(token()) },
+        ),
+      ]);
+      const itemRaw = await itemResp.text();
+      const eventsRaw = await eventsResp.text();
+      let item: Record<string, unknown> = {};
+      let evData: { events?: Array<Record<string, unknown>> } = {};
+      try {
+        item = JSON.parse(itemRaw) as Record<string, unknown>;
+      } catch {
+        item = {};
+      }
+      try {
+        evData = JSON.parse(eventsRaw) as { events?: Array<Record<string, unknown>> };
+      } catch {
+        evData = {};
+      }
+      if (!itemResp.ok) {
+        body.innerHTML = `<p class="lp-error">Ошибка загрузки задачи: ${escapeHtml(String((item as { detail?: string }).detail || itemRaw || itemResp.status))}</p>`;
+        return;
+      }
+      const meta = (item.meta && typeof item.meta === "object" ? (item.meta as Record<string, unknown>) : {}) || {};
+      const resultObj = (meta.last_result && typeof meta.last_result === "object"
+        ? (meta.last_result as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const lastErr = String(meta.last_error || "");
+      const resultJson = resultObj && Object.keys(resultObj).length > 0 ? JSON.stringify(resultObj, null, 2) : "";
+      const events = Array.isArray(evData.events) ? evData.events : [];
+      const eventsHtml = events.length
+        ? events
+            .map((e) => {
+              const at = String(e.created_at || "");
+              const action = String(e.action || "");
+              const actor = String(e.actor_ref || "");
+              const payload =
+                e.payload && typeof e.payload === "object"
+                  ? JSON.stringify(e.payload as Record<string, unknown>, null, 2)
+                  : "";
+              return `<article class="lp-orch-card" style="margin-bottom:8px;">
+                <div class="lp-orch-card-head">
+                  <span class="lp-orch-badge run">${escapeHtml(action || "event")}</span>
+                  <span class="lp-muted" style="font-size:12px;">${escapeHtml(at ? new Date(at).toLocaleString() : "—")}</span>
+                </div>
+                <p class="lp-muted" style="margin:6px 0 0;font-size:12px;">actor: ${escapeHtml(actor || "—")}</p>
+                ${payload ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(payload)}</pre>` : ""}
+              </article>`;
+            })
+            .join("")
+        : `<p class="lp-muted">Событий пока нет.</p>`;
+      body.innerHTML = `
+        <div class="lp-orch-grid">
+          <article class="lp-orch-card">
+            <div class="lp-orch-card-head">
+              <span class="lp-orch-badge wait">${escapeHtml(String(item.kind || "task"))}</span>
+              <span class="lp-orch-badge run">${escapeHtml(String(item.status || "unknown"))}</span>
+            </div>
+            <p style="margin:8px 0;font-weight:600;">${escapeHtml(String(item.title || "—"))}</p>
+            <p class="lp-muted" style="font-size:12px;white-space:pre-wrap;">${escapeHtml(String(item.description || ""))}</p>
+            <p class="lp-muted" style="font-size:12px;">execution_id: <code>${escapeHtml(String(item.last_execution_id || "—"))}</code></p>
+          </article>
+          <article class="lp-orch-card">
+            <h4 style="margin:0 0 8px;font-size:14px;">Результат агента</h4>
+            ${
+              resultJson
+                ? `<pre class="lp-orch-pre">${escapeHtml(resultJson)}</pre>`
+                : `<p class="lp-muted">Результат ещё не сформирован.</p>`
+            }
+            ${lastErr ? `<h4 style="margin:12px 0 8px;font-size:14px;">Ошибка</h4><pre class="lp-orch-pre lp-error">${escapeHtml(lastErr)}</pre>` : ""}
+          </article>
+        </div>
+        <h4 style="margin:12px 0 8px;font-size:14px;">История выполнения</h4>
+        <div>${eventsHtml}</div>
+      `;
+    } catch (e) {
+      body.innerHTML = `<p class="lp-error">${escapeHtml(String(e))}</p>`;
+    }
+  };
+
   const loadTrackerItems = async () => {
     const listEl = document.getElementById("tracker-items-list");
     const stEl = document.getElementById("tracker-status-line");
@@ -2486,9 +2627,10 @@ function renderPortal(): void {
           const closeBtn = canClose(it)
             ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-close" data-id="${escapeHtml(id)}">Закрыть</button>`
             : "";
+          const detailsBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-result" data-id="${escapeHtml(id)}">Результат</button>`;
           const actions =
-            editBtn || dispatchBtn || closeBtn
-              ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${editBtn}${dispatchBtn}${closeBtn}</div>`
+            editBtn || dispatchBtn || closeBtn || detailsBtn
+              ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${detailsBtn}${editBtn}${dispatchBtn}${closeBtn}</div>`
               : "";
           return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Роль: ${role}</p><p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
         })
@@ -2584,6 +2726,12 @@ function renderPortal(): void {
           void loadTrackerItems();
         });
       });
+      listEl.querySelectorAll(".lp-tracker-result").forEach((b) => {
+        b.addEventListener("click", () => {
+          const id = (b as HTMLButtonElement).dataset.id;
+          if (id) void openTrackerTaskModal(id);
+        });
+      });
     } catch (e) {
       listEl.innerHTML = `<p class="lp-muted">${escapeHtml(String(e))}</p>`;
       if (stEl) stEl.textContent = "";
@@ -2592,6 +2740,7 @@ function renderPortal(): void {
 
   const restoreOrchestrationForProject = () => {
     closeOrchNodeModal();
+    closeTrackerTaskModal();
     stopOrchestrationPoll();
     stopOrchestrationStream();
     resetOrchestrationLiveLog();
@@ -3741,6 +3890,13 @@ function renderPortal(): void {
       closeOrchNodeModal();
     }
   });
+  document.getElementById("tracker-task-modal-close")?.addEventListener("click", () => closeTrackerTaskModal());
+  document.getElementById("tracker-task-modal")?.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement | null;
+    if (t && t.id === "tracker-task-modal") {
+      closeTrackerTaskModal();
+    }
+  });
 
   document.getElementById("docs-refresh-btn")?.addEventListener("click", () => void loadDocumentsList());
   document.getElementById("docs-new-btn")?.addEventListener("click", () => resetDocsEditor());
@@ -4246,6 +4402,59 @@ function renderPortal(): void {
   syncPortalView(portalViewFromRoute(route()));
 }
 
+function renderSuperadminRunsLive(runs: AiTeamLiveRun[]): void {
+  const tbody = document.getElementById("ai-team-runs-live-body");
+  if (!tbody) return;
+  if (!runs.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">Нет активных или недавних run</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = runs
+    .map((r) => {
+      const st = escapeHtml(r.status || "—");
+      const phase = escapeHtml(String(r.phase || "—"));
+      const iter = Number(r.iteration || 0);
+      const b = escapeHtml(String(r.batch_status || "idle"));
+      const updated = r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : "—";
+      const name = escapeHtml(r.project_name || "—");
+      const pid = escapeHtml(r.project_id || "—");
+      const runId = escapeHtml(r.run_id || "—");
+      const err = r.error ? `<span class="lp-muted" title="${escapeHtml(String(r.error))}">⚠</span>` : "";
+      return `<tr>
+        <td><code>${runId}</code></td>
+        <td title="${pid}">${name}</td>
+        <td><span class="lp-badge">${st}</span>${err}</td>
+        <td><code>${phase}</code></td>
+        <td>${iter}</td>
+        <td><code>${b}</code></td>
+        <td>${escapeHtml(updated)}</td>
+        <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;" data-superadmin-open-project="${pid}">Открыть</button></td>
+      </tr>`;
+    })
+    .join("");
+}
+
+async function loadSuperadminRunsLive(): Promise<void> {
+  const token =
+    (document.getElementById("superadmin-token") as HTMLInputElement | null)?.value.trim() ||
+    getSuperadminTokenForUi();
+  if (!token) return;
+  const status = (document.getElementById("ai-team-live-status") as HTMLSelectElement | null)?.value.trim() || "";
+  const params = new URLSearchParams();
+  params.set("limit", "80");
+  if (status) params.set("status", status);
+  const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/ai-team/runs/live?${params.toString()}`, {
+    headers: authHeader(token),
+  });
+  if (!resp.ok) {
+    const tbody = document.getElementById("ai-team-runs-live-body");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">ai-team/runs/live: ${resp.status}</td></tr>`;
+    return;
+  }
+  const data = (await resp.json()) as { runs?: AiTeamLiveRun[] };
+  renderSuperadminRunsLive(Array.isArray(data.runs) ? data.runs : []);
+}
+
 async function loadSuperadminData(): Promise<void> {
   const token =
     (document.getElementById("superadmin-token") as HTMLInputElement | null)?.value.trim() ||
@@ -4450,6 +4659,7 @@ async function loadSuperadminData(): Promise<void> {
         : `<tr><td colspan="5" class="lp-muted">Нет HTTP tools</td></tr>`;
     }
   }
+  await loadSuperadminRunsLive();
 }
 
 function setupAnsibleTemplates(): void {
@@ -4651,6 +4861,10 @@ function setupAnsibleTemplates(): void {
 }
 
 function renderSuperadmin(): void {
+  if (superadminPhasePollTimer !== null) {
+    window.clearInterval(superadminPhasePollTimer);
+    superadminPhasePollTimer = null;
+  }
   mount(
     shell({
       active: "superadmin",
@@ -4747,6 +4961,40 @@ function renderSuperadmin(): void {
           <div class="lp-field"><label>Описание</label><input class="lp-input" id="ag-http-desc" placeholder="Кратко для LLM" style="min-width:220px" /></div>
           <div class="lp-field" style="flex:1;min-width:280px;"><label>url_template</label><input class="lp-input" id="ag-http-url" placeholder="http://project-service:8002/api/v1/projects/{project_id}/facts" style="width:100%;max-width:480px" /></div>
           <button type="button" class="lp-btn" id="agent-graph-http-add">Добавить</button>
+        </div>
+      </div>
+      <div class="lp-panel">
+        <h2>AI Team phase dashboard (live)</h2>
+        <p class="lp-muted">Обновляется автоматически каждые 3с. Показывает текущую фазу, iteration батча и состояние исполнения.</p>
+        <div class="lp-row" style="align-items:flex-end;gap:8px;">
+          <div class="lp-field">
+            <label>Фильтр статуса run</label>
+            <select id="ai-team-live-status" class="lp-select" style="min-width:180px;">
+              <option value="">Все</option>
+              <option value="running">running</option>
+              <option value="paused">paused</option>
+              <option value="error">error</option>
+              <option value="done">done</option>
+            </select>
+          </div>
+          <button type="button" class="lp-btn lp-btn-ghost" id="ai-team-live-refresh">Обновить сейчас</button>
+        </div>
+        <div class="lp-table-wrap" style="margin-top:12px;">
+          <table class="lp-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Phase</th>
+                <th>Iteration</th>
+                <th>Batch status</th>
+                <th>Updated</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="ai-team-runs-live-body"><tr><td colspan="8" class="lp-muted">Загрузка…</td></tr></tbody>
+          </table>
         </div>
       </div>
       <div class="lp-stat-grid">
@@ -4866,6 +5114,15 @@ function renderSuperadmin(): void {
     });
   document.getElementById("refresh-all")?.addEventListener("click", safeLoad);
   document.getElementById("apply-filters")?.addEventListener("click", safeLoad);
+  document.getElementById("ai-team-live-refresh")?.addEventListener("click", () => void loadSuperadminRunsLive());
+  document.getElementById("ai-team-live-status")?.addEventListener("change", () => void loadSuperadminRunsLive());
+  document.getElementById("ai-team-runs-live-body")?.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest("button[data-superadmin-open-project]") as HTMLButtonElement | null;
+    if (!btn) return;
+    const pid = btn.getAttribute("data-superadmin-open-project");
+    if (!pid) return;
+    location.hash = `#/portal/project/${encodeURIComponent(pid)}`;
+  });
   document.getElementById("projects-table-body")?.addEventListener("click", async (ev) => {
     const el = (ev.target as HTMLElement).closest("button[data-pa]");
     if (!el) return;
@@ -5085,10 +5342,17 @@ function renderSuperadmin(): void {
   });
   void safeLoad();
   setupAnsibleTemplates();
+  superadminPhasePollTimer = window.setInterval(() => {
+    void loadSuperadminRunsLive();
+  }, 3000);
 }
 
 function renderRoute(): void {
   const r = route();
+  if (r !== "/admin" && superadminPhasePollTimer !== null) {
+    window.clearInterval(superadminPhasePollTimer);
+    superadminPhasePollTimer = null;
+  }
   if (isPortalUserSession() && (r === "/dashboard" || r === "/superadmin" || r === "/admin")) {
     location.replace(`${location.pathname}${location.search}#/portal/home`);
     return;

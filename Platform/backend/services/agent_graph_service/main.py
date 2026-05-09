@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from time import monotonic
 from typing import Literal
 from uuid import UUID
@@ -24,6 +25,35 @@ logger = logging.getLogger("agent_graph")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="agent-graph-service", version="0.1.0")
+
+_PHASE_BATCH_RE = re.compile(r"(planning|execution_dispatch)_batch_(\d+)")
+
+
+def _derive_batch_meta(row: dict) -> dict[str, object]:
+    phase = str(row.get("phase") or "")
+    iteration = 0
+    batch_status = "idle"
+    m = _PHASE_BATCH_RE.search(phase)
+    if m:
+        iteration = int(m.group(2))
+        batch_status = "planning" if m.group(1) == "planning" else "dispatching"
+    elif phase.startswith("execution_done"):
+        tasks = row.get("execution_tasks") if isinstance(row.get("execution_tasks"), list) else []
+        max_seq = max((int(t.get("seq") or 0) for t in tasks if isinstance(t, dict)), default=-1)
+        if max_seq >= 0:
+            iteration = max_seq + 1
+        batch_status = "done"
+    elif phase.startswith("execution_mixed"):
+        tasks = row.get("execution_tasks") if isinstance(row.get("execution_tasks"), list) else []
+        max_seq = max((int(t.get("seq") or 0) for t in tasks if isinstance(t, dict)), default=-1)
+        if max_seq >= 0:
+            iteration = max_seq + 1
+        batch_status = "mixed"
+    elif phase.startswith("failed"):
+        batch_status = "failed"
+    elif phase.startswith("awaiting_clarification"):
+        batch_status = "paused"
+    return {"iteration": iteration, "batch_status": batch_status}
 
 
 class ChatHistoryTurn(BaseModel):
@@ -141,6 +171,8 @@ async def orchestrate_run_stream(project_id: UUID, run_id: str):
                 "project_id",
                 "status",
                 "phase",
+                "iteration",
+                "batch_status",
                 "error",
                 "architecture_md",
                 "architecture_json",
@@ -150,9 +182,13 @@ async def orchestrate_run_stream(project_id: UUID, run_id: str):
                 "updated_at",
             )
             meta_patch: dict[str, object] = {}
+            current_meta = dict(row)
+            current_meta.update(_derive_batch_meta(row))
+            prev_meta = dict(prev)
+            prev_meta.update(_derive_batch_meta(prev))
             for k in meta_keys:
-                if row.get(k) != prev.get(k):
-                    meta_patch[k] = row.get(k)
+                if current_meta.get(k) != prev_meta.get(k):
+                    meta_patch[k] = current_meta.get(k)
             if meta_patch:
                 payload = {"type": "run_meta", "patch": meta_patch}
                 yield (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
@@ -176,7 +212,14 @@ async def orchestrate_run_stream(project_id: UUID, run_id: str):
                 out_prev = str(p.get("output") or "")
                 if out_now != out_prev:
                     if out_prev and out_now.startswith(out_prev):
-                        patch["output_append"] = out_now[len(out_prev) :]
+                        appended = out_now[len(out_prev) :]
+                        patch["output_append"] = appended
+                        clip = appended.strip()
+                        if clip:
+                            payload = {"type": "agent_trace", "step_key": step_key, "message": clip[:1200]}
+                            yield (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+                            emitted = True
+                            last_emit_ts = monotonic()
                     else:
                         patch["output_full"] = out_now
                 if patch:

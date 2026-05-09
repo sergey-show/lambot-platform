@@ -30,7 +30,7 @@ from services.agent_graph_service.orchestration_step_output import parse_step_en
 from services.agent_graph_service.execution_plan_parse import (
     default_execution_tasks_if_empty,
     format_execution_tasks_markdown,
-    parse_execution_plan_json,
+    parse_execution_plan_payload,
     wait_for_ai_team_execution_tasks,
 )
 from services.agent_graph_service.execution_publish import fetch_project_tenant_id, publish_ai_team_execution_tasks
@@ -38,6 +38,7 @@ from services.agent_graph_service.graph_runner import invoke_graph
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.redis_team import cache_latest_run_id
 from services.agent_graph_service.team_client import (
+    team_append_execution_tasks,
     team_get_run,
     team_patch_run,
     team_patch_step,
@@ -109,9 +110,9 @@ STEP_EXTRA: dict[str, str] = {
         "Если no_go — выставь pipeline_continue=false и добавь минимум 1 вопрос/блокер в questions_for_user."
     ),
     "execution_plan": (
-        "Это шаг ТОЛЬКО для машинного плана исполнения (отдельно от нарратива). "
+        "Это шаг ТОЛЬКО для машинного плана исполнения БАТЧАМИ (отдельно от нарратива). "
         "Ответь строго одним JSON-объектом без markdown и без пояснений вокруг. Формат:\n"
-        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|noop","payload":{}}]}\n'
+        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|noop","payload":{}}],"continue_planning":false,"goal_done":false,"done_reason":""}\n'
         "Смысл action_kind:\n"
         "- ssh_run_command: реальный запуск команд на SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
         "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
@@ -121,6 +122,7 @@ STEP_EXTRA: dict[str, str] = {
         "\"allow_fallback\":true,\"fallback_service\":\"<service-id>\"}.\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
         "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, использовать только по явному запросу пользователя и при наличии соответствующих ресурсов.\n"
+        "Верни только один исполнимый батч с ограниченным числом задач за итерацию (не монолитный план).\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
         "Если запрос про установку типовых сервисов — предпочитай ansible_run_template, "
@@ -178,6 +180,9 @@ MAX_IDENTICAL_ERROR_REPEATS = 2
 MAX_IDENTICAL_OUTPUT_REPEATS = 2
 MAX_ORCHESTRATION_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_MAX_SECONDS", "7200"))
 EXECUTION_TASKS_WAIT_SECONDS = int(os.getenv("AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS", "3600"))
+PLAN_MAX_TASKS_PER_ITER = int(os.getenv("AGENT_PLAN_MAX_TASKS_PER_ITER", "5"))
+PLAN_MAX_ITERATIONS = int(os.getenv("AGENT_PLAN_MAX_ITERATIONS", "20"))
+PLAN_BATCH_WAIT_SECONDS = int(os.getenv("AGENT_PLAN_BATCH_WAIT_SECONDS", "900"))
 MAX_PEER_QUERIES = 5
 INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "120"))
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
@@ -1168,126 +1173,183 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         return True, text, None, True
 
                     if step_key == "execution_plan":
-                        parsed = parse_execution_plan_json(text)
-                        if not parsed:
-                            parsed = default_execution_tasks_if_empty(ctx)
-                        if _looks_like_execution_change_request(user_message) and not _has_executable_execution_tasks(parsed):
-                            recheck_hint = (
-                                "Self-check: в плане нет ни одной исполнимой задачи "
-                                "(ssh_run_command|kubernetes_query|ansible_run_template) для запроса на правку. "
-                                "Пересобери execution_plan так, чтобы он содержал реальные шаги исполнения."
-                            )
-                            retry_text = _run_single_step_text(
-                                step_key,
-                                direct_answer=direct_answer,
-                                acc_override=acc_override,
-                                debug_hint=recheck_hint,
-                            )
-                            retry_parsed = parse_execution_plan_json(retry_text)
-                            if not retry_parsed:
-                                retry_parsed = default_execution_tasks_if_empty(ctx)
-                            if _has_executable_execution_tasks(retry_parsed):
-                                text = retry_text
-                                parsed = retry_parsed
-                                structured_payload["execution_plan_self_check"] = {
-                                    "triggered": True,
-                                    "reason": "missing_executable_tasks",
-                                    "fixed": True,
-                                }
-                            else:
-                                msg = (
-                                    "Execution plan не содержит исполнимых задач для запроса на правку. "
-                                    "Агент выполнил самопроверку, но не смог сформировать runnable-план.\n\n"
-                                    "Нужно: добавить SSH/K8s target проекта или уточнить, где выполнять изменения."
+                        batch_reports: list[str] = []
+                        iteration = 1
+                        planner_text = text
+                        current_run = team_get_run(run_id) or {}
+                        created_task_ids: set[str] = {
+                            str(t.get("id"))
+                            for t in (current_run.get("execution_tasks") or [])
+                            if isinstance(t, dict) and t.get("id")
+                        }
+                        while iteration <= PLAN_MAX_ITERATIONS:
+                            team_patch_run(run_id, phase=f"planning_batch_{iteration}")
+                            parsed, planner_meta = parse_execution_plan_payload(planner_text)
+                            if not parsed and iteration == 1:
+                                parsed = default_execution_tasks_if_empty(ctx)
+                            if PLAN_MAX_TASKS_PER_ITER > 0:
+                                parsed = parsed[:PLAN_MAX_TASKS_PER_ITER]
+                            if _looks_like_execution_change_request(user_message) and parsed and not _has_executable_execution_tasks(parsed):
+                                recheck_hint = (
+                                    "Self-check: в батче нет исполнимых задач "
+                                    "(ssh_run_command|kubernetes_query|ansible_run_template) для запроса на правку. "
+                                    "Пересобери ближайший батч так, чтобы он содержал реальные шаги исполнения."
                                 )
-                                structured_payload["execution_plan_self_check"] = {
-                                    "triggered": True,
-                                    "reason": "missing_executable_tasks",
-                                    "fixed": False,
-                                }
+                                retry_text = _run_single_step_text(
+                                    step_key,
+                                    direct_answer=direct_answer,
+                                    acc_override=acc_override,
+                                    debug_hint=recheck_hint,
+                                )
+                                retry_parsed, retry_meta = parse_execution_plan_payload(retry_text)
+                                if PLAN_MAX_TASKS_PER_ITER > 0:
+                                    retry_parsed = retry_parsed[:PLAN_MAX_TASKS_PER_ITER]
+                                if retry_parsed and _has_executable_execution_tasks(retry_parsed):
+                                    planner_text = retry_text
+                                    parsed = retry_parsed
+                                    planner_meta = retry_meta
+                                    structured_payload["execution_plan_self_check"] = {
+                                        "triggered": True,
+                                        "reason": "missing_executable_tasks",
+                                        "fixed": True,
+                                        "iteration": iteration,
+                                    }
+                                else:
+                                    msg = (
+                                        "Execution plan не содержит исполнимых задач для запроса на правку.\n\n"
+                                        "Нужно: добавить SSH/K8s target проекта или уточнить, где выполнять изменения."
+                                    )
+                                    structured_payload["execution_plan_self_check"] = {
+                                        "triggered": True,
+                                        "reason": "missing_executable_tasks",
+                                        "fixed": False,
+                                        "iteration": iteration,
+                                    }
+                                    structured_payload["paused_for_user"] = True
+                                    structured_payload["questions_for_user"] = [
+                                        "Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."
+                                    ]
+                                    team_patch_step(
+                                        run_id,
+                                        step_key,
+                                        status="done",
+                                        output_md=msg,
+                                        structured=structured_payload,
+                                        finished_at=_utc_iso(),
+                                    )
+                                    accumulated[step_key] = msg
+                                    _pause_run_with_question(
+                                        step_key,
+                                        ["Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."],
+                                        "Не удалось сформировать исполнимый план.",
+                                    )
+                                    return True, msg, None, True
+                            if not parsed:
+                                break
+                            for item in parsed:
+                                ps = str(item.get("plan_summary") or "").strip()
+                                item["plan_summary"] = (f"[batch {iteration}] {ps}" if ps else f"[batch {iteration}]").strip()
+                            team_patch_run(run_id, phase=f"execution_dispatch_batch_{iteration}")
+                            if iteration == 1 and not (team_get_run(run_id) or {}).get("execution_tasks"):
+                                run_after_write = team_replace_execution_tasks(run_id, parsed)
+                            else:
+                                run_after_write = team_append_execution_tasks(run_id, parsed)
+                            etasks = run_after_write.get("execution_tasks") if isinstance(run_after_write, dict) else []
+                            batch_tasks = [
+                                t for t in (etasks or []) if isinstance(t, dict) and str(t.get("id") or "") not in created_task_ids
+                            ]
+                            for t in batch_tasks:
+                                tid = str(t.get("id") or "")
+                                if tid:
+                                    created_task_ids.add(tid)
+                            if not batch_tasks:
+                                break
+                            publish_ai_team_execution_tasks(
+                                project_id=pid,
+                                tenant_id=tenant_id,
+                                run_id=run_id,
+                                tasks=batch_tasks,
+                            )
+                            wait_done = wait_for_ai_team_execution_tasks(
+                                run_id,
+                                timeout_sec=min(EXECUTION_TASKS_WAIT_SECONDS, PLAN_BATCH_WAIT_SECONDS),
+                                task_ids=[str(t.get("id")) for t in batch_tasks if t.get("id")],
+                            )
+                            if not wait_done:
+                                raise RuntimeError(
+                                    "execution_timeout: batch-задачи воркеров не завершились за "
+                                    f"{min(EXECUTION_TASKS_WAIT_SECONDS, PLAN_BATCH_WAIT_SECONDS)}s"
+                                )
+                            run_done = team_get_run(run_id)
+                            if not run_done:
+                                raise RuntimeError("run not found after batch execution")
+                            blockers = _execution_blockers(run_done)
+                            if blockers:
+                                blocker_lines = []
+                                for b in blockers[:8]:
+                                    er = f" · {b['error']}" if b.get("error") else ""
+                                    blocker_lines.append(f"- {b['title']} (`{b['action_kind']}`): {b['status']}{er}")
+                                structured_payload["execution_blockers"] = blockers
                                 structured_payload["paused_for_user"] = True
                                 structured_payload["questions_for_user"] = [
-                                    "Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."
+                                    "Исполнение батча завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."
                                 ]
+                                text = (
+                                    f"Итеративное исполнение остановлено на батче {iteration}.\n\n### Блокеры исполнения\n"
+                                    + "\n".join(blocker_lines)
+                                    + "\n\nПайплайн приостановлен до решения блокеров."
+                                )
                                 team_patch_step(
                                     run_id,
                                     step_key,
                                     status="done",
-                                    output_md=msg,
+                                    output_md=text,
                                     structured=structured_payload,
                                     finished_at=_utc_iso(),
                                 )
-                                accumulated[step_key] = msg
+                                accumulated[step_key] = text
                                 _pause_run_with_question(
                                     step_key,
-                                    ["Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."],
-                                    "Не удалось сформировать исполнимый план.",
+                                    ["Исполнение батча завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."],
+                                    "Исполнение батча завершилось с ошибками.",
                                 )
-                                return True, msg, None, True
-                        team_replace_execution_tasks(run_id, parsed)
-                        run = team_get_run(run_id)
-                        if not run:
-                            raise RuntimeError("run not found after execution tasks create")
-                        etasks = run.get("execution_tasks") or []
-                        team_patch_run(run_id, phase="execution_dispatch")
-                        publish_ai_team_execution_tasks(
-                            project_id=pid,
-                            tenant_id=tenant_id,
-                            run_id=run_id,
-                            tasks=etasks,
-                        )
-                        wait_done = wait_for_ai_team_execution_tasks(
-                            run_id,
-                            timeout_sec=EXECUTION_TASKS_WAIT_SECONDS,
-                        )
-                        if not wait_done:
-                            raise RuntimeError(
-                                "execution_timeout: задачи воркеров не завершились за "
-                                f"{EXECUTION_TASKS_WAIT_SECONDS}s"
+                                return True, text, None, True
+                            batch_lines: list[str] = [f"### Batch {iteration}", ""]
+                            for t in batch_tasks:
+                                st = str(t.get("status") or "pending")
+                                batch_lines.append(
+                                    f"- {t.get('title', 'Задача')} (`{t.get('action_kind', 'noop')}`) — {st}"
+                                )
+                            batch_reports.append("\n".join(batch_lines))
+                            if planner_meta.get("goal_done") is True or planner_meta.get("continue_planning") is False:
+                                break
+                            iteration += 1
+                            if iteration > PLAN_MAX_ITERATIONS:
+                                break
+                            planner_text = _run_single_step_text(
+                                step_key,
+                                direct_answer=direct_answer,
+                                acc_override=acc_override,
+                                debug_hint=(
+                                    "Сформируй следующий батч задач на основе уже выполненных execution tasks. "
+                                    "Не повторяй завершённые задачи. Верни только JSON по формату execution_plan."
+                                ),
                             )
-                        run_done = team_get_run(run_id) or run
+                        run_done = team_get_run(run_id) or {}
                         exec_md = format_execution_tasks_markdown(run_done)
-                        text = f"{text}\n\n---\n{exec_md}"
                         execution_ctx = exec_md
-                        blockers = _execution_blockers(run_done)
-                        if blockers:
-                            blocker_lines = []
-                            for b in blockers[:8]:
-                                er = f" · {b['error']}" if b.get("error") else ""
-                                blocker_lines.append(
-                                    f"- {b['title']} (`{b['action_kind']}`): {b['status']}{er}"
-                                )
-                            structured_payload["execution_blockers"] = blockers
-                            structured_payload["paused_for_user"] = True
-                            structured_payload["questions_for_user"] = [
-                                "Исполнение завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."
-                            ]
-                            text = (
-                                f"{text}\n\n---\n### Блокеры исполнения\n"
-                                + "\n".join(blocker_lines)
-                                + "\n\nПайплайн приостановлен до решения блокеров."
-                            )
-                            team_patch_step(
-                                run_id,
-                                step_key,
-                                status="done",
-                                output_md=text,
-                                structured=structured_payload,
-                                finished_at=_utc_iso(),
-                            )
-                            accumulated[step_key] = text
-                            _pause_run_with_question(
-                                step_key,
-                                ["Исполнение завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."],
-                                "Исполнение завершилось с ошибками.",
-                            )
-                            return True, text, None, True
+                        text = (
+                            "Итеративный план исполнения сформирован и обработан батчами.\n\n"
+                            + "\n\n".join(batch_reports)
+                            + "\n\n---\n"
+                            + exec_md
+                        ).strip()
+                        structured_payload["batch_iterations"] = max(1, len(batch_reports))
+                        structured_payload["planner_limit"] = PLAN_MAX_TASKS_PER_ITER
                         team_patch_run(
                             run_id,
                             phase="execution_done"
-                            if all(
-                                x.get("status") == "done" for x in (run_done.get("execution_tasks") or [])
-                            )
+                            if all(x.get("status") == "done" for x in (run_done.get("execution_tasks") or []))
                             else "execution_mixed",
                         )
 

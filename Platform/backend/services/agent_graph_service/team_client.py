@@ -99,6 +99,17 @@ def team_replace_execution_tasks(run_id: str, tasks: list[dict[str, Any]]) -> di
     return r.json()
 
 
+def team_append_execution_tasks(run_id: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    r = httpx.post(
+        f"{ADMIN_SERVICE_URL.rstrip('/')}/api/v1/internal/ai-team/runs/{run_id}/execution-tasks/append",
+        json={"tasks": tasks},
+        headers=_headers(),
+        timeout=60.0,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def team_patch_execution_task(task_id: str, body: dict[str, Any]) -> dict[str, Any]:
     r = httpx.patch(
         f"{ADMIN_SERVICE_URL.rstrip('/')}/api/v1/internal/ai-team/execution-tasks/{task_id}",

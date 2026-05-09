@@ -730,6 +730,21 @@ async def admin_services_health(request: Request):
     return _response_from_httpx(response)
 
 
+@app.get("/api/v1/admin/ai-team/runs/live")
+async def admin_ai_team_runs_live(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    params = str(request.url.query)
+    suffix = f"?{params}" if params else ""
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/ai-team/runs/live{suffix}",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
 @app.get("/api/v1/admin/llm-settings")
 async def admin_llm_settings_get(request: Request):
     require_roles(request, {ROLE_SUPERADMIN})

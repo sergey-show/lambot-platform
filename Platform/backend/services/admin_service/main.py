@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from services.admin_service.db import SessionLocal, get_db, init_db
 from services.admin_service.ai_team_service import (
+    append_execution_tasks,
     create_run_with_steps,
     get_latest_run_for_project,
     get_run_by_id,
@@ -33,6 +34,7 @@ from services.admin_service.ai_team_service import (
 from services.admin_service import tracker_service as tracker_svc
 from services.admin_service.models import (
     AGENT_SETTINGS_SINGLETON_ID,
+    AITeamRun,
     LLM_SETTINGS_SINGLETON_ID,
     AdminProjectProjection,
     AgentDevelopmentPrompt,
@@ -499,6 +501,61 @@ def admin_services_health(_: None = Depends(require_superadmin)) -> dict:
             except Exception:
                 results[name] = "unreachable"
     return {"services": results}
+
+
+@app.get("/api/v1/admin/ai-team/runs/live")
+def admin_ai_team_runs_live(
+    limit: int = 50,
+    status: str | None = None,
+    _: None = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+) -> dict:
+    lim = max(1, min(limit, 200))
+    q = select(AITeamRun).order_by(AITeamRun.updated_at.desc()).limit(lim)
+    if status:
+        q = q.where(AITeamRun.status == status)
+    runs = db.execute(q).scalars().all()
+    project_ids = [r.project_id for r in runs]
+    proj_name_by_id: dict[str, str] = {}
+    if project_ids:
+        rows = db.execute(
+            select(AdminProjectProjection.project_id, AdminProjectProjection.name).where(
+                AdminProjectProjection.project_id.in_(project_ids)
+            )
+        ).all()
+        proj_name_by_id = {str(pid): str(name) for pid, name in rows}
+    items: list[dict[str, object]] = []
+    for r in runs:
+        phase = str(r.phase or "")
+        iteration = 0
+        batch_status = "idle"
+        m = re.search(r"(planning|execution_dispatch)_batch_(\d+)", phase)
+        if m:
+            iteration = int(m.group(2))
+            batch_status = "planning" if m.group(1) == "planning" else "dispatching"
+        elif phase.startswith("execution_done"):
+            batch_status = "done"
+        elif phase.startswith("execution_mixed"):
+            batch_status = "mixed"
+        elif phase.startswith("failed"):
+            batch_status = "failed"
+        elif phase.startswith("awaiting_clarification"):
+            batch_status = "paused"
+        items.append(
+            {
+                "run_id": str(r.id),
+                "project_id": str(r.project_id),
+                "project_name": proj_name_by_id.get(str(r.project_id), ""),
+                "status": r.status,
+                "phase": r.phase,
+                "iteration": iteration,
+                "batch_status": batch_status,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "error": r.error,
+            }
+        )
+    return {"runs": items}
 
 
 @app.get("/api/v1/admin/llm-settings", response_model=LlmSettingsPublicResponse)
@@ -974,6 +1031,20 @@ def internal_ai_team_replace_execution_tasks(
     db: Session = Depends(get_db),
 ) -> dict:
     replace_execution_tasks(db, run_id, body.tasks)
+    run = get_run_by_id(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return serialize_run_public(run)
+
+
+@app.post("/api/v1/internal/ai-team/runs/{run_id}/execution-tasks/append")
+def internal_ai_team_append_execution_tasks(
+    run_id: UUID,
+    body: AITeamExecutionTasksBody,
+    _: None = Depends(require_internal_llm_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    append_execution_tasks(db, run_id, body.tasks)
     run = get_run_by_id(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="not found")
