@@ -1391,6 +1391,23 @@ async def ai_team_state(project_id: str, request: Request):
     return _response_from_httpx(response)
 
 
+@app.get("/api/v1/projects/{project_id}/ai-team/runs/live")
+async def project_ai_team_runs_live(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    params = dict(request.query_params)
+    params["project_id"] = project_id
+    suffix = f"?{urlencode(params)}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{ADMIN_SERVICE_URL}/api/v1/admin/ai-team/runs/live{suffix}",
+            headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
+        )
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
 @app.get("/api/v1/projects/{project_id}/documents")
 async def documents_list(project_id: str, request: Request):
     ctx = require_roles(request, USER_ROLES)

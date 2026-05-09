@@ -37,6 +37,7 @@ type ProjectRow = {
 
 let lastAdminProjectsSnapshot: ProjectRow[] = [];
 let superadminPhasePollTimer: number | null = null;
+let portalPhasePollTimer: number | null = null;
 
 type AiTeamLiveRun = {
   run_id: string;
@@ -589,6 +590,27 @@ function renderPortal(): void {
         <p class="lp-muted">
           Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → QA → итоговый отчёт PM. Промпты ролей — в Superadmin. Можно запускать из чата автоматически или вручную кнопкой выше.
         </p>
+        <div class="lp-panel" style="margin:0 0 10px;padding:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <h3 style="margin:0;font-size:14px;">AI Team phase dashboard (live)</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="portal-ai-team-live-refresh" style="padding:4px 8px;font-size:12px;">Обновить</button>
+          </div>
+          <div style="overflow:auto;margin-top:8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Run</th>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Status</th>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Phase</th>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Iteration</th>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Batch</th>
+                  <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Updated</th>
+                </tr>
+              </thead>
+              <tbody id="portal-ai-team-runs-live-body"><tr><td colspan="6" class="lp-muted">Выберите проект</td></tr></tbody>
+            </table>
+          </div>
+        </div>
         <p class="lp-muted" id="orchestration-status-line" style="font-size:13px;margin-bottom:8px;"></p>
         <details id="orchestration-live-log-wrap" style="margin:0 0 10px;">
           <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Realtime лог действий агента</summary>
@@ -1952,6 +1974,63 @@ function renderPortal(): void {
     }
   };
 
+  const renderPortalRunsLive = (runs: AiTeamLiveRun[]): void => {
+    const tbody = document.getElementById("portal-ai-team-runs-live-body");
+    if (!tbody) return;
+    if (!currentProjectId) {
+      tbody.innerHTML = `<tr><td colspan="6" class="lp-muted">Выберите проект</td></tr>`;
+      return;
+    }
+    if (!runs.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="lp-muted">Нет активных или недавних run</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = runs
+      .map((r) => {
+        const runId = escapeHtml(String(r.run_id || "—"));
+        const st = escapeHtml(String(r.status || "—"));
+        const phase = escapeHtml(String(r.phase || "—"));
+        const iter = Number(r.iteration || 0);
+        const batch = escapeHtml(String(r.batch_status || "idle"));
+        const updated = r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : "—";
+        const err = r.error ? `<span class="lp-muted" title="${escapeHtml(String(r.error))}">⚠</span>` : "";
+        return `<tr>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${runId}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><span class="lp-badge">${st}</span>${err}</td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${phase}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${iter}</td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${batch}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${escapeHtml(updated)}</td>
+        </tr>`;
+      })
+      .join("");
+  };
+
+  const loadPortalRunsLive = async (): Promise<void> => {
+    const tbody = document.getElementById("portal-ai-team-runs-live-body");
+    if (!tbody) return;
+    if (!currentProjectId) {
+      tbody.innerHTML = `<tr><td colspan="6" class="lp-muted">Выберите проект</td></tr>`;
+      return;
+    }
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      const resp = await fetch(
+        `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/ai-team/runs/live?${params.toString()}`,
+        { headers: authHeader(token()) },
+      );
+      if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" class="lp-muted">ai-team/runs/live: ${resp.status}</td></tr>`;
+        return;
+      }
+      const data = (await resp.json()) as { runs?: AiTeamLiveRun[] };
+      renderPortalRunsLive(Array.isArray(data.runs) ? data.runs : []);
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="lp-muted">${escapeHtml(String(e))}</td></tr>`;
+    }
+  };
+
   const applyOrchestrationRunRealtime = (runId: string, data: OrchRunData) => {
     renderOrchestrationPanel(data);
     syncOrchestrationStepsToChat(runId, data);
@@ -2832,6 +2911,7 @@ function renderPortal(): void {
     resetOrchestrationLiveLog();
     void loadTrackerItems();
     void loadDocumentsList();
+    void loadPortalRunsLive();
     if (!currentProjectId) {
       renderOrchestrationPanel(null);
       void loadBrowserLogs("");
@@ -3969,6 +4049,7 @@ function renderPortal(): void {
 
   document.getElementById("project-ai-chat-send")?.addEventListener("click", () => void sendProjectAiChat());
   document.getElementById("project-orchestrate-btn")?.addEventListener("click", () => void startOrchestration());
+  document.getElementById("portal-ai-team-live-refresh")?.addEventListener("click", () => void loadPortalRunsLive());
   document.getElementById("orch-node-modal-close")?.addEventListener("click", () => closeOrchNodeModal());
   document.getElementById("orchestration-node-modal")?.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement | null;
@@ -4482,6 +4563,15 @@ function renderPortal(): void {
   statusPoll = window.setInterval(() => {
     if (currentProjectId) void refreshStatus();
   }, 8000);
+  if (portalPhasePollTimer !== null) {
+    window.clearInterval(portalPhasePollTimer);
+    portalPhasePollTimer = null;
+  }
+  portalPhasePollTimer = window.setInterval(() => {
+    if (route().startsWith("/portal/team")) {
+      void loadPortalRunsLive();
+    }
+  }, 3000);
 
   (window as unknown as { __lpPortalMounted?: boolean }).__lpPortalMounted = true;
   bindPortalNav();
@@ -5435,6 +5525,10 @@ function renderSuperadmin(): void {
 
 function renderRoute(): void {
   const r = route();
+  if (!r.startsWith("/portal") && portalPhasePollTimer !== null) {
+    window.clearInterval(portalPhasePollTimer);
+    portalPhasePollTimer = null;
+  }
   if (r !== "/admin" && superadminPhasePollTimer !== null) {
     window.clearInterval(superadminPhasePollTimer);
     superadminPhasePollTimer = null;

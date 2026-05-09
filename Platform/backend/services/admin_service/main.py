@@ -507,6 +507,7 @@ def admin_services_health(_: None = Depends(require_superadmin)) -> dict:
 def admin_ai_team_runs_live(
     limit: int = 50,
     status: str | None = None,
+    project_id: UUID | None = None,
     _: None = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -514,6 +515,8 @@ def admin_ai_team_runs_live(
     q = select(AITeamRun).order_by(AITeamRun.updated_at.desc()).limit(lim)
     if status:
         q = q.where(AITeamRun.status == status)
+    if project_id:
+        q = q.where(AITeamRun.project_id == project_id)
     runs = db.execute(q).scalars().all()
     project_ids = [r.project_id for r in runs]
     proj_name_by_id: dict[str, str] = {}
