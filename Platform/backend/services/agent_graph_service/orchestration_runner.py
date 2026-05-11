@@ -213,10 +213,14 @@ STEP_OUTPUT_JSON_INSTRUCTIONS = """
   "summary_md": "основной результат шага для коллег и отчёта (markdown)",
   "questions_for_user": [],
   "peer_queries": [],
-  "pipeline_continue": true
+  "pipeline_continue": true,
+  "live_execution": false
 }
 Правила:
 - summary_md — главный передаваемый дальше контент; пиши сюда всё важное для команды.
+- live_execution (опционально, по умолчанию false): true — дальше по пайплайну нужны реальные операции на инфраструктуре
+  (SSH/kubectl/ansible, правки на уже развёрнутом, деплой), а не только текстовые планы; false — достаточно проектирования/кода без живого исполнения.
+  Для шагов pm и architect оцени по запросу пользователя и выставь явно.
 - Если нужен ответ пользователя до продолжения — step_status=need_user_clarification, заполни questions_for_user, pipeline_continue=false.
 - Если вопрос к другой роли команды (backend/frontend/devops/architect/pm/qa) — добавь в peer_queries: [{"role":"backend","question":"..."}]. Оркестратор запросит коллегу автоматически; не жди пользователя.
 - Не задавай вопросы пользователю, если их можно закрыть через peer_queries.
@@ -276,7 +280,7 @@ def _ctx_trim(ctx: str, max_chars: int) -> str:
 
 
 def _execution_change_request_heuristic(text: str) -> bool:
-    """Запрос «правим уже развёрнутое / выполняем ops» по ключевым маркерам (fallback без LLM)."""
+    """Маркеры «живого» исполнения без LLM: только для режима direct, когда нет шагов pm/architect."""
     if os.getenv("AGENT_ORCHESTRATION_LEGACY_BROAD_EXEC_HEURISTIC", "").strip() in (
         "1",
         "true",
@@ -392,81 +396,6 @@ def _execution_change_request_heuristic(text: str) -> bool:
         "уже задеплоен",
     )
     return any(m in t for m in existing_markers)
-
-
-def _parse_execution_change_llm_payload(raw: str) -> bool | None:
-    """Достаёт execution_change из ответа модели (JSON или regex)."""
-    s = (raw or "").strip()
-    if not s:
-        return None
-    if "```" in s:
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s)
-        if m:
-            s = m.group(1).strip()
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict) and "execution_change" in obj:
-            return bool(obj["execution_change"])
-    except Exception:
-        pass
-    m = re.search(r'"execution_change"\s*:\s*(true|false|null)', s, re.I)
-    if m:
-        if m.group(1).lower() == "null":
-            return None
-        return m.group(1).lower() == "true"
-    return None
-
-
-def _classify_execution_change_llm(text: str) -> bool | None:
-    """Один короткий вызов default-модели: нужен ли режим «живого» infra/tool-доказательства."""
-    if not (text or "").strip():
-        return False
-    try:
-        intent_timeout = float(os.getenv("AGENT_EXEC_INTENT_LLM_TIMEOUT_SEC", "25"))
-        intent_model = os.getenv("AGENT_EXEC_INTENT_MODEL", "").strip() or None
-        intent_base = os.getenv("AGENT_EXEC_INTENT_OPENAI_BASE_URL", "").strip() or None
-        model = build_chat_model(
-            purpose="default",
-            timeout_sec=intent_timeout,
-            model_override=intent_model,
-            base_url_override=intent_base,
-        )
-        small = model.bind(max_tokens=200, temperature=0)
-        body = (text or "").strip()[:12000]
-        sys = (
-            "Ты классификатор запроса пользователя к оркестратору AI-команды. "
-            "Ответь ТОЛЬКО одним JSON-объектом, без markdown и без текста вокруг:\n"
-            '{"execution_change": <true|false>}\n\n'
-            "execution_change=true — пользователь ожидает реальных операций на инфраструктуре: правки уже "
-            "развёрнутого, деплой, команды на сервере, SSH/kubectl/ansible, проверка живого окружения; "
-            "нельзя обойтись одним текстовым планом.\n"
-            "execution_change=false — новый продукт/MVP, идеи, архитектура, фичи с нуля, графики/бэкенд/админка "
-            "как функциональные требования без акцента на «почини прод сейчас».\n"
-            "При сомнении выбери false."
-        )
-        resp = small.invoke(
-            [
-                SystemMessage(content=sys),
-                HumanMessage(content=f"Сообщение пользователя:\n{body}"),
-            ]
-        )
-        content = resp.content if isinstance(resp.content, str) else str(resp.content)
-        return _parse_execution_change_llm_payload(content)
-    except Exception:
-        return None
-
-
-def _looks_like_execution_change_request(text: str) -> bool:
-    """Нужен ли «режим исполнения» (инструменты/инфра): сначала LLM, иначе эвристика.
-
-    LLM отключается: AGENT_EXEC_INTENT_USE_LLM=0. Сбой LLM → fallback на эвристику.
-    """
-    use_llm = os.getenv("AGENT_EXEC_INTENT_USE_LLM", "1").strip().lower() not in ("0", "false", "no", "off", "")
-    if use_llm:
-        llm = _classify_execution_change_llm(text)
-        if llm is not None:
-            return llm
-    return _execution_change_request_heuristic(text)
 
 
 def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
@@ -758,8 +687,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         step_output_repeats: dict[str, int] = {}
         role_execution_evidence: dict[str, dict[str, Any]] = {}
         dag_layers = _active_dag_layers()
-        # До intake не вызываем LLM-классификатор — иначе UI «висит» на маршрутизации (два LLM подряд).
-        # Значение выставляется после intake (новый прогон) или в начале resume (без повторного intake).
+        # Режим «живого» исполнения (граф/инструменты на планах): из JSON шагов pm/architect (live_execution),
+        # либо при resume — по факту execution_tasks / текущему шагу; отдельного LLM после intake нет.
         role_execution_mode = False
         for s in prev_steps:
             if not isinstance(s, dict):
@@ -1130,7 +1059,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             debug_hint: str = "",
         ) -> tuple[bool, str | None, str | None, bool]:
             """Последний bool: halt_pipeline — остановить прогон (ожидание ответа пользователя)."""
-            nonlocal execution_ctx
+            nonlocal execution_ctx, role_execution_mode
             label, _task = STEP_META.get(step_key, (step_key, ""))
             step_invocations[step_key] = step_invocations.get(step_key, 0) + 1
             if step_invocations[step_key] > MAX_STEP_INVOCATIONS_PER_RUN:
@@ -1293,6 +1222,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     if apply_structured:
                         env, _fb = parse_step_envelope(text)
                         if env:
+                            if env.live_execution is True:
+                                role_execution_mode = True
                             peer_responses: list[dict[str, Any]] = []
                             if env.peer_queries:
                                 peer_parts: list[str] = []
@@ -1588,7 +1519,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             team_patch_run(run_id, status="done", phase="done")
 
         if resume_from_paused:
-            role_execution_mode = _looks_like_execution_change_request(user_message)
+            etasks_raw = existing_run.get("execution_tasks")
+            etasks = etasks_raw if isinstance(etasks_raw, list) else []
+            role_execution_mode = bool(etasks) or paused_step_key in (
+                "devops_plan",
+                "backend_plan",
+                "frontend_plan",
+                "execution_plan",
+                "implementation",
+                "deploy",
+            )
             prev_status_map: dict[str, str] = {
                 str(s.get("step_key") or ""): str(s.get("status") or "")
                 for s in prev_steps
@@ -1712,15 +1652,17 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
-        role_execution_mode = _looks_like_execution_change_request(user_message)
         route = parse_orchestration_route(intake_text or "")
         team_patch_run(run_id, architecture_json={"orchestration_route": route})
         if route.get("mode") == "direct" and route.get("primary_role"):
             tail, specialist_key = pipeline_for_direct(route["primary_role"])
             if tail and specialist_key:
-                direct_with_execution = (
-                    specialist_key in ("devops_plan", "backend_plan", "frontend_plan") and role_execution_mode
-                )
+                direct_routing_text = (original_user_message or incoming_message).strip()
+                direct_with_execution = specialist_key in (
+                    "devops_plan",
+                    "backend_plan",
+                    "frontend_plan",
+                ) and _execution_change_request_heuristic(direct_routing_text)
                 if direct_with_execution:
                     keep = {
                         specialist_key,

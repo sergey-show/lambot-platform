@@ -409,12 +409,7 @@ services:
       OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
       # ReAct LangGraph: шаги графа (вызов инструмента + ответ считаются как шаги). По умолчанию было 25 — часто мало.
       LANGGRAPH_RECURSION_LIMIT: ${LANGGRAPH_RECURSION_LIMIT:-100}
-      # Классификация «execution vs greenfield» через LLM (1) или только эвристика (0).
-      AGENT_EXEC_INTENT_USE_LLM: ${AGENT_EXEC_INTENT_USE_LLM:-1}
-      AGENT_EXEC_INTENT_LLM_TIMEOUT_SEC: ${AGENT_EXEC_INTENT_LLM_TIMEOUT_SEC:-25}
-      # Опционально: отдельная модель / URL для короткого классификатора (разгрузить основной LLM-хост).
-      AGENT_EXEC_INTENT_MODEL: ${AGENT_EXEC_INTENT_MODEL:-}
-      AGENT_EXEC_INTENT_OPENAI_BASE_URL: ${AGENT_EXEC_INTENT_OPENAI_BASE_URL:-}
+      # Режим «живого» исполнения: JSON pm/architect (live_execution), resume по execution_tasks; отдельного LLM-классификатора после intake нет.
       AGENT_ORCHESTRATION_MAX_SECONDS: ${AGENT_ORCHESTRATION_MAX_SECONDS:-10800}
       AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS: ${AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS:-7200}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
