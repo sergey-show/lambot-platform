@@ -34,6 +34,7 @@ from services.agent_graph_service.execution_plan_parse import (
     wait_for_ai_team_execution_tasks,
 )
 from services.agent_graph_service.execution_publish import fetch_project_tenant_id, publish_ai_team_execution_tasks
+from services.agent_graph_service import langfuse_tracing
 from services.agent_graph_service.graph_runner import invoke_graph
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.redis_team import cache_latest_run_id
@@ -700,7 +701,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             ev = structured.get("role_execution_evidence") if isinstance(structured, dict) else None
             if isinstance(ev, dict):
                 role_execution_evidence[key] = ev
-        
+
+        def _lf_cfg() -> dict[str, Any]:
+            return langfuse_tracing.invoke_config(orchestration_run_id=run_id)
+
         def _accumulated_md(extra: dict[str, str] | None = None) -> str:
             merged = dict(accumulated)
             if extra:
@@ -741,7 +745,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 [
                     SystemMessage(content=system_peer),
                     HumanMessage(content="Дай ответ коллеге для продолжения пайплайна."),
-                ]
+                ],
+                config=_lf_cfg(),
             )
             out = resp.content if isinstance(resp.content, str) else str(resp.content)
             return (out or "").strip()
@@ -1006,7 +1011,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     "Шаг 2: сделай анализ текущего состояния по фактам. "
                     "Не придумывай факты, пути файлов и результаты."
                 )
-                graph_result = invoke_graph(project_id, analysis_prompt)
+                graph_result = invoke_graph(project_id, analysis_prompt, orchestration_run_id=run_id)
                 analysis_text = _extract_graph_text(graph_result)
                 if not analysis_text:
                     return (
@@ -1027,11 +1032,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         )
                     ),
                 ]
-                resp = model.invoke(final_messages)
+                resp = model.invoke(final_messages, config=_lf_cfg())
                 text = resp.content if isinstance(resp.content, str) else str(resp.content)
                 return _sanitize_model_text(text)
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
-                graph_result = invoke_graph(project_id, user_message)
+                graph_result = invoke_graph(project_id, user_message, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
                 text = _extract_graph_text(graph_result)
                 if not text:
@@ -1046,7 +1051,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 HumanMessage(content=human_content),
             ]
             invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0) if step_key == "intake" else model
-            resp = invoker.invoke(messages)
+            resp = invoker.invoke(messages, config=_lf_cfg())
             text = resp.content if isinstance(resp.content, str) else str(resp.content)
             return _sanitize_model_text(text)
 
@@ -1782,6 +1787,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         _finalize_success()
     except Exception as exc:
         team_patch_run(run_id, status="error", error=str(exc), phase="failed")
+    finally:
+        langfuse_tracing.flush()
 
 
 def get_run(run_id: str) -> dict[str, Any] | None:

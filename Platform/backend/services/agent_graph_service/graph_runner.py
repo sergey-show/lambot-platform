@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.prebuilt import create_react_agent
 
+from services.agent_graph_service import langfuse_tracing
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.platform_tools import build_platform_tools
 
@@ -75,19 +76,23 @@ def invoke_graph(
     project_id: UUID,
     user_message: str,
     history: list[dict[str, str]] | None = None,
+    *,
+    orchestration_run_id: str | None = None,
 ) -> dict[str, Any]:
     graph = build_agent_graph(project_id)
     msgs = _history_to_messages(history)
     msgs.append(HumanMessage(content=user_message.strip()))
-    result = graph.invoke(
-        {"messages": msgs},
-        config={"recursion_limit": _react_recursion_limit()},
-    )
-    messages = result.get("messages") or []
-    return {
-        "messages": _serialize_messages(messages),
-        "final_message": _last_ai_text(messages),
-    }
+    cfg: dict[str, Any] = {"recursion_limit": _react_recursion_limit()}
+    cfg.update(langfuse_tracing.invoke_config(orchestration_run_id=orchestration_run_id))
+    try:
+        result = graph.invoke({"messages": msgs}, config=cfg)
+        messages = result.get("messages") or []
+        return {
+            "messages": _serialize_messages(messages),
+            "final_message": _last_ai_text(messages),
+        }
+    finally:
+        langfuse_tracing.flush()
 
 
 def _serialize_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
