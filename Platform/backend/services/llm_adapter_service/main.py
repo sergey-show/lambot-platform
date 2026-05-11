@@ -11,6 +11,7 @@ from shared.contracts.api import (
     LlmGenerateRequest,
     LlmGenerateResponse,
 )
+from services.agent_graph_service import langfuse_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -77,31 +78,77 @@ def _resolve_base_and_key(cfg: dict[str, Any] | None) -> tuple[str, str | None]:
     return base_url, api_key
 
 
+def _get_langfuse_client():
+    """Ленивая и опциональная инициализация Langfuse SDK для трассировки llm-adapter."""
+    if not langfuse_tracing.enabled():
+        return None
+    try:
+        from langfuse import get_client
+
+        return get_client()
+    except Exception:
+        logger.exception("langfuse client init failed in llm-adapter")
+        return None
+
+
 @app.post("/api/v1/llm/generate", response_model=LlmGenerateResponse)
 def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
     cfg = _fetch_settings_from_admin()
     base_url, api_key = _resolve_base_and_key(cfg)
     model = _resolve_chat_model(cfg, request)
+    lf = _get_langfuse_client()
+    observation = None
+    if lf is not None:
+        try:
+            observation = lf.start_as_current_observation(
+                as_type="generation",
+                name="llm-adapter.generate",
+                model=model,
+                input={"prompt": request.prompt, "temperature": request.temperature, "base_url": base_url},
+            )
+        except Exception:
+            logger.exception("langfuse start_as_current_observation failed in generate")
+            observation = None
 
-    if not api_key:
-        return LlmGenerateResponse(
-            output=f"[MOCK LLM OUTPUT] {request.prompt[:300]}",
-            provider="mock",
-        )
+    try:
+        if not api_key:
+            output = f"[MOCK LLM OUTPUT] {request.prompt[:300]}"
+            if observation is not None:
+                try:
+                    observation.update(
+                        output={"output": output, "provider": "mock", "model": model, "base_url": base_url}
+                    )
+                except Exception:
+                    logger.exception("langfuse update failed in generate (mock)")
+            return LlmGenerateResponse(output=output, provider="mock")
 
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": request.prompt}],
-        "temperature": request.temperature,
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    with httpx.Client(timeout=120.0) as client:
-        response = client.post(f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        body = response.json()
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": request.prompt}],
+            "temperature": request.temperature,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
 
-    content = body["choices"][0]["message"]["content"]
-    return LlmGenerateResponse(output=content, provider="openai-compatible")
+        content = body["choices"][0]["message"]["content"]
+        if observation is not None:
+            try:
+                observation.update(
+                    output={"output": content, "provider": "openai-compatible", "model": model, "base_url": base_url}
+                )
+            except Exception:
+                logger.exception("langfuse update failed in generate (real)")
+        return LlmGenerateResponse(output=content, provider="openai-compatible")
+    finally:
+        if observation is not None:
+            try:
+                # Закрываем наблюдение, если создавали его без with.
+                observation.__exit__(None, None, None)
+            except Exception:
+                logger.exception("langfuse observation close failed in generate")
 
 
 @app.post("/api/v1/llm/embed", response_model=LlmEmbedResponse)
@@ -109,22 +156,66 @@ def embed(request: LlmEmbedRequest) -> LlmEmbedResponse:
     cfg = _fetch_settings_from_admin()
     base_url, api_key = _resolve_base_and_key(cfg)
     model = _resolve_embedding_model(cfg, request.model)
+    lf = _get_langfuse_client()
+    observation = None
+    if lf is not None:
+        try:
+            observation = lf.start_as_current_observation(
+                as_type="generation",
+                name="llm-adapter.embed",
+                model=model,
+                input={"input": request.input, "base_url": base_url},
+            )
+        except Exception:
+            logger.exception("langfuse start_as_current_observation failed in embed")
+            observation = None
 
-    if not api_key:
-        fake = [[0.0, 0.0, 0.0, 0.0]]
-        if isinstance(request.input, list) and len(request.input) > 1:
-            fake = [list(fake[0]) for _ in request.input]
-        return LlmEmbedResponse(embeddings=fake, model="mock-embedding", provider="mock")
+    try:
+        if not api_key:
+            fake = [[0.0, 0.0, 0.0, 0.0]]
+            if isinstance(request.input, list) and len(request.input) > 1:
+                fake = [list(fake[0]) for _ in request.input]
+            if observation is not None:
+                try:
+                    observation.update(
+                        output={
+                            "embeddings_count": len(fake),
+                            "model": "mock-embedding",
+                            "provider": "mock",
+                            "base_url": base_url,
+                        }
+                    )
+                except Exception:
+                    logger.exception("langfuse update failed in embed (mock)")
+            return LlmEmbedResponse(embeddings=fake, model="mock-embedding", provider="mock")
 
-    payload: dict[str, Any] = {"model": model, "input": request.input}
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    with httpx.Client(timeout=120.0) as client:
-        response = client.post(f"{base_url.rstrip('/')}/embeddings", headers=headers, json=payload)
-        response.raise_for_status()
-        body = response.json()
+        payload: dict[str, Any] = {"model": model, "input": request.input}
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(f"{base_url.rstrip('/')}/embeddings", headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
 
-    data = body.get("data") or []
-    ordered = sorted(data, key=lambda x: x.get("index", 0))
-    embeddings = [item["embedding"] for item in ordered]
-    used = str(body.get("model") or model)
-    return LlmEmbedResponse(embeddings=embeddings, model=used, provider="openai-compatible")
+        data = body.get("data") or []
+        ordered = sorted(data, key=lambda x: x.get("index", 0))
+        embeddings = [item["embedding"] for item in ordered]
+        used = str(body.get("model") or model)
+        if observation is not None:
+            try:
+                observation.update(
+                    output={
+                        "embeddings_count": len(embeddings),
+                        "model": used,
+                        "provider": "openai-compatible",
+                        "base_url": base_url,
+                    }
+                )
+            except Exception:
+                logger.exception("langfuse update failed in embed (real)")
+        return LlmEmbedResponse(embeddings=embeddings, model=used, provider="openai-compatible")
+    finally:
+        if observation is not None:
+            try:
+                observation.__exit__(None, None, None)
+            except Exception:
+                logger.exception("langfuse observation close failed in embed")

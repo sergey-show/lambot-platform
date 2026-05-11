@@ -287,6 +287,11 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ADMIN_SERVICE_URL: http://admin-service:8006
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
     depends_on:
       admin-service:
         condition: service_started
@@ -407,7 +412,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
-      # Langfuse: дефолты в compose (без .env). Профиль langfuse + этот URL = трейсы. Облако: переопределите LANGFUSE_HOST/LANGFUSE_* в окружении shell/CI.
+      # Langfuse: LANGFUSE_TRACING_ENABLED=0 выключает SDK; по умолчанию 1.
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}

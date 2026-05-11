@@ -7,7 +7,15 @@ import uuid
 from typing import Any
 
 
+def _tracing_disabled_by_flag() -> bool:
+    """LANGFUSE_TRACING_ENABLED=0|false|no|off — явно выключить (остальные значения / пусто = не блокируем)."""
+    v = os.getenv("LANGFUSE_TRACING_ENABLED", "").strip().lower()
+    return v in ("0", "false", "no", "off")
+
+
 def enabled() -> bool:
+    if _tracing_disabled_by_flag():
+        return False
     pub = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
     sec = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
     if not pub or not sec:
