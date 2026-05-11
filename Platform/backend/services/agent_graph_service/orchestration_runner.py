@@ -422,7 +422,15 @@ def _classify_execution_change_llm(text: str) -> bool | None:
     if not (text or "").strip():
         return False
     try:
-        model = build_chat_model(purpose="default")
+        intent_timeout = float(os.getenv("AGENT_EXEC_INTENT_LLM_TIMEOUT_SEC", "25"))
+        intent_model = os.getenv("AGENT_EXEC_INTENT_MODEL", "").strip() or None
+        intent_base = os.getenv("AGENT_EXEC_INTENT_OPENAI_BASE_URL", "").strip() or None
+        model = build_chat_model(
+            purpose="default",
+            timeout_sec=intent_timeout,
+            model_override=intent_model,
+            base_url_override=intent_base,
+        )
         small = model.bind(max_tokens=200, temperature=0)
         body = (text or "").strip()[:12000]
         sys = (
@@ -609,10 +617,10 @@ def _active_dag_layers() -> tuple[tuple[str, ...], ...]:
     return FULL_DAG_LAYERS
 
 
-def _should_force_tool_analysis(step_key: str, user_message: str) -> bool:
+def _should_force_tool_analysis(step_key: str, execution_change: bool) -> bool:
     if step_key not in ("devops_plan", "backend_plan", "frontend_plan"):
         return False
-    return _looks_like_execution_change_request(user_message)
+    return execution_change
 
 
 def _build_system(
@@ -750,7 +758,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         step_output_repeats: dict[str, int] = {}
         role_execution_evidence: dict[str, dict[str, Any]] = {}
         dag_layers = _active_dag_layers()
-        role_execution_mode = _looks_like_execution_change_request(user_message)
+        # До intake не вызываем LLM-классификатор — иначе UI «висит» на маршрутизации (два LLM подряд).
+        # Значение выставляется после intake (новый прогон) или в начале resume (без повторного intake).
+        role_execution_mode = False
         for s in prev_steps:
             if not isinstance(s, dict):
                 continue
@@ -1059,7 +1069,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if step_key == "intake"
                 else f"Выполни шаг «{label}» ({step_key})."
             )
-            if _should_force_tool_analysis(step_key, user_message):
+            if _should_force_tool_analysis(step_key, role_execution_mode):
                 analysis_prompt = (
                     f"{user_message}\n\n"
                     "Это задача изменения существующего проекта. "
@@ -1145,7 +1155,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 run_now = team_get_run(run_id) or {}
                 blockers_now = _execution_blockers(run_now)
                 real_work_issues = (
-                    _execution_real_work_issues(run_now) if _looks_like_execution_change_request(user_message) else []
+                    _execution_real_work_issues(run_now) if role_execution_mode else []
                 )
                 if blockers_now:
                     lines = []
@@ -1356,7 +1366,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 parsed = default_execution_tasks_if_empty(ctx)
                             if PLAN_MAX_TASKS_PER_ITER > 0:
                                 parsed = parsed[:PLAN_MAX_TASKS_PER_ITER]
-                            if _looks_like_execution_change_request(user_message) and parsed and not _has_executable_execution_tasks(parsed):
+                            if role_execution_mode and parsed and not _has_executable_execution_tasks(parsed):
                                 recheck_hint = (
                                     "Self-check: в батче нет исполнимых задач "
                                     "(ssh_run_command|kubernetes_query|ansible_run_template) для запроса на правку. "
@@ -1578,6 +1588,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             team_patch_run(run_id, status="done", phase="done")
 
         if resume_from_paused:
+            role_execution_mode = _looks_like_execution_change_request(user_message)
             prev_status_map: dict[str, str] = {
                 str(s.get("step_key") or ""): str(s.get("status") or "")
                 for s in prev_steps
@@ -1701,14 +1712,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
+        role_execution_mode = _looks_like_execution_change_request(user_message)
         route = parse_orchestration_route(intake_text or "")
         team_patch_run(run_id, architecture_json={"orchestration_route": route})
         if route.get("mode") == "direct" and route.get("primary_role"):
             tail, specialist_key = pipeline_for_direct(route["primary_role"])
             if tail and specialist_key:
                 direct_with_execution = (
-                    specialist_key in ("devops_plan", "backend_plan", "frontend_plan")
-                    and _looks_like_execution_change_request(user_message)
+                    specialist_key in ("devops_plan", "backend_plan", "frontend_plan") and role_execution_mode
                 )
                 if direct_with_execution:
                     keep = {
