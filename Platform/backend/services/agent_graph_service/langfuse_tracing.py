@@ -28,8 +28,11 @@ def enabled() -> bool:
 
 
 def stable_trace_id_for_run(run_id: str) -> str:
-    """Детерминированный trace_id: все вызовы одного AI-team run склеиваются в один trace."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}"))
+    """Детерминированный trace_id: 32 lowercase hex (W3C / Langfuse), без дефисов.
+
+    Langfuse SDK парсит trace_id как int(..., 16) — строка UUID с дефисами недопустима.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}").hex
 
 
 def invoke_config(*, orchestration_run_id: str | None = None) -> dict[str, Any]:
