@@ -386,36 +386,40 @@ def _stream_chat_then_sanitize(
     stream: bool = True,
 ) -> str:
     """Стримит ответ в output_md шага (троттлинг) для live UI; fallback — invoke."""
-    prompt_preview = _messages_prompt_preview(messages)
-    model_label = _lc_model_label(model)
-    _publish_llm_prompt_meta(run_id, step_key, prompt_preview, model_label)
-    throttle: dict[str, Any] = {"last_t": 0.0, "last_len": -1}
-    parts: list[str] = []
-    if not stream:
+    try:
+        prompt_preview = _messages_prompt_preview(messages)
+        model_label = _lc_model_label(model)
+        _publish_llm_prompt_meta(run_id, step_key, prompt_preview, model_label)
+        throttle: dict[str, Any] = {"last_t": 0.0, "last_len": -1}
+        parts: list[str] = []
+        if not stream:
+            try:
+                resp = model.invoke(messages, config=config)
+                raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+                text = _sanitize_model_text(raw)
+                _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
+                return text
+            except Exception:
+                pass
         try:
+            for chunk in model.stream(messages, config=config):
+                piece = _chunk_to_text(chunk)
+                if not piece:
+                    continue
+                parts.append(piece)
+                _patch_step_streaming_output(run_id, step_key, "".join(parts), throttle)
+        except Exception:
             resp = model.invoke(messages, config=config)
             raw = resp.content if isinstance(resp.content, str) else str(resp.content)
             text = _sanitize_model_text(raw)
             _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
             return text
-        except Exception:
-            pass
-    try:
-        for chunk in model.stream(messages, config=config):
-            piece = _chunk_to_text(chunk)
-            if not piece:
-                continue
-            parts.append(piece)
-            _patch_step_streaming_output(run_id, step_key, "".join(parts), throttle)
-    except Exception:
-        resp = model.invoke(messages, config=config)
-        raw = resp.content if isinstance(resp.content, str) else str(resp.content)
-        text = _sanitize_model_text(raw)
+        text = _sanitize_model_text("".join(parts))
         _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
         return text
-    text = _sanitize_model_text("".join(parts))
-    _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
-    return text
+    finally:
+        if langfuse_tracing.enabled():
+            langfuse_tracing.flush()
 
 
 def _extract_graph_text(graph_result: dict[str, Any]) -> str:
@@ -904,8 +908,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             if isinstance(ev, dict):
                 role_execution_evidence[key] = ev
 
-        def _lf_cfg() -> dict[str, Any]:
-            return langfuse_tracing.invoke_config(orchestration_run_id=run_id)
+        def _lf_cfg(*, obs_step_key: str | None = None) -> dict[str, Any]:
+            return langfuse_tracing.invoke_config(orchestration_run_id=run_id, step_key=obs_step_key)
 
         def _accumulated_md(extra: dict[str, str] | None = None) -> str:
             merged = dict(accumulated)
@@ -972,7 +976,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     SystemMessage(content=system_peer),
                     HumanMessage(content="Дай ответ коллеге для продолжения пайплайна."),
                 ],
-                _lf_cfg(),
+                _lf_cfg(obs_step_key=f"peer:{peer_step}"),
                 run_id=run_id,
                 step_key=requester_step,
             )
@@ -1281,7 +1285,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     ),
                 ]
                 return _stream_chat_then_sanitize(
-                    model, final_messages, _lf_cfg(), run_id=run_id, step_key=step_key
+                    model, final_messages, _lf_cfg(obs_step_key=step_key), run_id=run_id, step_key=step_key
                 )
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
                 graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{user_message}"
@@ -1321,7 +1325,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             return _stream_chat_then_sanitize(
                 invoker,
                 messages,
-                _lf_cfg(),
+                _lf_cfg(obs_step_key=step_key),
                 run_id=run_id,
                 step_key=step_key,
                 stream=stream_intake,

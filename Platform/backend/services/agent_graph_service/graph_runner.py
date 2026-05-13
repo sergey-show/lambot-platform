@@ -83,7 +83,7 @@ def invoke_graph(
     msgs = _history_to_messages(history)
     msgs.append(HumanMessage(content=user_message.strip()))
     cfg: dict[str, Any] = {"recursion_limit": _react_recursion_limit()}
-    cfg.update(langfuse_tracing.invoke_config(orchestration_run_id=orchestration_run_id))
+    cfg.update(langfuse_tracing.invoke_config(orchestration_run_id=orchestration_run_id, step_key="langgraph_react"))
     try:
         result = graph.invoke({"messages": msgs}, config=cfg)
         messages = result.get("messages") or []

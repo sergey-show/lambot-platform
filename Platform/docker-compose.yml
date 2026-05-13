@@ -411,6 +411,8 @@ services:
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      # LangChain → llm-adapter /v1/chat/completions → провайдер: каждый LLM-вызов в Langfuse (input/output).
+      AGENT_GRAPH_OPENAI_BASE_URL: ${AGENT_GRAPH_OPENAI_BASE_URL:-http://llm-adapter-service:8005/v1}
       OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
       # Langfuse: LANGFUSE_TRACING_ENABLED=0 выключает SDK; по умолчанию 1.
       LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}

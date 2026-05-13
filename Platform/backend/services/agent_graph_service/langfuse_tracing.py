@@ -35,12 +35,22 @@ def stable_trace_id_for_run(run_id: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}").hex
 
 
-def invoke_config(*, orchestration_run_id: str | None = None) -> dict[str, Any]:
+def invoke_config(
+    *,
+    orchestration_run_id: str | None = None,
+    step_key: str | None = None,
+) -> dict[str, Any]:
     """
     Возвращает RunnableConfig для model.invoke / graph.invoke.
-    orchestration_run_id: id run AI-команды — общий trace в Langfuse.
+    orchestration_run_id: id run AI-команды — общий trace в Langfuse (trace_id детерминирован).
+    step_key: тег/metadata для фильтрации в UI Langfuse.
+
+    Если задан AGENT_GRAPH_OPENAI_BASE_URL, LangChain ходит в llm-adapter /v1/chat/completions, где уже
+    пишется generation в Langfuse — CallbackHandler отключаем, чтобы не дублировать события.
     """
     if not enabled():
+        return {}
+    if (os.getenv("AGENT_GRAPH_OPENAI_BASE_URL") or "").strip():
         return {}
     try:
         from langfuse import get_client
@@ -61,7 +71,17 @@ def invoke_config(*, orchestration_run_id: str | None = None) -> dict[str, Any]:
             h = CallbackHandler()
     except TypeError:
         h = CallbackHandler()
-    return {"callbacks": [h]}
+    meta: dict[str, Any] = {"langfuse_tags": ["agent-graph"]}
+    if orchestration_run_id:
+        meta["langfuse_session_id"] = orchestration_run_id
+        meta["orchestration_run_id"] = orchestration_run_id
+    if step_key:
+        meta["langfuse_tags"] = [*meta["langfuse_tags"], f"step:{step_key}"]
+        meta["step_key"] = step_key
+    out: dict[str, Any] = {"callbacks": [h], "metadata": meta}
+    if orchestration_run_id and step_key:
+        out["run_name"] = f"orch:{step_key}"
+    return out
 
 
 def flush() -> None:

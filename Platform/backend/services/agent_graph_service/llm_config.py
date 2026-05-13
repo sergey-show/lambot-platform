@@ -38,8 +38,11 @@ def build_chat_model(
     timeout_sec: переопределение HTTP-таймаута для коротких вызовов (классификаторы и т.п.).
     model_override: явное имя модели (например лёгкая для классификатора intent).
     base_url_override: другой OpenAI-compatible endpoint (отдельный vLLM под нагрузкой).
+    Если задан AGENT_GRAPH_OPENAI_BASE_URL (и нет base_url_override) — после admin подставляется
+    прокси (например llm-adapter /v1) для логирования каждого chat/completions в Langfuse.
     """
     base_url = (base_url_override or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip()
+    proxy_base = (os.getenv("AGENT_GRAPH_OPENAI_BASE_URL") or "").strip()
     api_key = os.getenv("OPENAI_API_KEY") or "dummy"
     default_model = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
     coding_model = os.getenv("OPENAI_CODING_MODEL", "").strip()
@@ -53,6 +56,8 @@ def build_chat_model(
             coding_model = cm.strip()
         if cfg.get("api_key"):
             api_key = cfg["api_key"]
+    if proxy_base and not base_url_override:
+        base_url = proxy_base.rstrip("/")
     if model_override and str(model_override).strip():
         model = str(model_override).strip()
     else:
