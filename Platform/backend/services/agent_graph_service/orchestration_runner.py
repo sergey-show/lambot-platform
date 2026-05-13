@@ -145,12 +145,23 @@ STEP_EXTRA: dict[str, str] = {
         "Финальный отчёт для заказчика без технического бэкграунда: что получилось, как попробовать продукт. "
         "URL, логины и пароли указывай ТОЛЬКО если они явно есть в контексте проекта ниже; иначе — честно напиши, "
         "что учётные данные нужно получить у администратора или завести в используемом репозитории/на сервере. "
-        "Не добавляй фиктивные фразы «успешно развернули», если предыдущие шаги содержат ошибки."
+        "Не добавляй фиктивные фразы «успешно развернули», если предыдущие шаги содержат ошибки.\n\n"
+        "Блок «Накопленные результаты шагов» содержит только итоги ролей (PM, архитектор, планы ролей, QA) — без сырого "
+        "JSON планов исполнения и без длинных отчётов implementation/deploy; при большом объёме текст обрезан. "
+        "Блок «Факты исполнения» — краткий список задач воркеров (название, вид действия, статус, краткая ошибка), без полных логов."
     ),
 }
 
 STEP_META: dict[str, tuple[str, str]] = {k: (lbl, task) for k, lbl, task in DEFAULT_PIPELINE}
 STEP_ORDER: dict[str, int] = {k: i for i, (k, _lbl, _task) in enumerate(DEFAULT_PIPELINE)}
+# Только narrative-шаги ролей для финального отчёта (без execution_plan / implementation / deploy).
+PM_SUMMARY_SOURCE_STEP_KEYS = frozenset(
+    {"pm", "architect", "devops_plan", "backend_plan", "frontend_plan", "qa_validation"}
+)
+PM_SUMMARY_STEP_BODY_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_STEP_MAX_CHARS", "28000"))
+PM_SUMMARY_CTX_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_CTX_MAX_CHARS", "10000"))
+PM_SUMMARY_DOCS_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_DOCS_MAX_CHARS", "8000"))
+PM_SUMMARY_EXEC_COMPACT_MAX = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_EXEC_COMPACT_MAX", "12000"))
 DIRECT_TOOL_STEPS = frozenset({"devops_plan", "backend_plan", "frontend_plan", "qa_validation"})
 # Модель «для кода» из настроек платформы (coding_model) — только для инженерных шагов.
 CODING_MODEL_STEPS = frozenset(
@@ -441,7 +452,33 @@ def _ctx_trim(ctx: str, max_chars: int) -> str:
     c = (ctx or "").strip()
     if len(c) <= max_chars:
         return c
-    return c[:max_chars] + "\n… [контекст обрезан для шага маршрутизации]"
+    return c[:max_chars] + "\n… [обрезано по лимиту символов]"
+
+
+def _compact_execution_tasks_summary(run_obj: dict[str, Any] | None) -> str:
+    """Краткая сводка execution_tasks для pm_summary — без полных payload и логов."""
+    if not run_obj or not isinstance(run_obj, dict):
+        return "(нет данных execution_tasks)"
+    tasks_raw = run_obj.get("execution_tasks")
+    tasks = tasks_raw if isinstance(tasks_raw, list) else []
+    if not tasks:
+        return "(исполняемых задач нет)"
+    lines: list[str] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        title = str(t.get("title") or "—")[:160]
+        ak = str(t.get("action_kind") or "—")[:48]
+        st = str(t.get("status") or "—")
+        err = str(t.get("error") or "").strip()
+        line = f"- {title} · {ak} · {st}"
+        if err:
+            line += f" · {err[:240]}"
+        lines.append(line)
+    out = "\n".join(lines)
+    if len(out) > PM_SUMMARY_EXEC_COMPACT_MAX:
+        out = out[:PM_SUMMARY_EXEC_COMPACT_MAX] + "\n… [список задач обрезан]"
+    return out
 
 
 def _execution_change_request_heuristic(text: str) -> bool:
@@ -883,6 +920,29 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 chunks.append(f"### {label}\n{merged[k]}")
             return "\n\n".join(chunks)
 
+        def _accumulated_md_agent_steps_only(extra: dict[str, str] | None = None) -> str:
+            """Для pm_summary: только выводы ролевых шагов, без execution_plan/implementation/deploy и без раздувания."""
+            merged = {k: v for k, v in accumulated.items() if k in PM_SUMMARY_SOURCE_STEP_KEYS}
+            if extra:
+                for ek, ev in extra.items():
+                    if ek in PM_SUMMARY_SOURCE_STEP_KEYS:
+                        merged[ek] = ev
+            if not merged:
+                return ""
+            keys = sorted(merged.keys(), key=lambda k: STEP_ORDER.get(k, 999))
+            cap = PM_SUMMARY_STEP_BODY_MAX_CHARS
+            chunks: list[str] = []
+            for k in keys:
+                label, _task = STEP_META.get(k, (k, ""))
+                body = str(merged.get(k) or "").strip()
+                if len(body) > cap:
+                    body = (
+                        body[:cap]
+                        + "\n\n… [вывод шага обрезан для финального отчёта; полный текст в панели оркестрации]"
+                    )
+                chunks.append(f"### {label}\n{body}")
+            return "\n\n".join(chunks)
+
         def _consult_peer(role: str, question: str, requester_step: str) -> str:
             role_l = (role or "").strip().lower()
             peer_step = PRIMARY_ROLE_TO_STEP.get(role_l)
@@ -1152,16 +1212,29 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 docs_ctx = fetch_documents_context_summary(pid, user_message)
             if step_key != "intake" and not infra_restrictions:
                 infra_restrictions = _infer_infra_restrictions(ctx)
+            acc_for_system = acc_override if acc_override is not None else _accumulated_md()
+            exec_for_system = execution_ctx
+            ctx_for_system = ctx
+            docs_for_system = docs_ctx
+            infra_for_system = infra_restrictions
+            if step_key == "pm_summary":
+                acc_for_system = acc_override if acc_override is not None else _accumulated_md_agent_steps_only()
+                run_now = team_get_run(run_id) or {}
+                exec_for_system = _compact_execution_tasks_summary(run_now)
+                ctx_for_system = _ctx_trim(ctx, PM_SUMMARY_CTX_MAX_CHARS)
+                docs_for_system = _ctx_trim(docs_ctx, PM_SUMMARY_DOCS_MAX_CHARS)
+                if infra_restrictions:
+                    infra_for_system = _ctx_trim(infra_restrictions, 6000)
             system_full = _build_system(
                 step_key,
                 role_prompt,
-                ctx,
-                docs_ctx,
-                acc_override if acc_override is not None else _accumulated_md(),
+                ctx_for_system,
+                docs_for_system,
+                acc_for_system,
                 user_message,
-                execution_ctx=execution_ctx,
+                execution_ctx=exec_for_system,
                 direct_answer=direct_answer,
-                infra_restrictions=infra_restrictions,
+                infra_restrictions=infra_for_system,
             )
             if debug_hint:
                 system_full += f"\n\n---\nСовместная отладка между ролями:\n{debug_hint}"
