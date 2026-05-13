@@ -1657,6 +1657,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
+        # Ранний flush: intake виден в Langfuse без ожидания конца всего пайплайна.
+        langfuse_tracing.flush()
         route = parse_orchestration_route(intake_text or "")
         team_patch_run(run_id, architecture_json={"orchestration_route": route})
         if route.get("mode") == "direct" and route.get("primary_role"):

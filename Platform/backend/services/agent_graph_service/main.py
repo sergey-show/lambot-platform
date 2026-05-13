@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from time import monotonic
 from typing import Literal
@@ -18,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from services.agent_graph_service.graph_runner import invoke_graph
+from services.agent_graph_service import langfuse_tracing
 from services.agent_graph_service.orchestration_runner import get_run, run_orchestration_sync
 from services.agent_graph_service.team_client import team_create_run, team_latest_for_project
 
@@ -25,6 +27,17 @@ logger = logging.getLogger("agent_graph")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="agent-graph-service", version="0.1.0")
+
+
+@app.on_event("startup")
+def _log_langfuse_on_startup() -> None:
+    if langfuse_tracing.enabled():
+        base = (os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST") or "").strip()
+        logger.info("langfuse tracing: on, base_url/host=%s", base or "(empty)")
+    else:
+        logger.info(
+            "langfuse tracing: off (LANGFUSE_TRACING_ENABLED или ключи/host; см. LANGFUSE_* в compose)"
+        )
 
 _PHASE_BATCH_RE = re.compile(r"(planning|execution_dispatch)_batch_(\d+)")
 
@@ -71,8 +84,12 @@ class OrchestrationContinueBody(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "runtime": "langgraph"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "runtime": "langgraph",
+        "langfuse_tracing": langfuse_tracing.enabled(),
+    }
 
 
 @app.post("/api/v1/projects/{project_id}/invoke")

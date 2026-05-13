@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _tracing_disabled_by_flag() -> bool:
@@ -26,7 +29,7 @@ def enabled() -> bool:
 
 def stable_trace_id_for_run(run_id: str) -> str:
     """Детерминированный trace_id: все вызовы одного AI-team run склеиваются в один trace."""
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}").hex
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}"))
 
 
 def invoke_config(*, orchestration_run_id: str | None = None) -> dict[str, Any]:
@@ -37,8 +40,16 @@ def invoke_config(*, orchestration_run_id: str | None = None) -> dict[str, Any]:
     if not enabled():
         return {}
     try:
+        from langfuse import get_client
         from langfuse.langchain import CallbackHandler
-    except ImportError:
+    except ImportError as exc:
+        logger.warning("langfuse: CallbackHandler недоступен (%s)", exc)
+        return {}
+    try:
+        # Singleton SDK подхватывает LANGFUSE_* из env; до CallbackHandler — как в доке Langfuse.
+        get_client()
+    except Exception:
+        logger.exception("langfuse: get_client() не инициализировался (проверьте ключи и LANGFUSE_BASE_URL)")
         return {}
     try:
         if orchestration_run_id:
@@ -59,10 +70,10 @@ def flush() -> None:
         get_client().flush()
         return
     except Exception:
-        pass
+        logger.warning("langfuse: flush через get_client() не удался", exc_info=True)
     try:
         from langfuse import Langfuse
 
         Langfuse().flush()
     except Exception:
-        pass
+        logger.warning("langfuse: flush через Langfuse() не удался", exc_info=True)

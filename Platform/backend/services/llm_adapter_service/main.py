@@ -149,6 +149,8 @@ def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
                 observation.__exit__(None, None, None)
             except Exception:
                 logger.exception("langfuse observation close failed in generate")
+        if lf is not None:
+            langfuse_tracing.flush()
 
 
 @app.post("/api/v1/llm/embed", response_model=LlmEmbedResponse)
@@ -219,3 +221,5 @@ def embed(request: LlmEmbedRequest) -> LlmEmbedResponse:
                 observation.__exit__(None, None, None)
             except Exception:
                 logger.exception("langfuse observation close failed in embed")
+        if lf is not None:
+            langfuse_tracing.flush()
