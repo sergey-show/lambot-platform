@@ -1275,13 +1275,17 @@ function renderPortal(): void {
   };
 
   const stopOrchestrationStream = () => {
-    if (orchStreamSocket) {
+    const sock = orchStreamSocket;
+    orchStreamSocket = null;
+    if (sock) {
       try {
-        orchStreamSocket.close();
+        sock.onmessage = null;
+        sock.onerror = null;
+        sock.onclose = null;
+        sock.close();
       } catch {
         /* ignore */
       }
-      orchStreamSocket = null;
     }
     if (orchStreamAbort) {
       try {
@@ -2426,6 +2430,8 @@ function renderPortal(): void {
 
     orchStreamSocket = ws;
 
+    let wsFallbackStarted = false;
+
     ws.onmessage = (evt) => {
       let ev: Record<string, unknown>;
       try {
@@ -2444,10 +2450,11 @@ function renderPortal(): void {
     ws.onclose = () => {
       if (orchStreamSocket !== ws) return;
       orchStreamSocket = null;
-      if (!orchStreamFinished) {
-        appendOrchestrationLiveLog("websocket закрыт, переключение на NDJSON stream");
-        void startOrchestrationNdjsonStream(runId);
-      }
+      if (orchStreamFinished) return;
+      if (wsFallbackStarted) return;
+      wsFallbackStarted = true;
+      appendOrchestrationLiveLog("websocket закрыт, переключение на NDJSON stream");
+      void startOrchestrationNdjsonStream(runId);
     };
   };
 
