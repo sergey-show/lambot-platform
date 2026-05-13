@@ -186,6 +186,10 @@ PLAN_MAX_ITERATIONS = int(os.getenv("AGENT_PLAN_MAX_ITERATIONS", "20"))
 PLAN_BATCH_WAIT_SECONDS = int(os.getenv("AGENT_PLAN_BATCH_WAIT_SECONDS", "900"))
 MAX_PEER_QUERIES = 5
 INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "120"))
+# Маршрутизация intake: не отправляем в LLM весь user_message (длинные вопросы = долгий prompt / дорого).
+INTAKE_USER_MSG_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_MAX_CHARS", "14000"))
+INTAKE_USER_MSG_TAIL_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_TAIL_CHARS", "4000"))
+INTAKE_LLM_TIMEOUT_SEC = float(os.getenv("AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC", "120"))
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
@@ -345,6 +349,22 @@ def _publish_llm_prompt_meta(run_id: str, step_key: str, prompt_preview: str, mo
     team_patch_step(run_id, step_key, status=st, structured=prev)
 
 
+def _truncate_user_message_for_intake(user_message: str) -> str:
+    """Начало + конец длинного запроса: для маршрутизации ролей достаточно оценочного взгляда."""
+    m = (user_message or "").strip()
+    if len(m) <= INTAKE_USER_MSG_MAX_CHARS:
+        return m
+    tail_n = min(max(400, INTAKE_USER_MSG_TAIL_CHARS), INTAKE_USER_MSG_MAX_CHARS // 2)
+    reserve = 220
+    head_n = INTAKE_USER_MSG_MAX_CHARS - tail_n - reserve
+    if head_n < 2000:
+        head_n = INTAKE_USER_MSG_MAX_CHARS - tail_n - 120
+    marker = (
+        f"\n\n---\n[фрагмент опущен: всего символов {len(m)}; для маршрутизации учтены начало и конец запроса]\n---\n\n"
+    )
+    return m[:head_n] + marker + m[-tail_n:]
+
+
 def _stream_chat_then_sanitize(
     model: Any,
     messages: list[Any],
@@ -352,6 +372,7 @@ def _stream_chat_then_sanitize(
     *,
     run_id: str,
     step_key: str,
+    stream: bool = True,
 ) -> str:
     """Стримит ответ в output_md шага (троттлинг) для live UI; fallback — invoke."""
     prompt_preview = _messages_prompt_preview(messages)
@@ -359,6 +380,15 @@ def _stream_chat_then_sanitize(
     _publish_llm_prompt_meta(run_id, step_key, prompt_preview, model_label)
     throttle: dict[str, Any] = {"last_t": 0.0, "last_len": -1}
     parts: list[str] = []
+    if not stream:
+        try:
+            resp = model.invoke(messages, config=config)
+            raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+            text = _sanitize_model_text(raw)
+            _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
+            return text
+        except Exception:
+            pass
     try:
         for chunk in model.stream(messages, config=config):
             piece = _chunk_to_text(chunk)
@@ -701,6 +731,7 @@ def _build_system(
 ) -> str:
     if step_key == "intake":
         extra = STEP_EXTRA.get("intake", "")
+        um = _truncate_user_message_for_intake(user_message)
         return (
             "Ты маршрутизатор запроса к AI-команде. Нужно только определить: полный пайплайн (full) или "
             "ответ одного специалиста (direct) и при direct — какая роль. Не расписывай этапы работ, "
@@ -709,7 +740,7 @@ def _build_system(
             "Для intake запрещено опираться на контекст проекта/документацию — только формулировка запроса пользователя.\n\n"
             "Ответь только JSON orchestration_route. "
             "Не выдумывай факты — опирайся только на формулировку запроса.\n\n"
-            f"Запрос пользователя:\n{user_message.strip()}"
+            f"Запрос пользователя:\n{um}"
         )
 
     extra = STEP_EXTRA.get(step_key, "")
@@ -1197,13 +1228,31 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "Повторите запрос, чтобы агент сформировал финальный вывод из результатов инструментов."
                     )
                 return _sanitize_model_text(text)
-            model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
+            if step_key == "intake":
+                intake_model_override = (os.getenv("AGENT_ORCHESTRATION_INTAKE_MODEL") or "").strip() or None
+                model = build_chat_model(
+                    purpose="default",
+                    timeout_sec=INTAKE_LLM_TIMEOUT_SEC,
+                    model_override=intake_model_override,
+                )
+                invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0)
+                stream_intake = False
+            else:
+                model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
+                invoker = model
+                stream_intake = True
             messages = [
                 SystemMessage(content=system_full),
                 HumanMessage(content=human_content),
             ]
-            invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0) if step_key == "intake" else model
-            return _stream_chat_then_sanitize(invoker, messages, _lf_cfg(), run_id=run_id, step_key=step_key)
+            return _stream_chat_then_sanitize(
+                invoker,
+                messages,
+                _lf_cfg(),
+                run_id=run_id,
+                step_key=step_key,
+                stream=stream_intake,
+            )
 
         def _execute_step(
             step_key: str,
