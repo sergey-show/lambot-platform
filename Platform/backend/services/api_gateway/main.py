@@ -5,7 +5,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 import httpx
 import jwt
-from fastapi import FastAPI, HTTPException, Request
+import websockets
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from urllib.parse import urlencode
@@ -48,6 +49,16 @@ ROLE_ADMIN = "Admin"
 ROLE_VIEWER = "Viewer"
 ROLE_SUPERADMIN = "Superadmin"
 USER_ROLES = {ROLE_OWNER, ROLE_ADMIN, ROLE_VIEWER, ROLE_SUPERADMIN}
+
+
+def _agent_graph_ws_base_url() -> str:
+    base = (AGENT_GRAPH_SERVICE_URL or "").strip().rstrip("/")
+    if base.startswith("https://"):
+        return "wss://" + base[len("https://") :]
+    if base.startswith("http://"):
+        return "ws://" + base[len("http://") :]
+    return base
+
 
 app = FastAPI(title="api-gateway", version="0.2.0")
 app.add_middleware(
@@ -1377,6 +1388,51 @@ async def agent_orchestrate_run_stream(project_id: str, run_id: str, request: Re
             mark_request("GET", request.url.path, "200", time.monotonic() - started)
 
     return StreamingResponse(forward(), media_type="application/x-ndjson")
+
+
+@app.websocket("/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/ws")
+async def agent_orchestrate_run_ws(project_id: str, run_id: str, websocket: WebSocket):
+    """Оркестрация в реальном времени: первый кадр — snapshot (после перезагрузки страницы), далее дельты."""
+    started = time.monotonic()
+    path = f"/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/ws"
+    token = (websocket.query_params.get("access_token") or websocket.query_params.get("token") or "").strip()
+    if not token:
+        await websocket.close(code=1008)
+        mark_request("WS", path, 1008, time.monotonic() - started)
+        return
+    try:
+        ctx = decode_auth_context(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        mark_request("WS", path, 1008, time.monotonic() - started)
+        return
+    if not (ctx.roles & USER_ROLES):
+        await websocket.close(code=1008)
+        mark_request("WS", path, 1008, time.monotonic() - started)
+        return
+    try:
+        await assert_project_tenant_access(ctx, project_id)
+    except HTTPException:
+        await websocket.close(code=1008)
+        mark_request("WS", path, 1008, time.monotonic() - started)
+        return
+
+    await websocket.accept()
+    upstream_url = f"{_agent_graph_ws_base_url()}/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream/ws"
+    try:
+        async with websockets.connect(upstream_url, max_size=None, ping_interval=20, ping_timeout=120) as uws:
+            async for raw in uws:
+                await websocket.send_text(raw)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        mark_request("WS", path, 101, time.monotonic() - started)
 
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")

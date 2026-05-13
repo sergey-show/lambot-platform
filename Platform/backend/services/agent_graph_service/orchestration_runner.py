@@ -243,6 +243,140 @@ def _sanitize_model_text(text: str) -> str:
     return t.strip()
 
 
+_LLM_STREAM_PATCH_SEC = float(os.getenv("AGENT_ORCHESTRATION_LLM_STREAM_PATCH_SEC", "0.45"))
+_LLM_STREAM_MIN_CHARS = int(os.getenv("AGENT_ORCHESTRATION_LLM_STREAM_MIN_CHARS", "280"))
+_LLM_PROMPT_MAX = int(os.getenv("AGENT_ORCHESTRATION_LLM_PROMPT_MAX_CHARS", "120000"))
+
+
+def _lc_model_label(model: Any) -> str:
+    try:
+        m = getattr(model, "model_name", None) or getattr(model, "model", None)
+        if isinstance(m, str) and m.strip():
+            return m.strip()
+        b = getattr(model, "bound", None)
+        if b is not None:
+            m2 = getattr(b, "model_name", None) or getattr(b, "model", None)
+            if isinstance(m2, str) and m2.strip():
+                return m2.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _message_text_content(msg: Any) -> str:
+    c = getattr(msg, "content", None)
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for part in c:
+            if isinstance(part, dict):
+                t = str(part.get("text") or part.get("content") or "").strip()
+                if t:
+                    parts.append(t)
+            else:
+                parts.append(str(part))
+        return "".join(parts)
+    return str(c) if c is not None else ""
+
+
+def _messages_prompt_preview(messages: list[Any]) -> str:
+    lines: list[str] = []
+    for m in messages:
+        cls = m.__class__.__name__.replace("Message", "")
+        role = cls.lower() if cls else "message"
+        lines.append(f"### {role}\n{_message_text_content(m)}")
+    return "\n\n".join(lines)[:_LLM_PROMPT_MAX]
+
+
+def _chunk_to_text(chunk: Any) -> str:
+    c = getattr(chunk, "content", None)
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for part in c:
+            if isinstance(part, dict):
+                t = str(part.get("text") or "").strip()
+                if t:
+                    parts.append(t)
+            else:
+                parts.append(str(part))
+        return "".join(parts)
+    return str(c) if c is not None else ""
+
+
+def _step_running_status(run_id: str, step_key: str) -> str:
+    row = team_get_run(run_id) or {}
+    for s in row.get("steps") or []:
+        if isinstance(s, dict) and str(s.get("step_key")) == step_key:
+            return str(s.get("status") or "running")
+    return "running"
+
+
+def _patch_step_streaming_output(run_id: str, step_key: str, text: str, throttle: dict[str, Any]) -> None:
+    now = monotonic()
+    last_t = float(throttle.get("last_t") or 0.0)
+    last_len = int(throttle.get("last_len") or -1)
+    if (
+        text
+        and len(text) - last_len < _LLM_STREAM_MIN_CHARS
+        and now - last_t < _LLM_STREAM_PATCH_SEC
+    ):
+        return
+    throttle["last_t"] = now
+    throttle["last_len"] = len(text)
+    st = _step_running_status(run_id, step_key)
+    team_patch_step(run_id, step_key, status=st, output_md=text)
+
+
+def _publish_llm_prompt_meta(run_id: str, step_key: str, prompt_preview: str, model_label: str) -> None:
+    row = team_get_run(run_id) or {}
+    prev: dict[str, Any] = {}
+    for s in row.get("steps") or []:
+        if isinstance(s, dict) and str(s.get("step_key")) == step_key:
+            p = s.get("structured")
+            prev = dict(p) if isinstance(p, dict) else {}
+            break
+    prev["llm_prompt_preview"] = prompt_preview
+    if model_label:
+        prev["llm_model"] = model_label
+    st = _step_running_status(run_id, step_key)
+    team_patch_step(run_id, step_key, status=st, structured=prev)
+
+
+def _stream_chat_then_sanitize(
+    model: Any,
+    messages: list[Any],
+    config: dict[str, Any],
+    *,
+    run_id: str,
+    step_key: str,
+) -> str:
+    """Стримит ответ в output_md шага (троттлинг) для live UI; fallback — invoke."""
+    prompt_preview = _messages_prompt_preview(messages)
+    model_label = _lc_model_label(model)
+    _publish_llm_prompt_meta(run_id, step_key, prompt_preview, model_label)
+    throttle: dict[str, Any] = {"last_t": 0.0, "last_len": -1}
+    parts: list[str] = []
+    try:
+        for chunk in model.stream(messages, config=config):
+            piece = _chunk_to_text(chunk)
+            if not piece:
+                continue
+            parts.append(piece)
+            _patch_step_streaming_output(run_id, step_key, "".join(parts), throttle)
+    except Exception:
+        resp = model.invoke(messages, config=config)
+        raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+        text = _sanitize_model_text(raw)
+        _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
+        return text
+    text = _sanitize_model_text("".join(parts))
+    _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
+    return text
+
+
 def _extract_graph_text(graph_result: dict[str, Any]) -> str:
     final = str(graph_result.get("final_message") or "").strip()
     if final:
@@ -741,15 +875,17 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 f"Вопрос от коллеги (шаг пайплайна: {requester_step}; консультант: {lbl}):\n{question.strip()}"
             )
             model = build_chat_model(purpose=_llm_purpose_for_step(peer_step))
-            resp = model.invoke(
+            text = _stream_chat_then_sanitize(
+                model,
                 [
                     SystemMessage(content=system_peer),
                     HumanMessage(content="Дай ответ коллеге для продолжения пайплайна."),
                 ],
-                config=_lf_cfg(),
+                _lf_cfg(),
+                run_id=run_id,
+                step_key=requester_step,
             )
-            out = resp.content if isinstance(resp.content, str) else str(resp.content)
-            return (out or "").strip()
+            return (text or "").strip()
 
         def _upsert_doc(
             *,
@@ -1011,6 +1147,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     "Шаг 2: сделай анализ текущего состояния по фактам. "
                     "Не придумывай факты, пути файлов и результаты."
                 )
+                graph_pv = f"### LangGraph ReAct (инструменты)\n\n{analysis_prompt}"
+                _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
+                team_patch_step(
+                    run_id,
+                    step_key,
+                    status="running",
+                    output_md="⏳ LangGraph ReAct: сбор фактов через инструменты (может занять несколько минут)…",
+                )
                 graph_result = invoke_graph(project_id, analysis_prompt, orchestration_run_id=run_id)
                 analysis_text = _extract_graph_text(graph_result)
                 if not analysis_text:
@@ -1032,10 +1176,18 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         )
                     ),
                 ]
-                resp = model.invoke(final_messages, config=_lf_cfg())
-                text = resp.content if isinstance(resp.content, str) else str(resp.content)
-                return _sanitize_model_text(text)
+                return _stream_chat_then_sanitize(
+                    model, final_messages, _lf_cfg(), run_id=run_id, step_key=step_key
+                )
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
+                graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{user_message}"
+                _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
+                team_patch_step(
+                    run_id,
+                    step_key,
+                    status="running",
+                    output_md="⏳ LangGraph ReAct: инструменты и формирование ответа…",
+                )
                 graph_result = invoke_graph(project_id, user_message, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
                 text = _extract_graph_text(graph_result)
@@ -1051,9 +1203,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 HumanMessage(content=human_content),
             ]
             invoker = model.bind(max_tokens=INTAKE_MAX_TOKENS, temperature=0) if step_key == "intake" else model
-            resp = invoker.invoke(messages, config=_lf_cfg())
-            text = resp.content if isinstance(resp.content, str) else str(resp.content)
-            return _sanitize_model_text(text)
+            return _stream_chat_then_sanitize(invoker, messages, _lf_cfg(), run_id=run_id, step_key=step_key)
 
         def _execute_step(
             step_key: str,

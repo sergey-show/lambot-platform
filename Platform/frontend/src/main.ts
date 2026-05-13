@@ -1256,6 +1256,8 @@ function renderPortal(): void {
 
   let orchPollTimer: number | null = null;
   let orchStreamAbort: AbortController | null = null;
+  let orchStreamSocket: WebSocket | null = null;
+  let orchStreamFinished = false;
   let orchStreamLastRun: OrchRunData | null = null;
   let orchBrowserLogsTs = 0;
   let orchModalStepKey = "";
@@ -1273,6 +1275,14 @@ function renderPortal(): void {
   };
 
   const stopOrchestrationStream = () => {
+    if (orchStreamSocket) {
+      try {
+        orchStreamSocket.close();
+      } catch {
+        /* ignore */
+      }
+      orchStreamSocket = null;
+    }
     if (orchStreamAbort) {
       try {
         orchStreamAbort.abort();
@@ -1508,6 +1518,8 @@ function renderPortal(): void {
           .map((x) => x as Record<string, unknown>)
       : [];
     const qaGate = String(stObj.qa_gate || "");
+    const llmModel = String(stObj.llm_model || "").trim();
+    const llmPrompt = String(stObj.llm_prompt_preview || "").trim();
     const liveAction: string[] = [];
     if ((step?.status || "") === "running") {
       liveAction.push("Выполняет текущую задачу шага");
@@ -1619,6 +1631,14 @@ function renderPortal(): void {
           <div><b>Финиш:</b> ${escapeHtml(fmtTs(step?.finished_at))}</div>
           <div><b>Фаза run:</b> ${escapeHtml(String(data.phase || "—"))}</div>
         </div>
+        <div class="lp-orch-modal-block" style="background:#f8fafc;border-radius:8px;">
+          <h4>Модель и промпт (LLM)</h4>
+          <p class="lp-muted" style="font-size:12px;margin:0 0 6px;"><b>Модель:</b> ${escapeHtml(llmModel || "—")}</p>
+          <p class="lp-muted" style="font-size:11px;margin:0 0 8px;">Текст ниже — сообщения в чат-модель (роли system / human). Пока шаг <code>running</code>, ответ подставляется сюда и в «Результат шага» по мере генерации (стрим через обновления run).</p>
+          <pre class="lp-orch-pre" style="max-height:240px;overflow:auto;font-size:11px;white-space:pre-wrap;">${escapeHtml(
+            llmPrompt || "Промпт появится в начале вызова LLM. Для LangGraph сначала виден запрос к графу инструментов.",
+          )}</pre>
+        </div>
         <div class="lp-orch-modal-block">
           <h4>С кем работает</h4>
           <p class="lp-muted">${peers.length ? escapeHtml(peers.join(" · ")) : "Этот шаг не имеет параллельных коллег в текущем DAG-слое."}</p>
@@ -1651,8 +1671,8 @@ function renderPortal(): void {
           <pre class="lp-orch-pre lp-error">${escapeHtml(err || "Нет")}</pre>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>Результат шага</h4>
-          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(output || "Пока нет вывода")}</div>
+          <h4>Результат шага (live)</h4>
+          <div id="orch-modal-step-output" class="lp-markdown lp-orch-pre" style="max-height:420px;overflow:auto;">${renderMarkdownHtml(output || "Пока нет вывода")}</div>
         </div>
       `;
       const briefBtn = bodyEl.querySelector("#orch-reasoning-brief");
@@ -1664,6 +1684,10 @@ function renderPortal(): void {
       detailedBtn?.addEventListener("click", () => {
         orchModalReasoningMode = "detailed";
         openOrchNodeModal(stepKey, data);
+      });
+      requestAnimationFrame(() => {
+        const outScroll = document.getElementById("orch-modal-step-output");
+        if (outScroll) outScroll.scrollTop = outScroll.scrollHeight;
       });
     }
     orchModalStepKey = stepKey;
@@ -2037,10 +2061,18 @@ function renderPortal(): void {
             </div>
             ${errBlock}
           </details>`;
-        return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="${badge}">${escapeHtml(lbl)}</span><span class="lp-muted" style="font-size:12px;">${escapeHtml(tsk)}</span></div>${body}</article>`;
+        return `<article class="lp-orch-card lp-orch-step-card" data-step-key="${escapeHtml(stepKey)}" style="cursor:pointer;"><div class="lp-orch-card-head"><span class="${badge}">${escapeHtml(lbl)}</span><span class="lp-muted" style="font-size:12px;">${escapeHtml(tsk)}</span></div>${body}</article>`;
       })
       .join("");
     stepsEl.innerHTML = html;
+    stepsEl.querySelectorAll<HTMLElement>(".lp-orch-step-card").forEach((card) => {
+      card.addEventListener("click", (ev) => {
+        const t = ev.target as HTMLElement | null;
+        if (t?.closest("details") || t?.closest("button") || t?.closest("summary")) return;
+        const k = (card.dataset.stepKey || "").trim();
+        if (k && data) openOrchNodeModal(k, data);
+      });
+    });
     const fin = data.final_report_md || data.final_message;
     if (finalWrap) {
       if (data.status === "paused") {
@@ -2235,6 +2267,10 @@ function renderPortal(): void {
 
   const applyOrchestrationDeltaEvent = (runId: string, ev: Record<string, unknown>) => {
     const typ = String(ev.type || "");
+    if (typ === "snapshot" && ev.run && typeof ev.run === "object") {
+      applyOrchestrationRunRealtime(runId, ev.run as OrchRunData);
+      return;
+    }
     if (typ === "run" && ev.run && typeof ev.run === "object") {
       applyOrchestrationRunRealtime(runId, ev.run as OrchRunData);
       return;
@@ -2292,6 +2328,7 @@ function renderPortal(): void {
       return;
     }
     if (typ === "stream_end") {
+      orchStreamFinished = true;
       appendOrchestrationLiveLog(`stream завершён: ${String(ev.status || "unknown")}`);
       return;
     }
@@ -2303,9 +2340,9 @@ function renderPortal(): void {
     }
   };
 
-  const startOrchestrationStream = async (runId: string) => {
+  const startOrchestrationNdjsonStream = async (runId: string) => {
     if (!currentProjectId || !runId) return;
-    stopOrchestrationStream();
+    await pollOrchestration(runId);
     const ctrl = new AbortController();
     orchStreamAbort = ctrl;
     try {
@@ -2356,6 +2393,62 @@ function renderPortal(): void {
         orchStreamAbort = null;
       }
     }
+  };
+
+  const startOrchestrationStream = async (runId: string) => {
+    if (!currentProjectId || !runId) return;
+    stopOrchestrationStream();
+    orchStreamFinished = false;
+
+    const t = token();
+    if (!t) {
+      void startOrchestrationNdjsonStream(runId);
+      return;
+    }
+
+    let ws: WebSocket;
+    try {
+      const path = `/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(runId)}/ws`;
+      const baseRef =
+        GATEWAY_BASE && GATEWAY_BASE.trim() !== ""
+          ? GATEWAY_BASE
+          : typeof window !== "undefined"
+            ? window.location.origin
+            : "http://localhost";
+      const u = new URL(path, baseRef);
+      u.searchParams.set("access_token", t);
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(u.href);
+    } catch {
+      void startOrchestrationNdjsonStream(runId);
+      return;
+    }
+
+    orchStreamSocket = ws;
+
+    ws.onmessage = (evt) => {
+      let ev: Record<string, unknown>;
+      try {
+        ev = JSON.parse(String(evt.data)) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const typ = String(ev.type || "");
+      if (typ === "error") {
+        appendOrchestrationLiveLog(`stream error: ${String(ev.detail || "unknown")}`);
+        return;
+      }
+      applyOrchestrationDeltaEvent(runId, ev);
+    };
+
+    ws.onclose = () => {
+      if (orchStreamSocket !== ws) return;
+      orchStreamSocket = null;
+      if (!orchStreamFinished) {
+        appendOrchestrationLiveLog("websocket закрыт, переключение на NDJSON stream");
+        void startOrchestrationNdjsonStream(runId);
+      }
+    };
   };
 
   const pollOrchestration = async (runId: string) => {
@@ -3037,7 +3130,10 @@ function renderPortal(): void {
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
     if (last) {
       appendOrchestrationLiveLog(`подключение к stream run ${last}…`);
-      void startOrchestrationStream(last);
+      void (async () => {
+        await pollOrchestration(last);
+        void startOrchestrationStream(last);
+      })();
       return;
     }
     void (async () => {
@@ -3047,9 +3143,9 @@ function renderPortal(): void {
         });
         const j = (await r.json()) as { run?: Record<string, unknown> };
         if (r.ok && j.run) {
-          renderOrchestrationPanel(j.run);
           const rid = typeof j.run.run_id === "string" ? j.run.run_id : "";
           if (rid) {
+            applyOrchestrationRunRealtime(rid, j.run as OrchRunData);
             void loadBrowserLogs(rid);
             const um = typeof j.run.user_message === "string" ? j.run.user_message.trim() : "";
             if (um && projectAiChatHistory.length === 0) {
@@ -3064,6 +3160,8 @@ function renderPortal(): void {
               appendOrchestrationLiveLog(`подключение к stream run ${rid}…`);
               void startOrchestrationStream(rid);
             }
+          } else {
+            renderOrchestrationPanel(j.run as OrchRunData);
           }
         } else {
           renderOrchestrationPanel(null);
@@ -3115,6 +3213,7 @@ function renderPortal(): void {
             } else if (st === "running") {
               if (stLine) stLine.textContent = `run ${lastRunId} уже выполняется — дождитесь завершения шага`;
               appendOrchestrationLiveLog(`run ${lastRunId} уже running: новое сообщение будет доступно после завершения текущего цикла`);
+              await pollOrchestration(lastRunId);
               void startOrchestrationStream(lastRunId);
               return;
             }
