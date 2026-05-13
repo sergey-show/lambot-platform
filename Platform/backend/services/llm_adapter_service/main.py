@@ -97,17 +97,21 @@ def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
     base_url, api_key = _resolve_base_and_key(cfg)
     model = _resolve_chat_model(cfg, request)
     lf = _get_langfuse_client()
-    observation = None
+    # start_as_current_observation возвращает context manager; .update() только у результата __enter__().
+    lf_obs_cm: Any | None = None
+    observation: Any | None = None
     if lf is not None:
         try:
-            observation = lf.start_as_current_observation(
+            lf_obs_cm = lf.start_as_current_observation(
                 as_type="generation",
                 name="llm-adapter.generate",
                 model=model,
                 input={"prompt": request.prompt, "temperature": request.temperature, "base_url": base_url},
             )
+            observation = lf_obs_cm.__enter__()
         except Exception:
             logger.exception("langfuse start_as_current_observation failed in generate")
+            lf_obs_cm = None
             observation = None
 
     try:
@@ -143,12 +147,11 @@ def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
                 logger.exception("langfuse update failed in generate (real)")
         return LlmGenerateResponse(output=content, provider="openai-compatible")
     finally:
-        if observation is not None:
+        if lf_obs_cm is not None:
             try:
-                # Закрываем наблюдение, если создавали его без with.
-                observation.__exit__(None, None, None)
+                lf_obs_cm.__exit__(None, None, None)
             except Exception:
-                logger.exception("langfuse observation close failed in generate")
+                logger.exception("langfuse observation context exit failed in generate")
         if lf is not None:
             langfuse_tracing.flush()
 
@@ -159,17 +162,20 @@ def embed(request: LlmEmbedRequest) -> LlmEmbedResponse:
     base_url, api_key = _resolve_base_and_key(cfg)
     model = _resolve_embedding_model(cfg, request.model)
     lf = _get_langfuse_client()
-    observation = None
+    lf_obs_cm: Any | None = None
+    observation: Any | None = None
     if lf is not None:
         try:
-            observation = lf.start_as_current_observation(
-                as_type="generation",
+            lf_obs_cm = lf.start_as_current_observation(
+                as_type="embedding",
                 name="llm-adapter.embed",
                 model=model,
                 input={"input": request.input, "base_url": base_url},
             )
+            observation = lf_obs_cm.__enter__()
         except Exception:
             logger.exception("langfuse start_as_current_observation failed in embed")
+            lf_obs_cm = None
             observation = None
 
     try:
@@ -216,10 +222,10 @@ def embed(request: LlmEmbedRequest) -> LlmEmbedResponse:
                 logger.exception("langfuse update failed in embed (real)")
         return LlmEmbedResponse(embeddings=embeddings, model=used, provider="openai-compatible")
     finally:
-        if observation is not None:
+        if lf_obs_cm is not None:
             try:
-                observation.__exit__(None, None, None)
+                lf_obs_cm.__exit__(None, None, None)
             except Exception:
-                logger.exception("langfuse observation close failed in embed")
+                logger.exception("langfuse observation context exit failed in embed")
         if lf is not None:
             langfuse_tracing.flush()
