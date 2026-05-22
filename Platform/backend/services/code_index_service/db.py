@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = os.getenv(
@@ -20,6 +20,13 @@ def init_db() -> None:
     import services.code_index_service.models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE code_chunks ADD COLUMN IF NOT EXISTS qdrant_point_id VARCHAR(64)"
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_code_chunks_qdrant_point_id ON code_chunks (qdrant_point_id)"))
 
 
 def get_db():

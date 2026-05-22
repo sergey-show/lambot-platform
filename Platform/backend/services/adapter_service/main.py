@@ -2266,8 +2266,14 @@ def _gitlab_platform_summary(db: Session, project_id: UUID, resources: list) -> 
         if r.category == "gitlab" and r.label == GITLAB_PLATFORM_RESOURCE_LABEL:
             prov = _resource_public(r)
             break
+    group_created = False
+    if prov and isinstance(prov.get("value_json"), dict):
+        group_created = prov["value_json"].get("gitlab_group_created") is True
+    if gl is not None and not group_created:
+        group_created = True
     return {
         "configured": gl is not None,
+        "gitlab_group_created": group_created,
         "group_path": (gl or {}).get("group_path"),
         "gitlab_url": (gl or {}).get("gitlab_url"),
         "provisioning": (gl or {}).get("provisioning"),

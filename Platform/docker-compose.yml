@@ -143,6 +143,20 @@ services:
       timeout: 3s
       retries: 20
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    ports:
+      - "${QDRANT_BIND:-6333}:6333"
+      - "${QDRANT_GRPC_BIND:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
   redis:
     image: redis:7
     ports:
@@ -550,10 +564,15 @@ services:
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC_EVENTS: platform.events
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_CODE_COLLECTION: ${QDRANT_CODE_COLLECTION:-lambot_code_chunks}
+      CODE_INDEX_VECTOR_SIZE: ${CODE_INDEX_VECTOR_SIZE:-1536}
     volumes:
       - repo_workspaces_data:/var/lambot/repo-workspaces
     depends_on:
       postgres-code-index:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -869,6 +888,7 @@ volumes:
   postgres_repo_workspace_data:
   postgres_code_index_data:
   repo_workspaces_data:
+  qdrant_data:
   clickhouse_data:
   rustfs_data:
   langfuse_postgres_data:

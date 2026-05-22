@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from services.code_index_service.db import Base
@@ -32,7 +32,7 @@ class CodeChunk(Base):
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    embedding: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    qdrant_point_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     embedding_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

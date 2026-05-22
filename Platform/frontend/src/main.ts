@@ -33,9 +33,29 @@ type ProjectRow = {
   suspended?: boolean;
   deleted_at?: string | null;
   created_at: string;
+  gitlab_group_created?: boolean;
+  gitlab_provision_status?: string;
+  gitlab_group_path?: string | null;
 };
 
 let lastAdminProjectsSnapshot: ProjectRow[] = [];
+
+function gitlabProjectCell(row: ProjectRow): string {
+  if (row.deleted_at) return "—";
+  if (row.gitlab_group_created) {
+    const path = row.gitlab_group_path ? ` title="${escapeHtml(row.gitlab_group_path)}"` : "";
+    return `<span class="lp-badge" style="background:#dcfce7;color:#166534"${path}>✓ группа</span>`;
+  }
+  const st = row.gitlab_provision_status || "not_started";
+  if (st === "in_progress") {
+    return `<span class="lp-badge" style="background:#e0e7ff;color:#3730a3">создаётся…</span>`;
+  }
+  if (st === "failed") {
+    return `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">ошибка</span>
+      <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;margin-left:4px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Повторить</button>`;
+  }
+  return `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Создать группу</button>`;
+}
 let superadminPhasePollTimer: number | null = null;
 let portalPhasePollTimer: number | null = null;
 
@@ -912,6 +932,12 @@ function renderPortal(): void {
       <div id="view-infra" class="lp-portal-view">
       <div class="lp-panel">
         <h2>Инфраструктура и Ansible</h2>
+        <div style="margin:0 0 14px;padding:12px;border:1px solid #e5e7eb;border-radius:8px;">
+          <h3 style="font-size:15px;margin:0 0 6px;">GitLab платформы</h3>
+          <p class="lp-muted" style="margin:0 0 8px;">Общий GitLab площадки: у каждого проекта своя группа и токен для агентов. Старые проекты — создайте группу вручную.</p>
+          <p id="portal-gitlab-platform-status" class="lp-muted" style="margin:0 0 8px;">—</p>
+          <button type="button" class="lp-btn" id="portal-gitlab-platform-provision" style="display:none">Создать GitLab-группу</button>
+        </div>
         <p class="lp-muted">Ниже — опциональная раскатка GitLab/Nexus на ваших SSH-серверах через Ansible. Если используете свой GitLab или другие сервисы — добавьте их в блоке «Сервисы и учётки» (категория «Вручную»). «Только bundles» — скачать YAML локально; «Запустить Ansible на платформе» — playbook из adapter по сохранённому SSH.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:16px;">
           <div class="lp-field"><label>GitLab → сервер</label>
@@ -3684,6 +3710,48 @@ function renderPortal(): void {
     if (el) el.textContent = data.status || "?";
   };
 
+  const refreshPortalGitlabPlatform = async () => {
+    const st = document.getElementById("portal-gitlab-platform-status");
+    const btn = document.getElementById("portal-gitlab-platform-provision") as HTMLButtonElement | null;
+    if (!currentProjectId) {
+      if (st) st.textContent = "Выберите проект.";
+      if (btn) btn.style.display = "none";
+      return;
+    }
+    try {
+      const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/gitlab-provision`, {
+        headers: authHeader(token()),
+      });
+      const data = (await r.json()) as {
+        gitlab_group_created?: boolean;
+        status?: string;
+        group_path?: string;
+        error_message?: string;
+      };
+      if (data.gitlab_group_created) {
+        if (st) st.textContent = `Группа создана${data.group_path ? `: ${data.group_path}` : ""}.`;
+        if (btn) btn.style.display = "none";
+      } else if (data.status === "in_progress") {
+        if (st) st.textContent = "Создание группы…";
+        if (btn) btn.style.display = "none";
+      } else if (data.status === "failed") {
+        if (st) st.textContent = `Ошибка: ${data.error_message || "см. логи gitlab-service"}`;
+        if (btn) {
+          btn.style.display = "inline-block";
+          btn.textContent = "Повторить";
+        }
+      } else {
+        if (st) st.textContent = "Группа ещё не создана (проект создан до автопровижининга?).";
+        if (btn) {
+          btn.style.display = "inline-block";
+          btn.textContent = "Создать GitLab-группу";
+        }
+      }
+    } catch (exc) {
+      if (st) st.textContent = `Ошибка: ${exc}`;
+    }
+  };
+
   const refreshWorkspaceHint = async () => {
     if (!currentProjectId) return;
     const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/workspace`, { headers: authHeader(token()) });
@@ -3720,7 +3788,29 @@ function renderPortal(): void {
     restoreOrchestrationForProject();
     void refreshStatus();
     void refreshWorkspaceHint();
+    void refreshPortalGitlabPlatform();
     void loadTargetsList();
+  });
+
+  document.getElementById("portal-gitlab-platform-provision")?.addEventListener("click", async () => {
+    if (!currentProjectId) return;
+    if (!confirm("Создать GitLab-группу и токен для этого проекта?")) return;
+    const btn = document.getElementById("portal-gitlab-platform-provision") as HTMLButtonElement | null;
+    if (btn) btn.disabled = true;
+    try {
+      const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/gitlab-provision`, {
+        method: "POST",
+        headers: { ...authHeader(token()), "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload));
+      }
+      await refreshPortalGitlabPlatform();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
 
   document.getElementById("refresh-status")?.addEventListener("click", () => void refreshStatus());
@@ -3760,6 +3850,7 @@ function renderPortal(): void {
     write(payload);
     void refreshStatus();
     void refreshWorkspaceHint();
+    void refreshPortalGitlabPlatform();
     void loadTargetsList();
   });
 
@@ -4763,6 +4854,7 @@ function renderPortal(): void {
     if (data.target?.id) currentTargetId = data.target.id;
     write(data);
     void refreshWorkspaceHint();
+    void refreshPortalGitlabPlatform();
     void loadTargetsList();
   });
 
@@ -4928,6 +5020,7 @@ async function loadSuperadminData(): Promise<void> {
         <td class="lp-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(row.description || "")}">${escapeHtml((row.description || "").slice(0, 80))}${(row.description || "").length > 80 ? "…" : ""}</td>
         <td class="lp-muted">${escapeHtml(row.tenant_id)}</td>
         <td><span class="lp-badge">${escapeHtml(row.status)}</span></td>
+        <td>${gitlabProjectCell(row)}</td>
         <td>${row.suspended ? '<span class="lp-badge" style="background:#fef3c7;color:#92400e">Пауза</span>' : "—"}</td>
         <td>${row.deleted_at ? `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">Удалён</span>` : "—"}</td>
         <td>${escapeHtml(new Date(row.created_at).toLocaleString())}</td>
@@ -5450,6 +5543,7 @@ function renderSuperadmin(): void {
                 <th>Описание</th>
                 <th>Tenant</th>
                 <th>Статус workflow</th>
+                <th>GitLab группа</th>
                 <th>Пауза</th>
                 <th>Удалён</th>
                 <th>Обновлён</th>
@@ -5550,6 +5644,30 @@ function renderSuperadmin(): void {
     }
     const headers = { ...authHeader(t), "Content-Type": "application/json" };
     try {
+      if (action === "gitlab-provision") {
+        const row = lastAdminProjectsSnapshot.find((p) => p.id === pid);
+        const force = row?.gitlab_provision_status === "failed";
+        const msg = force
+          ? "Повторить создание GitLab-группы для проекта?"
+          : "Создать GitLab-группу и токен для этого проекта? (для старых проектов без автопровижининга)";
+        if (!confirm(msg)) return;
+        const resp = await fetch(
+          `${GATEWAY_BASE}/api/v1/admin/projects/${encodeURIComponent(pid)}/gitlab-provision`,
+          { method: "POST", headers, body: JSON.stringify({ force }) },
+        );
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          alert(typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload));
+          return;
+        }
+        alert(
+          payload.gitlab_group_created
+            ? `Готово: ${payload.group_path || "группа создана"}`
+            : `Статус: ${payload.status || "unknown"}${payload.error ? `\n${payload.error}` : ""}`,
+        );
+        await loadSuperadminData();
+        return;
+      }
       if (action === "edit") {
         const row = lastAdminProjectsSnapshot.find((p) => p.id === pid);
         const name = prompt("Имя проекта", row?.name ?? "");

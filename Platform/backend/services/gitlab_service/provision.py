@@ -62,6 +62,7 @@ def _store_adapter_credentials(
         "provisioning": "platform",
         "enabled": True,
         "repos_managed_by_agents": True,
+        "gitlab_group_created": True,
     }
     r = httpx.put(
         f"{ADAPTER_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/gitlab-platform-binding",
@@ -123,7 +124,13 @@ def provision_project_gitlab(
                 meta_json={"mock": True},
             )
             db.commit()
-            return {"ok": True, "status": "ready", "mock": True, "group_path": full_group_path}
+            return {
+                "ok": True,
+                "status": "ready",
+                "gitlab_group_created": True,
+                "mock": True,
+                "group_path": full_group_path,
+            }
 
         parent_id = resolve_root_group_id()
         group = create_subgroup(parent_id=parent_id, name=project_name[:255] or rel_path, path=rel_path)
@@ -150,7 +157,13 @@ def provision_project_gitlab(
         )
         db.commit()
         logger.info("gitlab provision ok project_id=%s group=%s", project_id, full_path)
-        return {"ok": True, "status": "ready", "group_path": full_path, "group_id": group_id}
+        return {
+            "ok": True,
+            "status": "ready",
+            "gitlab_group_created": True,
+            "group_path": full_path,
+            "group_id": group_id,
+        }
     except (GitlabClientError, RuntimeError, httpx.HTTPError) as exc:
         logger.exception("gitlab provision failed project_id=%s: %s", project_id, exc)
         _upsert_row(db, project_id, tenant_id, status="failed", error_message=str(exc)[:4000])

@@ -31,6 +31,7 @@ SANDBOX_SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev
 AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
 BROWSER_TOOL_SERVICE_URL = os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014")
 DOCUMENTS_SERVICE_URL = os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015")
+GITLAB_SERVICE_URL = os.getenv("GITLAB_SERVICE_URL", "http://gitlab-service:8016")
 INTERNAL_PROJECT_ADMIN_TOKEN = os.getenv(
     "INTERNAL_PROJECT_ADMIN_TOKEN", "internal-project-admin-dev-token"
 )
@@ -685,7 +686,106 @@ async def admin_projects(request: Request):
             f"{ADMIN_SERVICE_URL}/api/v1/admin/projects{suffix}",
             headers={"X-Superadmin-Token": SUPERADMIN_TOKEN},
         )
+        gitlab_by_id: dict[str, dict] = {}
+        try:
+            gr = await client.get(
+                f"{GITLAB_SERVICE_URL.rstrip('/')}/api/v1/internal/gitlab-provision/index",
+                headers={"X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN},
+                timeout=15.0,
+            )
+            if gr.status_code == 200:
+                gitlab_by_id = gr.json().get("by_project_id") or {}
+        except Exception:
+            pass
     mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    if response.status_code != 200:
+        return _response_from_httpx(response)
+    projects = response.json()
+    if isinstance(projects, list):
+        for row in projects:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("id") or "")
+            g = gitlab_by_id.get(pid) or {}
+            row["gitlab_provision_status"] = g.get("status") or "not_started"
+            row["gitlab_group_created"] = bool(g.get("gitlab_group_created"))
+            row["gitlab_group_path"] = g.get("group_path")
+    return JSONResponse(status_code=response.status_code, content=projects)
+
+
+async def _gitlab_provision_call(project_id: str, *, project_name: str, force: bool = False) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        return await client.post(
+            f"{GITLAB_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/gitlab-provision",
+            headers={
+                "X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN,
+                "Content-Type": "application/json",
+            },
+            json={"project_name": project_name, "force": force},
+        )
+
+
+@app.get("/api/v1/admin/projects/{project_id}/gitlab-provision")
+async def admin_gitlab_provision_status(project_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{GITLAB_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/gitlab-provision")
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/projects/{project_id}/gitlab-provision")
+async def admin_gitlab_provision_run(project_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    force = bool(body.get("force"))
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        pr = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
+    if pr.status_code == 404:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if pr.status_code != 200:
+        raise HTTPException(status_code=502, detail="Project service error")
+    pname = str((pr.json() or {}).get("name") or "project")
+    started = time.monotonic()
+    response = await _gitlab_provision_call(project_id, project_name=pname, force=force)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.get("/api/v1/projects/{project_id}/gitlab-provision")
+async def project_gitlab_provision_status(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{GITLAB_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/gitlab-provision")
+    mark_request("GET", request.url.path, response.status_code, time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/gitlab-provision")
+async def project_gitlab_provision_run(project_id: str, request: Request):
+    ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
+    await assert_project_mutable(ctx, project_id)
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    force = bool(body.get("force"))
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        pr = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
+    if pr.status_code != 200:
+        raise HTTPException(status_code=502, detail="Project service error")
+    pname = str((pr.json() or {}).get("name") or "project")
+    started = time.monotonic()
+    response = await _gitlab_provision_call(project_id, project_name=pname, force=force)
+    mark_request("POST", request.url.path, response.status_code, time.monotonic() - started)
     return _response_from_httpx(response)
 
 

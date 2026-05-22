@@ -116,14 +116,18 @@ def health() -> dict:
     return {"status": "ok", "service": "gitlab-service"}
 
 
-@app.get("/api/v1/projects/{project_id}/gitlab-provision")
-def get_provision_status(project_id: UUID, db: Session = Depends(get_db)) -> dict:
-    row = db.execute(select(GitlabProvision).where(GitlabProvision.project_id == project_id)).scalar_one_or_none()
+def _provision_public(row: GitlabProvision | None, project_id: UUID) -> dict:
     if row is None:
-        return {"project_id": str(project_id), "status": "not_started"}
+        return {
+            "project_id": str(project_id),
+            "status": "not_started",
+            "gitlab_group_created": False,
+        }
+    created = row.status == "ready"
     return {
         "project_id": str(project_id),
         "status": row.status,
+        "gitlab_group_created": created,
         "group_path": row.full_group_path or row.group_path,
         "group_id": row.group_id,
         "error_message": row.error_message,
@@ -131,8 +135,60 @@ def get_provision_status(project_id: UUID, db: Session = Depends(get_db)) -> dic
     }
 
 
+@app.get("/api/v1/projects/{project_id}/gitlab-provision")
+def get_provision_status(project_id: UUID, db: Session = Depends(get_db)) -> dict:
+    row = db.execute(select(GitlabProvision).where(GitlabProvision.project_id == project_id)).scalar_one_or_none()
+    return _provision_public(row, project_id)
+
+
+@app.get("/api/v1/internal/gitlab-provision/index")
+def internal_provision_index(
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_internal),
+) -> dict:
+    """Сводка для Superadmin: project_id → статус GitLab-группы."""
+    rows = list(db.execute(select(GitlabProvision)).scalars().all())
+    items = [_provision_public(r, UUID(str(r.project_id))) for r in rows]
+    by_id = {str(x["project_id"]): x for x in items}
+    return {"items": items, "by_project_id": by_id}
+
+
 class ReprovisionBody(BaseModel):
     project_name: str = "project"
+    force: bool = False
+
+
+def _run_provision(
+    db: Session,
+    *,
+    project_id: UUID,
+    tenant_id: UUID | None,
+    project_name: str,
+    force: bool = False,
+) -> dict:
+    row = db.execute(select(GitlabProvision).where(GitlabProvision.project_id == project_id)).scalar_one_or_none()
+    if row and row.status == "ready" and not force:
+        return {
+            "ok": True,
+            "status": "ready",
+            "gitlab_group_created": True,
+            "group_path": row.full_group_path or row.group_path,
+            "skipped": True,
+            "message": "GitLab group already provisioned",
+        }
+    if row and row.status == "in_progress" and not force:
+        return {
+            "ok": False,
+            "status": "in_progress",
+            "gitlab_group_created": False,
+            "message": "Provisioning already in progress",
+        }
+    return provision_project_gitlab(
+        db,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        project_name=project_name,
+    )
 
 
 @app.post("/api/v1/internal/projects/{project_id}/gitlab-provision/retry")
@@ -142,13 +198,38 @@ def retry_provision(
     db: Session = Depends(get_db),
     _: None = Depends(_require_internal),
 ) -> dict:
-    out = provision_project_gitlab(
+    return _run_provision(
         db,
         project_id=project_id,
         tenant_id=None,
         project_name=body.project_name,
+        force=body.force,
     )
-    return out
+
+
+class ProvisionPublicBody(BaseModel):
+    project_name: str | None = None
+    force: bool = False
+
+
+@app.post("/api/v1/projects/{project_id}/gitlab-provision")
+def provision_public(
+    project_id: UUID,
+    body: ProvisionPublicBody | None = None,
+    db: Session = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> dict:
+    """Ручной запуск из UI (gateway проксирует с internal token)."""
+    if (x_internal_token or "").strip() != INTERNAL_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = body or ProvisionPublicBody()
+    return _run_provision(
+        db,
+        project_id=project_id,
+        tenant_id=None,
+        project_name=(payload.project_name or "project").strip() or "project",
+        force=payload.force,
+    )
 
 
 class CreateRepoBody(BaseModel):

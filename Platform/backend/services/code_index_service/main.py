@@ -1,5 +1,6 @@
 """
 code-index-service: семантический поиск по клонированному коду (repo-workspace).
+Векторы в Qdrant, полный текст чанков в Postgres.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from sqlalchemy.orm import Session
 from services.code_index_service.db import get_db, init_db
 from services.code_index_service.indexer import index_workspace
 from services.code_index_service.models import CodeChunk
+from services.code_index_service.qdrant_store import COLLECTION, ensure_collection, ping as qdrant_ping, search_vectors
 from shared.contracts.events import EventTypes
 from shared.kafka import KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_CODE_INDEX, KAFKA_TOPIC_EVENTS
-from shared.rag_util import cosine_similarity, embed_many, tokenize
+from shared.rag_util import embed_many, tokenize
 
 logger = logging.getLogger("code_index_service")
 logging.basicConfig(level=logging.INFO)
@@ -99,6 +101,10 @@ async def _consume_loop() -> None:
 async def lifespan(_: FastAPI):
     global consumer, consumer_task
     init_db()
+    try:
+        ensure_collection()
+    except Exception as exc:
+        logger.warning("qdrant ensure_collection on startup: %s", exc)
     consumer = AIOKafkaConsumer(
         KAFKA_TOPIC_EVENTS,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
@@ -123,7 +129,7 @@ async def lifespan(_: FastAPI):
         await consumer.stop()
 
 
-app = FastAPI(title="code-index-service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="code-index-service", version="1.1.0", lifespan=lifespan)
 
 
 class ReindexBody(BaseModel):
@@ -157,28 +163,50 @@ def search_code(
     q = body.query.strip()
     if not q:
         return {"items": []}
-    stmt = select(CodeChunk).where(CodeChunk.project_id == project_id)
-    if body.repo_slug:
-        stmt = stmt.where(CodeChunk.repo_slug == body.repo_slug.strip())
-    if body.branch:
-        stmt = stmt.where(CodeChunk.branch == body.branch.strip())
-    chunks = list(db.execute(stmt).scalars().all())
-    if not chunks:
-        return {"items": []}
-    q_tokens = tokenize(q)
+
     q_embed_list, _, _ = embed_many([q])
-    q_embed = q_embed_list[0] if q_embed_list else None
+    if not q_embed_list:
+        return {"items": [], "warning": "embedding_unavailable"}
+    q_embed = q_embed_list[0]
+
+    repo_f = body.repo_slug.strip() if body.repo_slug else None
+    branch_f = body.branch.strip() if body.branch else None
+    hits = search_vectors(
+        query_vector=q_embed,
+        project_id=str(project_id),
+        repo_slug=repo_f,
+        branch=branch_f,
+        limit=min(80, body.top_k * 4),
+    )
+    if not hits:
+        return {"items": []}
+
+    chunk_ids: list[UUID] = []
+    for _, cid, _ in hits:
+        try:
+            chunk_ids.append(UUID(cid))
+        except ValueError:
+            continue
+    if not chunk_ids:
+        return {"items": []}
+
+    rows = list(db.execute(select(CodeChunk).where(CodeChunk.id.in_(chunk_ids))).scalars().all())
+    by_id = {str(r.id): r for r in rows}
+
+    q_tokens = tokenize(q)
     scored: list[tuple[float, CodeChunk]] = []
-    for ch in chunks:
+    for vec_score, cid, _payload in hits:
+        ch = by_id.get(cid)
+        if ch is None:
+            continue
         text_l = (ch.chunk_text or "").lower()
         lex = 0.0
         if q_tokens:
-            hits = sum(1 for t in q_tokens if t in text_l)
-            lex = hits / max(1, len(q_tokens))
-        cos = cosine_similarity(q_embed, ch.embedding if isinstance(ch.embedding, list) else None)
-        score = (0.65 * cos) + (0.35 * lex)
-        if score > 0.0001:
-            scored.append((score, ch))
+            hits_lex = sum(1 for t in q_tokens if t in text_l)
+            lex = hits_lex / max(1, len(q_tokens))
+        score = (0.75 * vec_score) + (0.25 * lex)
+        scored.append((score, ch))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     items: list[dict[str, Any]] = []
     for score, ch in scored[: body.top_k]:
@@ -197,9 +225,14 @@ def search_code(
                 "excerpt": excerpt,
             }
         )
-    return {"items": items}
+    return {"items": items, "vector_backend": "qdrant"}
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "code-index-service"}
+    return {
+        "status": "ok",
+        "service": "code-index-service",
+        "qdrant": "ok" if qdrant_ping() else "unreachable",
+        "qdrant_collection": COLLECTION,
+    }
