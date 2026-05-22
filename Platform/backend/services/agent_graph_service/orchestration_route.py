@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
@@ -47,6 +48,91 @@ def _strip_markdown_fences(text: str) -> str:
         if t.rstrip().endswith("```"):
             t = t.rstrip()[:-3].rstrip()
     return t
+
+
+_ROLE_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "pm",
+        re.compile(
+            r"(требован|mvp|продукт|user\s*stor|бэклог|roadmap|функциональн)",
+            re.I,
+        ),
+    ),
+    (
+        "architect",
+        re.compile(
+            r"(архитектур|стек\s*технолог|микросервис|system\s*design|high[- ]level\s*design)",
+            re.I,
+        ),
+    ),
+    (
+        "devops",
+        re.compile(
+            r"(разверн|деплой|deploy|инфра|ci/?cd|docker|kubernetes|k8s|ansible|"
+            r"сервер|gitlab|репозит|terraform|helm|nginx|pipeline)",
+            re.I,
+        ),
+    ),
+    (
+        "backend",
+        re.compile(
+            r"(\bapi\b|backend|бэкенд|сервис|эндпоинт|rest|graphql|баз[аы]\s*данн|postgres|redis)",
+            re.I,
+        ),
+    ),
+    (
+        "frontend",
+        re.compile(
+            r"(сайт|веб[- ]?страниц|ui\b|ux\b|frontend|фронтенд|график|chart|react|vue|angular|"
+            r"верстк|лендинг|dashboard|дашборд)",
+            re.I,
+        ),
+    ),
+    (
+        "qa",
+        re.compile(
+            r"(тестир|qa\b|smoke|regression|e2e|автотест|проверь\s*работ|баг)",
+            re.I,
+        ),
+    ),
+)
+
+
+def _roles_from_message(user_message: str) -> list[str]:
+    text = (user_message or "").strip()
+    if not text:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for role, pat in _ROLE_SIGNALS:
+        if pat.search(text) and role not in seen:
+            seen.add(role)
+            found.append(role)
+    return found
+
+
+def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
+    """
+    Быстрая маршрутизация без LLM по ключевым словам.
+    None — эвристика не уверена, нужен intake через модель.
+    """
+    roles = _roles_from_message(user_message)
+    if not roles:
+        return None
+    if len(roles) >= 2:
+        return {
+            "mode": "full",
+            "primary_role": None,
+            "roles": roles,
+            "reason": "heuristic: в запросе несколько зон (роли: " + ", ".join(roles) + ")",
+        }
+    role = roles[0]
+    return {
+        "mode": "direct",
+        "primary_role": role,
+        "roles": [role],
+        "reason": f"heuristic: одна зона — {role}",
+    }
 
 
 def parse_orchestration_route(intake_output: str) -> dict[str, Any]:

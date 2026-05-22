@@ -22,6 +22,7 @@ from services.agent_graph_service.dev_prompts import (
 )
 from services.agent_graph_service.orchestration_route import (
     PRIMARY_ROLE_TO_STEP,
+    heuristic_orchestration_route,
     parse_orchestration_route,
     pipeline_for_direct,
     step_keys_to_skip_when_direct,
@@ -207,7 +208,12 @@ INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "120"
 # Маршрутизация intake: не отправляем в LLM весь user_message (длинные вопросы = долгий prompt / дорого).
 INTAKE_USER_MSG_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_MAX_CHARS", "14000"))
 INTAKE_USER_MSG_TAIL_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_TAIL_CHARS", "4000"))
-INTAKE_LLM_TIMEOUT_SEC = float(os.getenv("AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC", "120"))
+INTAKE_LLM_TIMEOUT_SEC = float(os.getenv("AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC", "90"))
+INTAKE_HEURISTIC_ENABLED = os.getenv("AGENT_ORCHESTRATION_INTAKE_HEURISTIC", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
@@ -400,14 +406,11 @@ def _stream_chat_then_sanitize(
         throttle: dict[str, Any] = {"last_t": 0.0, "last_len": -1}
         parts: list[str] = []
         if not stream:
-            try:
-                resp = model.invoke(messages, config=config)
-                raw = resp.content if isinstance(resp.content, str) else str(resp.content)
-                text = _sanitize_model_text(raw)
-                _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
-                return text
-            except Exception:
-                pass
+            resp = model.invoke(messages, config=config)
+            raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+            text = _sanitize_model_text(raw)
+            _patch_step_streaming_output(run_id, step_key, text, {"last_t": 0.0, "last_len": -1})
+            return text
         try:
             for chunk in model.stream(messages, config=config):
                 piece = _chunk_to_text(chunk)
@@ -1478,6 +1481,26 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     return True, msg, None, True
 
             team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
+            if step_key == "intake" and INTAKE_HEURISTIC_ENABLED:
+                hr = heuristic_orchestration_route(user_message)
+                if hr is not None:
+                    route_json = json.dumps({"orchestration_route": hr}, ensure_ascii=False)
+                    structured_payload: dict[str, Any] = {
+                        "attempt": 1,
+                        "max_attempts": 1,
+                        "intake_heuristic": True,
+                        "orchestration_route": hr,
+                    }
+                    team_patch_step(
+                        run_id,
+                        step_key,
+                        status="done",
+                        output_md=route_json,
+                        structured=structured_payload,
+                        finished_at=_utc_iso(),
+                    )
+                    accumulated[step_key] = route_json
+                    return True, route_json, None, False
             last_err = "unknown error"
             max_retries = MAX_INTAKE_RETRIES if step_key == "intake" else MAX_STEP_RETRIES
             for attempt in range(1, max_retries + 1):

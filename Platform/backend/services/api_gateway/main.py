@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -60,6 +61,8 @@ def _agent_graph_ws_base_url() -> str:
         return "ws://" + base[len("http://") :]
     return base
 
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="api-gateway", version="0.2.0")
 app.add_middleware(
@@ -1497,42 +1500,68 @@ async def agent_orchestrate_run_ws(project_id: str, run_id: str, websocket: WebS
     path = f"/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/ws"
     token = (websocket.query_params.get("access_token") or websocket.query_params.get("token") or "").strip()
     if not token:
+        logger.warning("orchestration ws: no token project_id=%s run_id=%s", project_id, run_id)
         await websocket.close(code=1008)
         mark_request("WS", path, 1008, time.monotonic() - started)
         return
     try:
         ctx = decode_auth_context(token)
-    except HTTPException:
+    except HTTPException as exc:
+        logger.warning("orchestration ws: jwt invalid project_id=%s run_id=%s detail=%s", project_id, run_id, exc.detail)
         await websocket.close(code=1008)
         mark_request("WS", path, 1008, time.monotonic() - started)
         return
     if not (ctx.roles & USER_ROLES):
+        logger.warning("orchestration ws: forbidden role project_id=%s run_id=%s roles=%s", project_id, run_id, ctx.roles)
         await websocket.close(code=1008)
         mark_request("WS", path, 1008, time.monotonic() - started)
         return
     try:
         await assert_project_tenant_access(ctx, project_id)
-    except HTTPException:
+    except HTTPException as exc:
+        logger.warning(
+            "orchestration ws: tenant access denied project_id=%s run_id=%s detail=%s",
+            project_id,
+            run_id,
+            exc.detail,
+        )
         await websocket.close(code=1008)
         mark_request("WS", path, 1008, time.monotonic() - started)
         return
 
     await websocket.accept()
     upstream_url = f"{_agent_graph_ws_base_url()}/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream/ws"
+    close_status = 101
     try:
+        logger.info("orchestration ws: client accepted, upstream=%s", upstream_url)
         async with websockets.connect(upstream_url, max_size=None, ping_interval=20, ping_timeout=120) as uws:
+            frames = 0
             async for raw in uws:
+                frames += 1
                 await websocket.send_text(raw)
+            logger.info(
+                "orchestration ws: upstream ended normally project_id=%s run_id=%s frames=%s",
+                project_id,
+                run_id,
+                frames,
+            )
     except WebSocketDisconnect:
-        pass
+        logger.info("orchestration ws: browser disconnected project_id=%s run_id=%s", project_id, run_id)
+        close_status = 1000
     except Exception:
-        pass
+        logger.exception(
+            "orchestration ws: upstream/proxy failed project_id=%s run_id=%s upstream=%s",
+            project_id,
+            run_id,
+            upstream_url,
+        )
+        close_status = 1011
     finally:
         try:
             await websocket.close()
         except Exception:
             pass
-        mark_request("WS", path, 101, time.monotonic() - started)
+        mark_request("WS", path, close_status, time.monotonic() - started)
 
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")

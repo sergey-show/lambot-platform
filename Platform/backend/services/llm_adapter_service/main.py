@@ -144,6 +144,17 @@ def _parse_sse_assistant_text(sse_raw: str) -> str:
     return "".join(parts)
 
 
+def _upstream_timeout_sec(body: dict[str, Any]) -> float:
+    """Короткие ответы (intake, классификаторы) — не держать upstream 15 минут."""
+    default = float(os.getenv("LLM_ADAPTER_UPSTREAM_TIMEOUT_SEC", "900"))
+    short = float(os.getenv("LLM_ADAPTER_SHORT_UPSTREAM_TIMEOUT_SEC", "90"))
+    threshold = int(os.getenv("LLM_ADAPTER_SHORT_MAX_TOKENS_THRESHOLD", "256"))
+    mt = body.get("max_tokens")
+    if isinstance(mt, int) and 0 < mt <= threshold:
+        return min(short, default)
+    return default
+
+
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
     """Прокси OpenAI chat.completions для LangChain ChatOpenAI: каждый вызов пишется в Langfuse (input/output)."""
@@ -204,6 +215,7 @@ async def openai_chat_completions(request: Request):
         return JSONResponse(out)
 
     stream = bool(body.get("stream"))
+    upstream_timeout = _upstream_timeout_sec(body)
 
     async def _finish_obs(acc: bytes, *, streamed: bool) -> None:
         if observation is None:
@@ -231,7 +243,7 @@ async def openai_chat_completions(request: Request):
     if not stream:
         acc = b""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(900.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(upstream_timeout)) as client:
                 r = await client.post(upstream, headers=headers, json=body)
                 acc = r.content
                 if r.status_code >= 400:
@@ -281,7 +293,7 @@ async def openai_chat_completions(request: Request):
     async def stream_gen():
         acc = bytearray()
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(900.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(upstream_timeout)) as client:
                 async with client.stream("POST", upstream, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         err = (await resp.aread()).decode("utf-8", errors="replace")

@@ -1283,6 +1283,8 @@ function renderPortal(): void {
   let orchPollTimer: number | null = null;
   let orchStreamAbort: AbortController | null = null;
   let orchStreamSocket: WebSocket | null = null;
+  /** Счётчик поколений stream: игнорировать onclose от устаревших WebSocket. */
+  let orchStreamGeneration = 0;
   let orchStreamFinished = false;
   let orchStreamLastRun: OrchRunData | null = null;
   let orchBrowserLogsTs = 0;
@@ -2429,6 +2431,7 @@ function renderPortal(): void {
     if (!currentProjectId || !runId) return;
     stopOrchestrationStream();
     orchStreamFinished = false;
+    const streamGen = ++orchStreamGeneration;
 
     const t = token();
     if (!t) {
@@ -2473,13 +2476,18 @@ function renderPortal(): void {
       applyOrchestrationDeltaEvent(runId, ev);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      if (streamGen !== orchStreamGeneration) return;
       if (orchStreamSocket !== ws) return;
       orchStreamSocket = null;
       if (orchStreamFinished) return;
       if (wsFallbackStarted) return;
       wsFallbackStarted = true;
-      appendOrchestrationLiveLog("websocket закрыт, переключение на NDJSON stream");
+      const code = typeof ev?.code === "number" ? ev.code : 0;
+      const reason = String(ev?.reason || "").trim();
+      appendOrchestrationLiveLog(
+        `websocket закрыт (code=${code}${reason ? `, ${reason}` : ""}), переключение на NDJSON stream`,
+      );
       void startOrchestrationNdjsonStream(runId);
     };
   };
@@ -3694,7 +3702,7 @@ function renderPortal(): void {
     loadProjectAiChatForProject(currentProjectId);
     renderProjectAiChat();
     setProjectAiChatBusy(false);
-    restoreOrchestrationForProject();
+    /* restoreOrchestrationForProject — только при смене проекта и при первом mount (см. внизу), не при каждом refresh списка. */
     void loadTargetsList();
   };
 
