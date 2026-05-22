@@ -123,6 +123,8 @@ STEP_EXTRA: dict[str, str] = {
         "\"allow_fallback\":true,\"fallback_service\":\"<service-id>\"}.\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
         "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, использовать только по явному запросу пользователя и при наличии соответствующих ресурсов.\n"
+        "- GitLab платформа (группа при создании проекта): gitlab_create_repository → repo_clone_or_sync (feature_branch) → search_codebase → repo_write_commit_push; "
+        "не выдумывай репозитории без gitlab_provision_status / list_project_repos.\n"
         "Верни только один исполнимый батч с ограниченным числом задач за итерацию (не монолитный план).\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "

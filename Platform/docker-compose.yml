@@ -95,6 +95,54 @@ services:
       timeout: 3s
       retries: 20
 
+  postgres-gitlab:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: gitlab_db
+    ports:
+      - "5438:5432"
+    volumes:
+      - postgres_gitlab_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d gitlab_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-repo-workspace:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: repo_workspace_db
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_repo_workspace_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d repo_workspace_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-code-index:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: code_index_db
+    ports:
+      - "5440:5432"
+    volumes:
+      - postgres_code_index_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d code_index_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis:7
     ports:
@@ -407,6 +455,9 @@ services:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
       API_GATEWAY_URL: http://api-gateway:8000
       DOCUMENTS_SERVICE_URL: http://documents-service:8015
+      GITLAB_SERVICE_URL: http://gitlab-service:8016
+      REPO_WORKSPACE_SERVICE_URL: http://repo-workspace-service:8018
+      CODE_INDEX_SERVICE_URL: http://code-index-service:8017
       ADMIN_SERVICE_URL: http://admin-service:8006
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -446,6 +497,96 @@ services:
       llm-adapter-service:
         condition: service_started
       documents-service:
+        condition: service_started
+      gitlab-service:
+        condition: service_started
+      repo-workspace-service:
+        condition: service_started
+      code-index-service:
+        condition: service_started
+
+  gitlab-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.gitlab_service.main:app --host 0.0.0.0 --port 8016"
+    ports:
+      - "8016:8016"
+    environment:
+      GITLAB_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-gitlab:5432/gitlab_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+      ADAPTER_SERVICE_URL: http://adapter-service:8008
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      # С --profile gitlab: GITLAB_URL=http://gitlab-ce  GITLAB_PROVISION_MOCK=0  GITLAB_ADMIN_TOKEN=glpat-...
+      GITLAB_URL: ${GITLAB_URL:-http://gitlab-ce}
+      GITLAB_ADMIN_TOKEN: ${GITLAB_ADMIN_TOKEN:-}
+      GITLAB_ROOT_GROUP_PATH: ${GITLAB_ROOT_GROUP_PATH:-lambot}
+      GITLAB_ROOT_GROUP_ID: ${GITLAB_ROOT_GROUP_ID:-}
+      GITLAB_PROVISION_ENABLED: ${GITLAB_PROVISION_ENABLED:-1}
+      GITLAB_PROVISION_MOCK: ${GITLAB_PROVISION_MOCK:-1}
+      GITLAB_SSL_VERIFY: ${GITLAB_SSL_VERIFY:-1}
+      GITLAB_GROUP_ACCESS_TOKEN_EXPIRE_DAYS: ${GITLAB_GROUP_ACCESS_TOKEN_EXPIRE_DAYS:-365}
+    depends_on:
+      postgres-gitlab:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      adapter-service:
+        condition: service_started
+
+  code-index-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.code_index_service.main:app --host 0.0.0.0 --port 8017"
+    ports:
+      - "8017:8017"
+    environment:
+      CODE_INDEX_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-code-index:5432/code_index_db
+      REPO_WORKSPACE_ROOT: /var/lambot/repo-workspaces
+      REPO_WORKSPACE_SERVICE_URL: http://repo-workspace-service:8018
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_EVENTS: platform.events
+    volumes:
+      - repo_workspaces_data:/var/lambot/repo-workspaces
+    depends_on:
+      postgres-code-index:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      repo-workspace-service:
+        condition: service_started
+      llm-adapter-service:
+        condition: service_started
+
+  repo-workspace-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_SYSTEM_DEPS: "1"
+    command: sh -c "uvicorn services.repo_workspace_service.main:app --host 0.0.0.0 --port 8018"
+    ports:
+      - "8018:8018"
+    environment:
+      REPO_WORKSPACE_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-repo-workspace:5432/repo_workspace_db
+      REPO_WORKSPACE_ROOT: /var/lambot/repo-workspaces
+      ADAPTER_SERVICE_URL: http://adapter-service:8008
+      GITLAB_SERVICE_URL: http://gitlab-service:8016
+      CODE_INDEX_SERVICE_URL: http://code-index-service:8017
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      REPO_WORKSPACE_GIT_TIMEOUT_SEC: ${REPO_WORKSPACE_GIT_TIMEOUT_SEC:-600}
+    volumes:
+      - repo_workspaces_data:/var/lambot/repo-workspaces
+    depends_on:
+      postgres-repo-workspace:
+        condition: service_healthy
+      adapter-service:
+        condition: service_started
+      gitlab-service:
         condition: service_started
 
   admin-service:
@@ -547,6 +688,37 @@ services:
     depends_on:
       api-gateway:
         condition: service_started
+
+  # GitLab CE (опционально, тяжёлый ~4–8 GB RAM): docker compose --profile gitlab up -d
+  # UI с хоста: http://localhost:${GITLAB_CE_BIND:-8929} — первый вход: docker exec platform-gitlab-ce grep Password /etc/gitlab/initial_root_password
+  # Создайте root PAT (api) и группу lambot, затем в .env: GITLAB_ADMIN_TOKEN=..., GITLAB_PROVISION_MOCK=0
+  gitlab-ce:
+    profiles: ["gitlab"]
+    image: gitlab/gitlab-ce:17.6.4-ce.0
+    container_name: platform-gitlab-ce
+    hostname: gitlab-ce
+    restart: unless-stopped
+    shm_size: "512m"
+    ports:
+      - "${GITLAB_CE_BIND:-8929}:80"
+      - "${GITLAB_CE_SSH_BIND:-2224}:22"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url '${GITLAB_CE_EXTERNAL_URL:-http://gitlab-ce}'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = 22
+        prometheus_monitoring['enable'] = false
+    volumes:
+      - gitlab_ce_config:/etc/gitlab
+      - gitlab_ce_logs:/var/log/gitlab
+      - gitlab_ce_data:/var/opt/gitlab
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1/api/v4/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
 
   # Langfuse LLM observability (опционально): docker compose --profile langfuse up -d
   # Внутри сети compose: Postgres/Redis/ClickHouse/Minio/worker без проброса портов на хост.
@@ -693,6 +865,10 @@ volumes:
   postgres_orchestrator_data:
   postgres_adapter_data:
   postgres_documents_data:
+  postgres_gitlab_data:
+  postgres_repo_workspace_data:
+  postgres_code_index_data:
+  repo_workspaces_data:
   clickhouse_data:
   rustfs_data:
   langfuse_postgres_data:
@@ -700,3 +876,6 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
+  gitlab_ce_config:
+  gitlab_ce_logs:
+  gitlab_ce_data:

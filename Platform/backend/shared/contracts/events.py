@@ -39,6 +39,10 @@ class EventTypes:
     DEPLOY_REQUESTED = "deploy.requested"
     DEPLOY_COMPLETED = "deploy.completed"
     PIPELINE_FAILED = "pipeline.failed"
+    GITLAB_PROVISION_COMPLETED = "gitlab.provision.completed"
+    GITLAB_PROVISION_FAILED = "gitlab.provision.failed"
+    CODE_INDEX_REQUESTED = "code.index.requested"
+    CODE_INDEX_COMPLETED = "code.index.completed"
     # AI agent worker (optional; публикуются оркестратором агентов при появлении)
     AGENT_TASK_QUEUED = "agent.task.queued"
     AGENT_TASK_FINISHED = "agent.task.finished"

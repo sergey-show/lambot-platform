@@ -737,6 +737,13 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "get_project_docs_context",
         "upsert_project_document",
         "list_project_documents",
+        "gitlab_provision_status",
+        "gitlab_create_repository",
+        "list_project_repos",
+        "repo_clone_or_sync",
+        "repo_read_file",
+        "repo_write_commit_push",
+        "search_codebase",
     }
 )
 

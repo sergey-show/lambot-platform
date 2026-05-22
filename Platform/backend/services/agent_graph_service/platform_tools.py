@@ -12,6 +12,7 @@ from uuid import UUID
 import httpx
 from langchain_core.tools import StructuredTool, tool
 
+from services.agent_graph_service.git_platform_tools import GIT_PLATFORM_FACTORIES, build_git_platform_tools
 from services.agent_graph_service.tool_policy import fetch_tool_policy
 
 ADAPTER_URL = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
@@ -500,6 +501,7 @@ def _make_ansible_run_template(pid: str):
 
 
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
+    **GIT_PLATFORM_FACTORIES,
     "get_development_context": _make_get_development_context,
     "get_project_status": _make_get_project_status,
     "list_infra_resources": _make_list_infra_resources,
@@ -549,8 +551,11 @@ def build_platform_tools(project_id: UUID) -> list[Any]:
     tools: list[Any] = []
 
     for key, factory in BUILTIN_FACTORIES.items():
+        if key in GIT_PLATFORM_FACTORIES:
+            continue
         if builtin_flags.get(key, True):
             tools.append(factory(pid))
+    tools.extend(build_git_platform_tools(project_id, builtin_flags))
 
     for spec in policy.get("http_tools") or []:
         if isinstance(spec, dict) and spec.get("tool_name") and spec.get("url_template"):

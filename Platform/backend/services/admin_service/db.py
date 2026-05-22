@@ -113,6 +113,13 @@ def _seed_agent_graph_builtin_tools() -> None:
         "get_project_docs_context": "RAG-контекст документации проекта (wiki)",
         "upsert_project_document": "Создать/обновить документ проекта (wiki + версии)",
         "list_project_documents": "Список документов проекта (wiki)",
+        "gitlab_provision_status": "Статус GitLab-группы проекта (платформа)",
+        "gitlab_create_repository": "Создать репозиторий в GitLab-группе проекта",
+        "list_project_repos": "Список локальных repo workspace",
+        "repo_clone_or_sync": "Клон/update workspace; feature_branch для работы",
+        "repo_read_file": "Чтение файла из workspace",
+        "repo_write_commit_push": "Запись файлов, commit, push",
+        "search_codebase": "Семантический поиск по индексу кода",
     }
     try:
         with SessionLocal() as db:

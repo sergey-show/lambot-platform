@@ -19,6 +19,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from services.adapter_service.agent_demo import run_agent_demo as run_agent_demo_pipeline
+from services.adapter_service.gitlab_credentials import load_gitlab_credentials
+from shared.gitlab_constants import GITLAB_PLATFORM_CATEGORY, GITLAB_PLATFORM_RESOURCE_LABEL
 from services.adapter_service.ssh_command_validator import classify_ssh_command
 from services.adapter_service.ssh_confirm import issue_confirmation_token, verify_confirmation_token
 from services.adapter_service.ssh_ops import (
@@ -2251,6 +2253,29 @@ def get_development_context(project_id: UUID, db: Session = Depends(get_db)) -> 
             for a in assignments
         ],
         "infra_resources": [_resource_public(r) for r in resources if _is_resource_enabled(r)],
+        "gitlab_platform": _gitlab_platform_summary(db, project_id, resources),
+    }
+
+
+def _gitlab_platform_summary(db: Session, project_id: UUID, resources: list) -> dict:
+    from shared.gitlab_constants import GITLAB_PLATFORM_RESOURCE_LABEL
+
+    gl = load_gitlab_credentials(db, project_id)
+    prov = None
+    for r in resources:
+        if r.category == "gitlab" and r.label == GITLAB_PLATFORM_RESOURCE_LABEL:
+            prov = _resource_public(r)
+            break
+    return {
+        "configured": gl is not None,
+        "group_path": (gl or {}).get("group_path"),
+        "gitlab_url": (gl or {}).get("gitlab_url"),
+        "provisioning": (gl or {}).get("provisioning"),
+        "resource": prov,
+        "workflow_hint": (
+            "При создании проекта создаётся только GitLab-группа и токен. Репозитории: gitlab_create_repository → "
+            "repo_clone_or_sync (feature_branch для работы) → search_codebase → repo_write_commit_push."
+        ),
     }
 
 
@@ -2282,6 +2307,52 @@ def post_agent_demo_run(
     )
     _emit_activity(project_id, act, "agent_demo.run", st, summ, out)
     return out
+
+
+class GitlabPlatformBindingBody(BaseModel):
+    value_json: dict = Field(default_factory=dict)
+    secret_plain: str = Field(..., min_length=1)
+
+
+@app.put("/api/v1/internal/projects/{project_id}/gitlab-platform-binding")
+def internal_gitlab_platform_binding(
+    project_id: UUID,
+    body: GitlabPlatformBindingBody,
+    db: Session = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> dict:
+    """Вызывается gitlab-service после создания группы и group access token."""
+    if (x_internal_token or "") != INTERNAL_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not _project_exists(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    vj = dict(body.value_json or {})
+    vj.setdefault("enabled", True)
+    _upsert_infra_credential_row(
+        db,
+        project_id,
+        GITLAB_PLATFORM_CATEGORY,
+        GITLAB_PLATFORM_RESOURCE_LABEL,
+        vj,
+        body.secret_plain,
+    )
+    db.commit()
+    return {"status": "ok", "category": GITLAB_PLATFORM_CATEGORY, "label": GITLAB_PLATFORM_RESOURCE_LABEL}
+
+
+@app.get("/api/v1/internal/projects/{project_id}/gitlab-credentials")
+def internal_gitlab_credentials(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> dict:
+    """Только для repo-workspace / code-index (токен не отдаётся агентам напрямую)."""
+    if (x_internal_token or "") != INTERNAL_SETTINGS_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    creds = load_gitlab_credentials(db, project_id)
+    if not creds:
+        raise HTTPException(status_code=404, detail="GitLab credentials not configured for project")
+    return creds
 
 
 @app.post("/api/v1/internal/projects/{project_id}/agent-demo/run")
