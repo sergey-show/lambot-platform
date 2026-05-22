@@ -192,6 +192,7 @@ FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("pm",),
     ("architect",),
     ("devops_plan", "backend_plan", "frontend_plan"),
+    ("execution_plan",),
     ("implementation",),
     ("deploy",),
     ("qa_validation",),
@@ -915,7 +916,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         dag_layers = _active_dag_layers()
         # Режим «живого» исполнения (граф/инструменты на планах): из JSON шагов pm/architect (live_execution),
         # либо при resume — по факту execution_tasks / текущему шагу; отдельного LLM после intake нет.
-        role_execution_mode = False
+        role_execution_mode = site_build_intent(
+            str((existing_run or {}).get("user_message") or user_message or "")
+        )
         for s in prev_steps:
             if not isinstance(s, dict):
                 continue
@@ -1643,9 +1646,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             text = env.summary_md
                             structured_payload["step_envelope"] = env.to_dict()
                             halt_pipeline = (
-                                (not env.pipeline_continue)
+                                env.step_status == "need_user_clarification"
                                 or bool(env.questions_for_user)
-                                or env.step_status == "need_user_clarification"
+                                or (
+                                    not env.pipeline_continue
+                                    and env.step_status != "complete"
+                                )
                             )
                             if step_key == "qa_validation" and not halt_pipeline:
                                 sm = (env.summary_md or "").lower()
