@@ -41,6 +41,10 @@ from services.agent_graph_service.gitlab_actions import (
     gitlab_repo_create_intent,
     parse_repo_slug_from_message,
 )
+from services.agent_graph_service.orchestration_intents import (
+    looks_like_fake_tool_call_text,
+    site_build_intent,
+)
 from services.agent_graph_service.graph_runner import invoke_graph
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.redis_team import cache_latest_run_id
@@ -554,7 +558,12 @@ def _execution_change_request_heuristic(text: str) -> bool:
     )
     if any(m in t for m in infra_markers):
         return True
+    if site_build_intent(text):
+        return True
     maintenance_ru = (
+        "сделай",
+        "создай",
+        "построй",
         "убери",
         "уберите",
         "удали",
@@ -1324,6 +1333,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "gitlab_provision_status → gitlab_create_repository. "
                         f"repo_slug для создания: {parse_repo_slug_from_message(user_message) or 'app'}."
                     )
+                elif site_build_intent(user_message):
+                    graph_prompt = (
+                        f"{user_message}\n\n"
+                        "ОБЯЗАТЕЛЬНО через function calling (не JSON в тексте ответа). "
+                        "Не вызывай run_product_planning — это не новый MVP. "
+                        "Порядок: gitlab_provision_status → list_project_repos (или gitlab_create_repository) → "
+                        "repo_clone_or_sync → repo_write_commit_push (HTML/JS/CSS с мок-данными и графиками, светлая тема). "
+                        "При необходимости get_development_context и upsert_project_document."
+                    )
                 graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{graph_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
                 team_patch_step(
@@ -1359,6 +1377,18 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "Модель описала вызов инструмента текстом, но не выполнила его. "
                         "Проверьте GitLab (группа проекта, GITLAB_PROVISION_MOCK=0, токен) и повторите запрос.\n\n"
                         + _sanitize_model_text(text)
+                    )
+                if int(ev.get("tool_calls_count") or 0) == 0 and looks_like_fake_tool_call_text(text):
+                    return (
+                        "Модель вернула JSON вызова инструмента текстом, но не выполнила function calling. "
+                        "Повторите запрос или включите модель с native tool calling (не только qwen без tools).\n\n"
+                        + _sanitize_model_text(text)
+                    )
+                if site_build_intent(user_message) and int(ev.get("tool_calls_count") or 0) == 0:
+                    return (
+                        "Запрос на создание сайта не выполнен: не было вызовов инструментов "
+                        "(repo_write_commit_push / gitlab / clone). Повторите с полным пайплайном или моделью с tool calling.\n\n"
+                        + (_sanitize_model_text(text) if text else "")
                     )
                 return _sanitize_model_text(text)
             if step_key == "intake":
@@ -1531,6 +1561,19 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         ev = role_execution_evidence.get(step_key)
                         if isinstance(ev, dict):
                             structured_payload["role_execution_evidence"] = ev
+                        # Direct frontend/backend: без tool calls шаг не считаем успешным (кроме явной паузы выше).
+                        if step_key in ("frontend_plan", "backend_plan"):
+                            calls = int((ev or {}).get("tool_calls_count") or 0)
+                            results = int((ev or {}).get("tool_results_count") or 0)
+                            out_check = text or ""
+                            if (calls <= 0 or results <= 0) and (
+                                looks_like_fake_tool_call_text(out_check)
+                                or site_build_intent(user_message)
+                            ):
+                                raise RuntimeError(
+                                    "direct_step_no_tools: модель не вызвала инструменты платформы "
+                                    f"(tool_calls={calls}); для создания сайта/кода нужен function calling или full pipeline"
+                                )
                         if role_execution_mode:
                             calls = int((ev or {}).get("tool_calls_count") or 0)
                             results = int((ev or {}).get("tool_results_count") or 0)

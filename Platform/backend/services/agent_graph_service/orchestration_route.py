@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
+from services.agent_graph_service.orchestration_intents import site_build_intent
 
 VALID_PRIMARY_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend", "qa"})
 
@@ -119,6 +120,20 @@ def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
     roles = _roles_from_message(user_message)
     if not roles:
         return None
+    # «Сделай сайт с графиками» — не direct-чат одного frontend: нужен пайплайн (архитектор, репо, деплой).
+    if site_build_intent(user_message):
+        if "frontend" not in roles:
+            roles.append("frontend")
+        if "backend" not in roles and re.search(r"(api|mock|данн|backend|сервис)", user_message, re.I):
+            roles.append("backend")
+        if len(roles) == 1 and roles[0] == "frontend":
+            roles = ["frontend", "architect"]
+        return {
+            "mode": "full",
+            "primary_role": None,
+            "roles": roles,
+            "reason": "heuristic: создание сайта/дашборда — полный пайплайн",
+        }
     if len(roles) >= 2:
         return {
             "mode": "full",
