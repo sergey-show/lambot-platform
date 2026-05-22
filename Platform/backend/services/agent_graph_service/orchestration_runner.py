@@ -35,6 +35,11 @@ from services.agent_graph_service.execution_plan_parse import (
 )
 from services.agent_graph_service.execution_publish import fetch_project_tenant_id, publish_ai_team_execution_tasks
 from services.agent_graph_service import langfuse_tracing
+from services.agent_graph_service.gitlab_actions import (
+    execute_gitlab_create_repository,
+    gitlab_repo_create_intent,
+    parse_repo_slug_from_message,
+)
 from services.agent_graph_service.graph_runner import invoke_graph
 from services.agent_graph_service.llm_config import build_chat_model
 from services.agent_graph_service.redis_team import cache_latest_run_id
@@ -1290,7 +1295,33 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     model, final_messages, _lf_cfg(obs_step_key=step_key), run_id=run_id, step_key=step_key
                 )
             if direct_answer and step_key in DIRECT_TOOL_STEPS:
-                graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{user_message}"
+                if gitlab_repo_create_intent(user_message):
+                    slug = parse_repo_slug_from_message(user_message) or "app"
+                    team_patch_step(
+                        run_id,
+                        step_key,
+                        status="running",
+                        output_md=f"⏳ GitLab: создание репозитория `{slug}`…",
+                    )
+                    ok_gl, gl_text = execute_gitlab_create_repository(project_id, slug)
+                    role_execution_evidence[step_key] = {
+                        "tool_calls_count": 1 if ok_gl else 0,
+                        "tool_results_count": 1 if ok_gl else 0,
+                        "tool_names": ["gitlab_create_repository"] if ok_gl else [],
+                        "has_execution_tool_call": False,
+                        "gitlab_deterministic_fallback": True,
+                    }
+                    if ok_gl:
+                        return _sanitize_model_text(gl_text)
+                graph_prompt = user_message
+                if gitlab_repo_create_intent(user_message):
+                    graph_prompt = (
+                        f"{user_message}\n\n"
+                        "ОБЯЗАТЕЛЬНО вызови инструменты через function calling (не пиши JSON в текст): "
+                        "gitlab_provision_status → gitlab_create_repository. "
+                        f"repo_slug для создания: {parse_repo_slug_from_message(user_message) or 'app'}."
+                    )
+                graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{graph_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
                 team_patch_step(
                     run_id,
@@ -1298,13 +1329,33 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     status="running",
                     output_md="⏳ LangGraph ReAct: инструменты и формирование ответа…",
                 )
-                graph_result = invoke_graph(project_id, user_message, orchestration_run_id=run_id)
+                graph_result = invoke_graph(project_id, graph_prompt, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
+                ev = role_execution_evidence[step_key]
+                if (
+                    gitlab_repo_create_intent(user_message)
+                    and int(ev.get("tool_calls_count") or 0) == 0
+                ):
+                    slug = parse_repo_slug_from_message(user_message) or "app"
+                    ok_gl, gl_text = execute_gitlab_create_repository(project_id, slug)
+                    ev["gitlab_deterministic_fallback"] = True
+                    ev["tool_calls_count"] = 1 if ok_gl else 0
+                    ev["tool_results_count"] = 1 if ok_gl else 0
+                    if ok_gl:
+                        ev["tool_names"] = ["gitlab_create_repository"]
+                        role_execution_evidence[step_key] = ev
+                        return _sanitize_model_text(gl_text)
                 text = _extract_graph_text(graph_result)
                 if not text:
                     return (
                         "Инструментальный прогон выполнен, но не вернулся итоговый текст ответа. "
                         "Повторите запрос, чтобы агент сформировал финальный вывод из результатов инструментов."
+                    )
+                if gitlab_repo_create_intent(user_message) and int(ev.get("tool_calls_count") or 0) == 0:
+                    return (
+                        "Модель описала вызов инструмента текстом, но не выполнила его. "
+                        "Проверьте GitLab (группа проекта, GITLAB_PROVISION_MOCK=0, токен) и повторите запрос.\n\n"
+                        + _sanitize_model_text(text)
                     )
                 return _sanitize_model_text(text)
             if step_key == "intake":
