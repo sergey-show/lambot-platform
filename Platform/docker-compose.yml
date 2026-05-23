@@ -101,8 +101,6 @@ services:
       POSTGRES_USER: platform
       POSTGRES_PASSWORD: platform
       POSTGRES_DB: knowledge_db
-    ports:
-      - "5439:5432"
     volumes:
       - postgres_knowledge_data:/var/lib/postgresql/data
     healthcheck:
