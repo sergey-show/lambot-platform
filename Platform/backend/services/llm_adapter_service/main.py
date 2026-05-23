@@ -14,8 +14,14 @@ from shared.contracts.api import (
     LlmGenerateResponse,
 )
 from services.agent_graph_service import langfuse_tracing
+from services.llm_adapter_service.ollama_tool_coerce import coerce_chat_completion_payload
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_tool_calls_enabled() -> bool:
+    v = (os.getenv("LLM_ADAPTER_COERCE_OLLAMA_TOOL_CALLS") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 app = FastAPI(title="llm-adapter-service", version="0.4.0")
 
@@ -214,7 +220,12 @@ async def openai_chat_completions(request: Request):
             langfuse_tracing.flush()
         return JSONResponse(out)
 
+    request_had_tools = bool(body.get("tools"))
     stream = bool(body.get("stream"))
+    # Ollama OpenAI API отдаёт tool call в content; LangChain ждёт message.tool_calls.
+    if request_had_tools and stream and _coerce_tool_calls_enabled():
+        body = {**body, "stream": False}
+        stream = False
     upstream_timeout = _upstream_timeout_sec(body)
 
     async def _finish_obs(acc: bytes, *, streamed: bool) -> None:
@@ -246,6 +257,21 @@ async def openai_chat_completions(request: Request):
             async with httpx.AsyncClient(timeout=httpx.Timeout(upstream_timeout)) as client:
                 r = await client.post(upstream, headers=headers, json=body)
                 acc = r.content
+                if (
+                    r.status_code == 200
+                    and request_had_tools
+                    and _coerce_tool_calls_enabled()
+                    and acc
+                ):
+                    try:
+                        parsed = json.loads(acc)
+                        if isinstance(parsed, dict):
+                            coerced = coerce_chat_completion_payload(
+                                parsed, request_had_tools=True
+                            )
+                            acc = json.dumps(coerced, ensure_ascii=False).encode("utf-8")
+                    except Exception:
+                        logger.exception("ollama tool_calls coerce failed")
                 if r.status_code >= 400:
                     if observation is not None:
                         try:
