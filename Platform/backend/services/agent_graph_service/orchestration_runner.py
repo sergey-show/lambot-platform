@@ -219,6 +219,18 @@ INTAKE_HEURISTIC_ENABLED = os.getenv("AGENT_ORCHESTRATION_INTAKE_HEURISTIC", "1"
     "true",
     "yes",
 )
+# Подмешивать RAG-сводку wiki в каждый шаг (тяжёлый prompt, риск устаревших «✅ готово»). По умолчанию выкл — агенты ищут сами через get_project_docs_context.
+INLINE_RAG_IN_PROMPT = os.getenv("AGENT_ORCHESTRATION_INLINE_RAG", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+WIKI_ON_DEMAND_HINT = (
+    "Документация проекта (wiki/RAG) в этот промпт намеренно не подгружается целиком. "
+    "Если нужны факты из прошлых итераций — сформулируй узкий поисковый запрос (что именно: деплой, репо, URL, архитектура). "
+    "В режиме с инструментами (LangGraph): вызови get_project_docs_context(query=..., doc_types_csv=..., top_k=3–8). "
+    "Не утверждай «уже развёрнуто/готово» по wiki или догадкам — только «Факты исполнения» текущего run и development-context."
+)
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
@@ -820,11 +832,16 @@ def _build_system(
     acc = accumulated_md.strip() or "(предыдущие шаги ещё не дали выводов)"
     ex = execution_ctx.strip() or "(ещё нет — шаг execution_plan и воркеры не завершены)"
     restrictions = f"{infra_restrictions}\n\n---\n" if infra_restrictions else ""
+    docs_block = (
+        f"Документация проекта (wiki / RAG):\n{docs_ctx}\n\n---\n"
+        if (docs_ctx or "").strip()
+        else f"{WIKI_ON_DEMAND_HINT}\n\n---\n"
+    )
     tail = (
         f"{role_prompt}\n\n---\n{extra}\n\n---\n"
         f"{restrictions}"
         f"Контекст проекта (development-context):\n{ctx}\n\n---\n"
-        f"Документация проекта (wiki / RAG):\n{docs_ctx}\n\n---\n"
+        f"{docs_block}"
         f"Накопленные результаты шагов:\n{acc}\n\n---\n"
         f"Факты исполнения (структурированные задачи, воркеры):\n{ex}\n\n---\n"
         "Ответь по-русски, кроме шага execution_plan — там только JSON по инструкции. "
@@ -1234,7 +1251,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             role_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
             if step_key != "intake" and not ctx:
                 ctx = fetch_development_context_summary(pid)
-            if step_key != "intake" and not docs_ctx:
+            if step_key != "intake" and not docs_ctx and INLINE_RAG_IN_PROMPT:
                 docs_ctx = fetch_documents_context_summary(pid, user_message)
             if step_key != "intake" and not infra_restrictions:
                 infra_restrictions = _infer_infra_restrictions(ctx)

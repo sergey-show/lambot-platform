@@ -370,7 +370,7 @@ def _make_browser_session(pid: str):
 def _make_get_project_docs_context(pid: str):
     @tool
     def get_project_docs_context(query: str = "", doc_types_csv: str = "", top_k: int = 8) -> str:
-        """RAG-контекст проектной документации (Wiki): архитектура, user/admin guide, runbook, ADR. Используй перед планированием и изменениями. doc_types_csv пример: architecture,user_guide,admin_guide."""
+        """Поиск в wiki проекта (RAG по запросу). Вызывай только когда нужны факты из документации; query — конкретный вопрос (не весь user_message). doc_types_csv: architecture,user_guide,admin_guide. top_k 3–8."""
         types = []
         for raw in (doc_types_csv or "").split(","):
             v = raw.strip().lower()
