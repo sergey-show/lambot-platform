@@ -623,6 +623,39 @@ def _make_tracker_create_task(pid: str):
     return tracker_create_task
 
 
+def _make_search_knowledge(pid: str):
+    @tool
+    def search_knowledge(
+        query: str,
+        kb_ids_csv: str = "",
+        include_platform: bool = True,
+        top_k: int = 8,
+    ) -> str:
+        """Семантический поиск по базам знаний (платформа + проект). kb_ids_csv — uuid через запятую или пусто = все доступные."""
+        q = (query or "").strip()
+        if not q:
+            return json.dumps({"error": "query is required"})
+        kb_ids = [x.strip() for x in kb_ids_csv.split(",") if x.strip()]
+        payload: dict[str, Any] = {
+            "query": q,
+            "kb_ids": kb_ids,
+            "include_platform": bool(include_platform),
+            "top_k": max(1, min(int(top_k or 8), 25)),
+        }
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/knowledge/search",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=90.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return search_knowledge
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     **GIT_PLATFORM_FACTORIES,
     "get_development_context": _make_get_development_context,
@@ -643,6 +676,7 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "tracker_list_items": _make_tracker_list_items,
     "tracker_create_epic": _make_tracker_create_epic,
     "tracker_create_task": _make_tracker_create_task,
+    "search_knowledge": _make_search_knowledge,
 }
 
 

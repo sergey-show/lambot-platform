@@ -128,6 +128,7 @@ def _seed_agent_graph_builtin_tools() -> None:
         "tracker_list_items": "Трекер: список эпиков и задач проекта",
         "tracker_create_epic": "Трекер: создать эпик (backlog)",
         "tracker_create_task": "Трекер: создать задачу под эпиком с ролью агента",
+        "search_knowledge": "Поиск по базам знаний (Qdrant, платформа + проект)",
     }
     try:
         with SessionLocal() as db:

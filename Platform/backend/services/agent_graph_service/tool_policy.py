@@ -34,6 +34,7 @@ def fetch_tool_policy() -> dict[str, Any]:
             "tracker_list_items": True,
             "tracker_create_epic": True,
             "tracker_create_task": True,
+            "search_knowledge": True,
         },
         "http_tools": [],
     }

@@ -747,6 +747,7 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "tracker_list_items",
         "tracker_create_epic",
         "tracker_create_task",
+        "search_knowledge",
     }
 )
 

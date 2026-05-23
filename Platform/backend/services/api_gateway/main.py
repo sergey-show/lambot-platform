@@ -32,6 +32,7 @@ SANDBOX_SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "internal-sandbox-dev
 AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
 BROWSER_TOOL_SERVICE_URL = os.getenv("BROWSER_TOOL_SERVICE_URL", "http://browser-tool-service:8014")
 DOCUMENTS_SERVICE_URL = os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015")
+KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://knowledge-service:8019")
 GITLAB_SERVICE_URL = os.getenv("GITLAB_SERVICE_URL", "http://gitlab-service:8016")
 INTERNAL_PROJECT_ADMIN_TOKEN = os.getenv(
     "INTERNAL_PROJECT_ADMIN_TOKEN", "internal-project-admin-dev-token"
@@ -173,6 +174,10 @@ def _admin_tracker_headers() -> dict[str, str]:
         "Content-Type": "application/json",
         "X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN,
     }
+
+
+def _knowledge_internal_headers() -> dict[str, str]:
+    return {"X-Internal-Token": INTERNAL_LLM_SETTINGS_TOKEN}
 
 
 _HTTP_ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
@@ -1712,6 +1717,238 @@ async def documents_reindex(project_id: str, request: Request):
         "POST",
         f"{DOCUMENTS_SERVICE_URL}/api/v1/projects/{project_id}/documents/reindex",
         request,
+        timeout=180.0,
+    )
+
+
+@app.get("/api/v1/admin/knowledge/bases")
+async def admin_knowledge_bases_list(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    params = dict(request.query_params)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases",
+            headers=_knowledge_internal_headers(),
+            params=params or None,
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/knowledge/bases")
+async def admin_knowledge_bases_create(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases",
+        request,
+        extra_headers=_knowledge_internal_headers(),
+    )
+
+
+@app.get("/api/v1/admin/knowledge/bases/{kb_id}/documents")
+async def admin_knowledge_documents_list(kb_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents",
+            headers=_knowledge_internal_headers(),
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/knowledge/bases/{kb_id}/documents")
+async def admin_knowledge_document_upload(kb_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(status_code=400, detail="file is required")
+    data = await upload.read()
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents",
+            headers=_knowledge_internal_headers(),
+            files={"file": (upload.filename, data, upload.content_type or "application/octet-stream")},
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/admin/knowledge/search")
+async def admin_knowledge_search(request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "POST",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/search",
+        request,
+        extra_headers=_knowledge_internal_headers(),
+        timeout=90.0,
+    )
+
+
+@app.delete("/api/v1/admin/knowledge/bases/{kb_id}")
+async def admin_knowledge_base_delete(kb_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.delete(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}",
+            headers=_knowledge_internal_headers(),
+        )
+    mark_request("DELETE", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.delete("/api/v1/admin/knowledge/bases/{kb_id}/documents/{doc_id}")
+async def admin_knowledge_document_delete(kb_id: str, doc_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.delete(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents/{doc_id}",
+            headers=_knowledge_internal_headers(),
+        )
+    mark_request("DELETE", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.patch("/api/v1/admin/knowledge/bases/{kb_id}/documents/{doc_id}")
+async def admin_knowledge_document_patch(kb_id: str, doc_id: str, request: Request):
+    require_roles(request, {ROLE_SUPERADMIN})
+    return await proxy_json(
+        "PATCH",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents/{doc_id}",
+        request,
+        extra_headers=_knowledge_internal_headers(),
+        timeout=180.0,
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/knowledge/bases")
+async def project_knowledge_bases_list(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    params = dict(request.query_params)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases",
+            headers=_knowledge_internal_headers(),
+            params=params or None,
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/knowledge/bases")
+async def project_knowledge_bases_create(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases",
+        request,
+        extra_headers=_knowledge_internal_headers(),
+    )
+
+
+@app.get("/api/v1/projects/{project_id}/knowledge/bases/{kb_id}/documents")
+async def project_knowledge_documents_list(project_id: str, kb_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents",
+            headers=_knowledge_internal_headers(),
+            params={"project_id": project_id},
+        )
+    mark_request("GET", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/knowledge/bases/{kb_id}/documents")
+async def project_knowledge_document_upload(project_id: str, kb_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(status_code=400, detail="file is required")
+    data = await upload.read()
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}/documents",
+            headers=_knowledge_internal_headers(),
+            files={"file": (upload.filename, data, upload.content_type or "application/octet-stream")},
+        )
+    mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.post("/api/v1/projects/{project_id}/knowledge/search")
+async def project_knowledge_search(project_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    return await proxy_json(
+        "POST",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/search",
+        request,
+        extra_headers=_knowledge_internal_headers(),
+        timeout=90.0,
+    )
+
+
+@app.delete("/api/v1/projects/{project_id}/knowledge/bases/{kb_id}")
+async def project_knowledge_base_delete(project_id: str, kb_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.delete(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}",
+            headers=_knowledge_internal_headers(),
+        )
+    mark_request("DELETE", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.delete("/api/v1/projects/{project_id}/knowledge/bases/{kb_id}/documents/{doc_id}")
+async def project_knowledge_document_delete(project_id: str, kb_id: str, doc_id: str, request: Request):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.delete(
+            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}/documents/{doc_id}",
+            headers=_knowledge_internal_headers(),
+        )
+    mark_request("DELETE", request.url.path, str(response.status_code), time.monotonic() - started)
+    return _response_from_httpx(response)
+
+
+@app.patch("/api/v1/projects/{project_id}/knowledge/bases/{kb_id}/documents/{doc_id}")
+async def project_knowledge_document_patch(
+    project_id: str, kb_id: str, doc_id: str, request: Request
+):
+    ctx = require_roles(request, USER_ROLES)
+    await assert_project_tenant_access(ctx, project_id)
+    await assert_project_mutable(ctx, project_id)
+    return await proxy_json(
+        "PATCH",
+        f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}/documents/{doc_id}",
+        request,
+        extra_headers=_knowledge_internal_headers(),
         timeout=180.0,
     )
 

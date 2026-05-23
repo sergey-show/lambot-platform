@@ -240,7 +240,7 @@ INLINE_RAG_IN_PROMPT = os.getenv("AGENT_ORCHESTRATION_INLINE_RAG", "0").strip().
 WIKI_ON_DEMAND_HINT = (
     "Документация проекта (wiki/RAG) в этот промпт намеренно не подгружается целиком. "
     "Если нужны факты из прошлых итераций — сформулируй узкий поисковый запрос (что именно: деплой, репо, URL, архитектура). "
-    "В режиме с инструментами (LangGraph): вызови get_project_docs_context(query=..., doc_types_csv=..., top_k=3–8). "
+    "В режиме с инструментами (LangGraph): get_project_docs_context (wiki) или search_knowledge (базы знаний PDF/сканы, top_k 3–8). "
     "Не утверждай «уже развёрнуто/готово» по wiki или догадкам — только «Факты исполнения» текущего run и development-context."
 )
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")

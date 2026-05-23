@@ -95,6 +95,22 @@ services:
       timeout: 3s
       retries: 20
 
+  postgres-knowledge:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: knowledge_db
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_knowledge_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d knowledge_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   postgres-gitlab:
     image: postgres:16
     environment:
@@ -471,6 +487,7 @@ services:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
       API_GATEWAY_URL: http://api-gateway:8000
       DOCUMENTS_SERVICE_URL: http://documents-service:8015
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:8019
       GITLAB_SERVICE_URL: http://gitlab-service:8016
       REPO_WORKSPACE_SERVICE_URL: http://repo-workspace-service:8018
       CODE_INDEX_SERVICE_URL: http://code-index-service:8017
@@ -523,6 +540,42 @@ services:
       repo-workspace-service:
         condition: service_started
       code-index-service:
+        condition: service_started
+      knowledge-service:
+        condition: service_started
+
+  knowledge-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "uvicorn services.knowledge_service.main:app --host 0.0.0.0 --port 8019"
+    ports:
+      - "8019:8019"
+    environment:
+      KNOWLEDGE_DATABASE_URL: postgresql+psycopg://platform:platform@postgres-knowledge:5432/knowledge_db
+      LLM_ADAPTER_SERVICE_URL: http://llm-adapter-service:8005
+      INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_KNOWLEDGE_COLLECTION: ${QDRANT_KNOWLEDGE_COLLECTION:-lambot_knowledge_chunks}
+      KNOWLEDGE_VECTOR_SIZE: ${KNOWLEDGE_VECTOR_SIZE:-1536}
+      KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-5242880}
+      KNOWLEDGE_S3_ENDPOINT_URL: http://rustfs:9000
+      KNOWLEDGE_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      KNOWLEDGE_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      KNOWLEDGE_S3_BUCKET: ${KNOWLEDGE_S3_BUCKET:-platform-knowledge}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_KNOWLEDGE_INGEST: platform.knowledge.ingest
+      KAFKA_GROUP_KNOWLEDGE: knowledge-service
+    depends_on:
+      postgres-knowledge:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rustfs:
+        condition: service_started
+      llm-adapter-service:
         condition: service_started
 
   gitlab-service:
@@ -676,6 +729,7 @@ services:
       AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
       BROWSER_TOOL_SERVICE_URL: http://browser-tool-service:8014
       DOCUMENTS_SERVICE_URL: http://documents-service:8015
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:8019
     depends_on:
       project-service:
         condition: service_started
@@ -698,6 +752,8 @@ services:
       browser-tool-service:
         condition: service_started
       documents-service:
+        condition: service_started
+      knowledge-service:
         condition: service_started
       agent-graph-service:
         condition: service_started
@@ -890,6 +946,7 @@ volumes:
   postgres_orchestrator_data:
   postgres_adapter_data:
   postgres_documents_data:
+  postgres_knowledge_data:
   postgres_gitlab_data:
   postgres_repo_workspace_data:
   postgres_code_index_data:

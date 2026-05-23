@@ -530,6 +530,7 @@ function renderPortal(): void {
           <a href="#/portal/home" data-portal-view="home">Главная</a>
           <a href="#/portal/team" data-portal-view="team">ИИ Команда</a>
           <a href="#/portal/docs" data-portal-view="docs">Документация</a>
+          <a href="#/portal/knowledge" data-portal-view="knowledge">Базы знаний</a>
           <a href="#/portal/tracker" data-portal-view="tracker">Задачи агентов</a>
           <a href="#/portal/servers" data-portal-view="servers">Серверы</a>
           <a href="#/portal/k8s-install" data-portal-view="k8s-install">K8s: установка</a>
@@ -735,6 +736,45 @@ function renderPortal(): void {
           <button type="button" class="lp-btn lp-btn-ghost" id="docs-search-btn">Поиск</button>
         </div>
         <div id="docs-search-results" class="lp-orch-grid"></div>
+      </div>
+      </div>
+      <div id="view-knowledge" class="lp-portal-view">
+      <div class="lp-panel" id="knowledge-panel">
+        <h2>Базы знаний проекта</h2>
+        <p class="lp-muted">PDF и изображения до 5 МБ: индексация в очереди (Kafka), поиск — Qdrant. Доступны агентам через инструмент <code>search_knowledge</code> (и общие базы платформы).</p>
+        <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
+          <div class="lp-field" style="min-width:140px;"><label>Slug</label><input class="lp-input" id="kb-new-slug" placeholder="dev-notes" /></div>
+          <div class="lp-field" style="min-width:200px;"><label>Название</label><input class="lp-input" id="kb-new-name" placeholder="Разработка" /></div>
+          <div class="lp-field" style="min-width:140px;"><label>Категория</label>
+            <select class="lp-select" id="kb-new-category">
+              <option value="development">development</option>
+              <option value="analysis">analysis</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <button type="button" class="lp-btn" id="kb-create-btn">Создать базу</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="kb-refresh-btn">Обновить</button>
+        </div>
+        <p class="lp-muted" id="kb-status-line" style="font-size:12px;"></p>
+        <div id="kb-bases-list" class="lp-orch-grid"></div>
+        <div id="kb-docs-section" style="display:none;margin-top:16px;padding-top:12px;border-top:1px solid rgba(148,163,184,0.35);">
+          <h3 style="margin:0 0 8px;">Документы: <span id="kb-active-name"></span></h3>
+          <input type="hidden" id="kb-active-id" value="" />
+          <div class="lp-row" style="gap:8px;align-items:flex-end;margin-bottom:10px;">
+            <input type="file" id="kb-upload-file" accept=".pdf,image/*,.txt,.md" />
+            <button type="button" class="lp-btn" id="kb-upload-btn">Загрузить</button>
+          </div>
+          <div id="kb-docs-list" class="lp-orch-grid"></div>
+        </div>
+        <div class="lp-panel" style="margin-top:16px;">
+          <h3 style="margin-top:0;">Поиск</h3>
+          <div class="lp-row" style="gap:8px;align-items:flex-end;">
+            <input class="lp-input" id="kb-search-query" placeholder="Запрос" style="flex:1;" />
+            <label class="lp-muted" style="font-size:12px;"><input type="checkbox" id="kb-search-platform" checked /> + платформа</label>
+            <button type="button" class="lp-btn lp-btn-ghost" id="kb-search-btn">Искать</button>
+          </div>
+          <div id="kb-search-results" class="lp-orch-grid" style="margin-top:10px;"></div>
+        </div>
       </div>
       </div>
       <div id="view-tracker" class="lp-portal-view">
@@ -2970,6 +3010,125 @@ function renderPortal(): void {
     }
   };
 
+  const loadProjectKnowledgeBases = async () => {
+    const listEl = document.getElementById("kb-bases-list");
+    const stEl = document.getElementById("kb-status-line");
+    if (!listEl || !currentProjectId) return;
+    const t = token();
+    if (!t) return;
+    if (stEl) stEl.textContent = "Загрузка…";
+    try {
+      const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases`, {
+        headers: authHeader(t),
+      });
+      const data = await r.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (stEl) stEl.textContent = `${items.length} баз(ы)`;
+      listEl.innerHTML = items
+        .map((kb: Record<string, unknown>) => {
+          const id = String(kb.id || "");
+          return `<article class="lp-orch-card"><p style="margin:0;font-weight:600;">${escapeHtml(String(kb.name || ""))}</p>
+            <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(kb.category || ""))} · ${escapeHtml(String(kb.slug || ""))}</p>
+            <div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-open" data-id="${escapeHtml(id)}" data-name="${escapeHtml(String(kb.name || ""))}">Документы</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить базу</button>
+            </div></article>`;
+        })
+        .join("") || `<p class="lp-muted">Нет баз — создайте первую.</p>`;
+      listEl.querySelectorAll(".lp-kb-open").forEach((b) => {
+        b.addEventListener("click", () => {
+          const id = (b as HTMLButtonElement).dataset.id || "";
+          const name = (b as HTMLButtonElement).dataset.name || "";
+          (document.getElementById("kb-active-id") as HTMLInputElement).value = id;
+          const title = document.getElementById("kb-active-name");
+          if (title) title.textContent = name;
+          const sec = document.getElementById("kb-docs-section");
+          if (sec) sec.style.display = "block";
+          void loadProjectKbDocuments(id);
+        });
+      });
+      listEl.querySelectorAll(".lp-kb-delete").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const id = (b as HTMLButtonElement).dataset.id || "";
+          if (!id || !currentProjectId || !confirm("Удалить базу знаний и все её документы?")) return;
+          const resp = await fetch(
+            `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(id)}`,
+            { method: "DELETE", headers: authHeader(token()) },
+          );
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          const sec = document.getElementById("kb-docs-section");
+          if (sec) sec.style.display = "none";
+          void loadProjectKnowledgeBases();
+        });
+      });
+    } catch (e) {
+      if (stEl) stEl.textContent = String(e);
+    }
+  };
+
+  const loadProjectKbDocuments = async (kbId: string) => {
+    const listEl = document.getElementById("kb-docs-list");
+    if (!listEl || !currentProjectId || !kbId) return;
+    const t = token();
+    const r = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(kbId)}/documents`,
+      { headers: authHeader(t) },
+    );
+    const data = await r.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    listEl.innerHTML = items
+      .map((d: Record<string, unknown>) => {
+        const st = String(d.status || "");
+        const id = String(d.id || "");
+        const en = d.enabled !== false;
+        return `<article class="lp-orch-card" style="${en ? "" : "opacity:0.65;"}"><p style="margin:4px 0;font-weight:600;">${escapeHtml(String(d.filename || ""))}</p>
+          <p class="lp-muted" style="font-size:12px;">${escapeHtml(st)} · chunks: ${Number(d.chunk_count || 0)} · ${en ? "вкл" : "выкл"}</p>
+          <div class="lp-row" style="gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-toggle" data-id="${escapeHtml(id)}" data-enabled="${en ? "0" : "1"}">${en ? "Выключить" : "Включить"}</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить</button>
+          </div></article>`;
+      })
+      .join("") || `<p class="lp-muted">Нет файлов.</p>`;
+    listEl.querySelectorAll(".lp-kb-doc-toggle").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const docId = (btn as HTMLButtonElement).dataset.id || "";
+        const enabled = (btn as HTMLButtonElement).dataset.enabled === "1";
+        if (!docId || !kbId || !currentProjectId) return;
+        const resp = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
+          {
+            method: "PATCH",
+            headers: { ...authHeader(token()), "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          },
+        );
+        if (!resp.ok) {
+          alert(await resp.text());
+          return;
+        }
+        void loadProjectKbDocuments(kbId);
+      });
+    });
+    listEl.querySelectorAll(".lp-kb-doc-delete").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const docId = (btn as HTMLButtonElement).dataset.id || "";
+        if (!docId || !kbId || !currentProjectId || !confirm("Удалить документ безвозвратно?")) return;
+        const resp = await fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
+          { method: "DELETE", headers: authHeader(token()) },
+        );
+        if (!resp.ok) {
+          alert(await resp.text());
+          return;
+        }
+        void loadProjectKbDocuments(kbId);
+      });
+    });
+  };
+
   const loadTrackerItems = async () => {
     const listEl = document.getElementById("tracker-items-list");
     const stEl = document.getElementById("tracker-status-line");
@@ -4456,6 +4615,72 @@ function renderPortal(): void {
   });
   document.getElementById("tracker-refresh-btn")?.addEventListener("click", () => void loadTrackerItems());
 
+  document.getElementById("kb-create-btn")?.addEventListener("click", async () => {
+    if (!currentProjectId) return;
+    const t = token();
+    const slug = (document.getElementById("kb-new-slug") as HTMLInputElement).value.trim();
+    const name = (document.getElementById("kb-new-name") as HTMLInputElement).value.trim();
+    const category = (document.getElementById("kb-new-category") as HTMLSelectElement).value;
+    if (!slug || !name) {
+      alert("Slug и название обязательны");
+      return;
+    }
+    const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases`, {
+      method: "POST",
+      headers: { ...authHeader(t), "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, name, category, description: "" }),
+    });
+    if (!resp.ok) {
+      alert(await resp.text());
+      return;
+    }
+    void loadProjectKnowledgeBases();
+  });
+  document.getElementById("kb-refresh-btn")?.addEventListener("click", () => void loadProjectKnowledgeBases());
+  document.getElementById("kb-upload-btn")?.addEventListener("click", async () => {
+    const kbId = (document.getElementById("kb-active-id") as HTMLInputElement).value.trim();
+    const fileInput = document.getElementById("kb-upload-file") as HTMLInputElement;
+    const file = fileInput.files?.[0];
+    if (!kbId || !file || !currentProjectId) {
+      alert("Выберите базу и файл");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch(
+      `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(kbId)}/documents`,
+      { method: "POST", headers: authHeader(token()), body: fd },
+    );
+    if (!resp.ok) {
+      alert(await resp.text());
+      return;
+    }
+    fileInput.value = "";
+    void loadProjectKbDocuments(kbId);
+  });
+  document.getElementById("kb-search-btn")?.addEventListener("click", async () => {
+    if (!currentProjectId) return;
+    const q = (document.getElementById("kb-search-query") as HTMLInputElement).value.trim();
+    const includePlatform = (document.getElementById("kb-search-platform") as HTMLInputElement).checked;
+    const out = document.getElementById("kb-search-results");
+    if (!q || !out) return;
+    const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/search`, {
+      method: "POST",
+      headers: { ...authHeader(token()), "Content-Type": "application/json" },
+      body: JSON.stringify({ query: q, include_platform: includePlatform, top_k: 8 }),
+    });
+    const data = await resp.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    out.innerHTML = items
+      .map(
+        (it: Record<string, unknown>) =>
+          `<article class="lp-orch-card"><p class="lp-muted" style="font-size:12px;">score ${Number(it.score || 0)} · ${escapeHtml(String(it.filename || ""))}</p>
+          <p style="font-size:13px;white-space:pre-wrap;">${escapeHtml(String(it.excerpt || ""))}</p></article>`,
+      )
+      .join("") || `<p class="lp-muted">Ничего не найдено.</p>`;
+  });
+  (window as unknown as { __lpLoadKb?: () => void }).__lpLoadKb = () => void loadProjectKnowledgeBases();
+
   document.getElementById("tracker-edit-cancel")?.addEventListener("click", () => {
     const w = document.getElementById("tracker-edit-wrap");
     if (w) w.style.display = "none";
@@ -4953,6 +5178,115 @@ function renderSuperadminRunsLive(runs: AiTeamLiveRun[]): void {
       </tr>`;
     })
     .join("");
+}
+
+async function loadSaKnowledgeBases(): Promise<void> {
+  const token =
+    (document.getElementById("superadmin-token") as HTMLInputElement | null)?.value.trim() ||
+    getSuperadminTokenForUi();
+  const listEl = document.getElementById("sa-kb-list");
+  const stEl = document.getElementById("sa-kb-status");
+  if (!listEl || !token) return;
+  if (stEl) stEl.textContent = "Загрузка…";
+  const r = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases`, { headers: authHeader(token) });
+  const data = await r.json();
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (stEl) stEl.textContent = `${items.length} баз(ы) платформы`;
+  listEl.innerHTML = items
+    .map((kb: Record<string, unknown>) => {
+      const id = String(kb.id || "");
+      return `<article class="lp-orch-card"><p style="margin:0;font-weight:600;">${escapeHtml(String(kb.name || ""))}</p>
+        <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(kb.category || ""))}</p>
+        <div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <button type="button" class="lp-btn lp-btn-ghost sa-kb-open" data-id="${escapeHtml(id)}" data-title="${escapeHtml(String(kb.name || ""))}">Файлы</button>
+        <button type="button" class="lp-btn lp-btn-ghost sa-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить</button>
+        </div></article>`;
+    })
+    .join("") || `<p class="lp-muted">Пусто</p>`;
+  const renderSaKbDocs = async (kbId: string, token: string) => {
+    const dr = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents`, {
+      headers: authHeader(token),
+    });
+    const dd = await dr.json();
+    const docs = Array.isArray(dd.items) ? dd.items : [];
+    const docsEl = document.getElementById("sa-kb-docs");
+    if (!docsEl) return;
+    docsEl.innerHTML = docs
+      .map((d: Record<string, unknown>) => {
+        const docId = String(d.id || "");
+        const en = d.enabled !== false;
+        return `<article class="lp-orch-card" style="${en ? "" : "opacity:0.65;"}"><p>${escapeHtml(String(d.filename || ""))}</p>
+          <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(d.status || ""))} · ${en ? "вкл" : "выкл"}</p>
+          <div class="lp-row" style="gap:6px;margin-top:6px;">
+            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-toggle" data-id="${escapeHtml(docId)}" data-enabled="${en ? "0" : "1"}">${en ? "Выключить" : "Включить"}</button>
+            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-delete" data-id="${escapeHtml(docId)}" style="color:#b91c1c;">Удалить</button>
+          </div></article>`;
+      })
+      .join("") || `<p class="lp-muted">Нет файлов</p>`;
+    docsEl.querySelectorAll(".sa-kb-doc-toggle").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const docId = (btn as HTMLButtonElement).dataset.id || "";
+        const enabled = (btn as HTMLButtonElement).dataset.enabled === "1";
+        const resp = await fetch(
+          `${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
+          {
+            method: "PATCH",
+            headers: { ...authHeader(token), "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          },
+        );
+        if (!resp.ok) {
+          alert(await resp.text());
+          return;
+        }
+        void renderSaKbDocs(kbId, token);
+      });
+    });
+    docsEl.querySelectorAll(".sa-kb-doc-delete").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const docId = (btn as HTMLButtonElement).dataset.id || "";
+        if (!confirm("Удалить документ?")) return;
+        const resp = await fetch(
+          `${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
+          { method: "DELETE", headers: authHeader(token) },
+        );
+        if (!resp.ok) {
+          alert(await resp.text());
+          return;
+        }
+        void renderSaKbDocs(kbId, token);
+      });
+    });
+  };
+
+  listEl.querySelectorAll(".sa-kb-open").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const id = (b as HTMLButtonElement).dataset.id || "";
+      (document.getElementById("sa-kb-active-id") as HTMLInputElement).value = id;
+      const t = document.getElementById("sa-kb-active-title");
+      if (t) t.textContent = (b as HTMLButtonElement).dataset.title || "";
+      const wrap = document.getElementById("sa-kb-docs-wrap");
+      if (wrap) wrap.style.display = "block";
+      await renderSaKbDocs(id, token);
+    });
+  });
+  listEl.querySelectorAll(".sa-kb-delete").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const id = (b as HTMLButtonElement).dataset.id || "";
+      if (!id || !confirm("Удалить базу знаний и все документы?")) return;
+      const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: authHeader(token),
+      });
+      if (!resp.ok) {
+        alert(await resp.text());
+        return;
+      }
+      const wrap = document.getElementById("sa-kb-docs-wrap");
+      if (wrap) wrap.style.display = "none";
+      void loadSaKnowledgeBases();
+    });
+  });
 }
 
 async function loadSuperadminRunsLive(): Promise<void> {
@@ -5465,6 +5799,34 @@ function renderSuperadmin(): void {
         <div class="lp-field"><label>Frontend</label><textarea class="lp-textarea" id="prompt-frontend" rows="4" style="width:100%;max-width:720px;"></textarea></div>
         <button type="button" class="lp-btn" id="agent-dev-prompts-save">Сохранить промпты</button>
       </div>
+      <div class="lp-panel" id="knowledge-admin-panel">
+        <h2>Базы знаний платформы</h2>
+        <p class="lp-muted">Общие базы для всех проектов. Файлы PDF/изображения до 5 МБ → S3 (<code>platform-knowledge</code>) → очередь Kafka → эмбеддинги в Qdrant. Распознавание — общая LLM, чанки — embedding-модель.</p>
+        <div class="lp-row" style="flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:10px;">
+          <div class="lp-field"><label>Slug</label><input class="lp-input" id="sa-kb-slug" placeholder="platform-dev" style="min-width:140px;" /></div>
+          <div class="lp-field"><label>Название</label><input class="lp-input" id="sa-kb-name" placeholder="Разработка" style="min-width:180px;" /></div>
+          <div class="lp-field"><label>Категория</label>
+            <select class="lp-select" id="sa-kb-category">
+              <option value="development">development</option>
+              <option value="analysis">analysis</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <button type="button" class="lp-btn" id="sa-kb-create">Создать</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="sa-kb-refresh">Обновить</button>
+        </div>
+        <p class="lp-muted" id="sa-kb-status" style="font-size:12px;"></p>
+        <div id="sa-kb-list" class="lp-orch-grid"></div>
+        <div id="sa-kb-docs-wrap" style="display:none;margin-top:14px;">
+          <h3 style="font-size:15px;">Документы: <span id="sa-kb-active-title"></span></h3>
+          <input type="hidden" id="sa-kb-active-id" value="" />
+          <div class="lp-row" style="gap:8px;margin:8px 0;">
+            <input type="file" id="sa-kb-file" accept=".pdf,image/*,.txt,.md" />
+            <button type="button" class="lp-btn" id="sa-kb-upload">Загрузить</button>
+          </div>
+          <div id="sa-kb-docs" class="lp-orch-grid"></div>
+        </div>
+      </div>
       <div class="lp-panel" id="agent-graph-tools-panel">
         <h2>LangGraph agent tools</h2>
         <p class="lp-muted">Встроенные инструменты можно отключить. HTTP GET: URL с <code>{project_id}</code>, хосты <code>adapter-service</code> и <code>project-service</code>, путь <code>/api/v1/projects/...</code>.</p>
@@ -5630,12 +5992,56 @@ function renderSuperadmin(): void {
     }),
   );
 
-  const safeLoad = () =>
+  const safeLoad = () => {
     loadSuperadminData().catch((err) => {
       const healthNode = document.getElementById("services-health");
       if (healthNode) healthNode.innerHTML = `<p class="lp-error">${escapeHtml(String(err))}</p>`;
     });
+    void loadSaKnowledgeBases();
+  };
   document.getElementById("refresh-all")?.addEventListener("click", safeLoad);
+  document.getElementById("sa-kb-refresh")?.addEventListener("click", () => void loadSaKnowledgeBases());
+  document.getElementById("sa-kb-create")?.addEventListener("click", async () => {
+    const token =
+      (document.getElementById("superadmin-token") as HTMLInputElement)?.value.trim() ||
+      getSuperadminTokenForUi();
+    const slug = (document.getElementById("sa-kb-slug") as HTMLInputElement).value.trim();
+    const name = (document.getElementById("sa-kb-name") as HTMLInputElement).value.trim();
+    const category = (document.getElementById("sa-kb-category") as HTMLSelectElement).value;
+    const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases`, {
+      method: "POST",
+      headers: { ...authHeader(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, name, category }),
+    });
+    if (!resp.ok) {
+      alert(await resp.text());
+      return;
+    }
+    void loadSaKnowledgeBases();
+  });
+  document.getElementById("sa-kb-upload")?.addEventListener("click", async () => {
+    const token =
+      (document.getElementById("superadmin-token") as HTMLInputElement)?.value.trim() ||
+      getSuperadminTokenForUi();
+    const kbId = (document.getElementById("sa-kb-active-id") as HTMLInputElement).value.trim();
+    const file = (document.getElementById("sa-kb-file") as HTMLInputElement).files?.[0];
+    if (!kbId || !file) {
+      alert("Выберите базу и файл");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents`, {
+      method: "POST",
+      headers: authHeader(token),
+      body: fd,
+    });
+    if (!resp.ok) {
+      alert(await resp.text());
+      return;
+    }
+    void loadSaKnowledgeBases();
+  });
   document.getElementById("apply-filters")?.addEventListener("click", safeLoad);
   document.getElementById("ai-team-live-refresh")?.addEventListener("click", () => void loadSuperadminRunsLive());
   document.getElementById("ai-team-live-status")?.addEventListener("change", () => void loadSuperadminRunsLive());
@@ -5916,11 +6322,15 @@ function renderRoute(): void {
     }
     const w = window as unknown as { __lpPortalMounted?: boolean };
     if (w.__lpPortalMounted && document.getElementById("lp-portal-outlet")) {
-      syncPortalView(portalViewFromRoute(norm));
+      const pv = portalViewFromRoute(norm);
+      syncPortalView(pv);
+      if (pv === "knowledge") void (window as unknown as { __lpLoadKb?: () => void }).__lpLoadKb?.();
       return;
     }
     renderPortal();
-    syncPortalView(portalViewFromRoute(norm));
+    const pv = portalViewFromRoute(norm);
+    syncPortalView(pv);
+    if (pv === "knowledge") void (window as unknown as { __lpLoadKb?: () => void }).__lpLoadKb?.();
     return;
   }
   if (r === "/superadmin") {
