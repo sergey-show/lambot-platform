@@ -9,8 +9,14 @@ _BUILD_SITE = re.compile(
     re.I,
 )
 _FAKE_TOOL_JSON = re.compile(
-    r'^\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(arguments|args)"\s*:',
+    r'\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(arguments|args)"\s*:',
     re.I | re.DOTALL,
+)
+_OPS_FACTS = re.compile(
+    r"(uptime|load\s*average|ресурс|памят|ram\b|cpu\b|диск|disk\b|df\b|free\s+-m|"
+    r"хватает\s+ли|сколько\s+места|версия\s+linux|статус\s+сервис|нагрузк|"
+    r"свободн\w*\s+памят|использован\w*\s+памят|место\s+на\s+диск)",
+    re.I,
 )
 
 
@@ -47,9 +53,26 @@ def site_build_intent(message: str) -> bool:
     return False
 
 
+def _strip_markdown_json_fence(text: str) -> str:
+    t = (text or "").strip()
+    if not t.startswith("```"):
+        return t
+    t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.I)
+    t = re.sub(r"\s*```\s*$", "", t)
+    return t.strip()
+
+
+def operational_facts_intent(message: str) -> bool:
+    """Запрос фактов с сервера/инфры — нужны реальные tool calls, не текстовый JSON."""
+    t = (message or "").strip()
+    if not t:
+        return False
+    return bool(_OPS_FACTS.search(t))
+
+
 def looks_like_fake_tool_call_text(text: str) -> bool:
     """Модель описала tool call JSON в тексте, без native function calling."""
-    t = (text or "").strip()
-    if not t or not t.startswith("{"):
+    t = _strip_markdown_json_fence(text or "")
+    if not t:
         return False
-    return bool(_FAKE_TOOL_JSON.match(t))
+    return bool(_FAKE_TOOL_JSON.search(t))

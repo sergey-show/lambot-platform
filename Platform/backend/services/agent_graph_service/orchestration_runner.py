@@ -52,6 +52,7 @@ from services.agent_graph_service.orchestration_gates import (
 )
 from services.agent_graph_service.orchestration_intents import (
     looks_like_fake_tool_call_text,
+    operational_facts_intent,
     site_build_intent,
 )
 from services.agent_graph_service.graph_runner import invoke_graph
@@ -1375,6 +1376,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "repo_clone_or_sync → repo_write_commit_push (HTML/JS/CSS с мок-данными и графиками, светлая тема). "
                         "При необходимости get_development_context и upsert_project_document."
                     )
+                elif operational_facts_intent(user_message):
+                    graph_prompt = (
+                        f"{user_message}\n\n"
+                        "ОБЯЗАТЕЛЬНО через function calling (не JSON и не markdown-блок с name/arguments). "
+                        "Сначала get_development_context, затем ssh_run_command на реальный target_id из "
+                        "ssh_tools.ssh_targets_for_tools (не плейсхолдер <target_id>). "
+                        "Для uptime/ресурсов: uptime && free -m && df -h (или эквивалент). "
+                        "Ответ — только по фактам из результатов инструментов."
+                    )
                 graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{graph_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
                 team_patch_step(
@@ -1416,6 +1426,13 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         "Модель вернула JSON вызова инструмента текстом, но не выполнила function calling. "
                         "Повторите запрос или включите модель с native tool calling (не только qwen без tools).\n\n"
                         + _sanitize_model_text(text)
+                    )
+                if operational_facts_intent(user_message) and int(ev.get("tool_calls_count") or 0) == 0:
+                    return (
+                        "Запрос на факты с сервера не выполнен: не было вызовов инструментов "
+                        "(get_development_context / ssh_run_command). Проверьте SSH target в проекте "
+                        "и модель с tool calling.\n\n"
+                        + (_sanitize_model_text(text) if text else "")
                     )
                 if site_build_intent(user_message) and int(ev.get("tool_calls_count") or 0) == 0:
                     return (
@@ -1655,6 +1672,17 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         ev = role_execution_evidence.get(step_key)
                         if isinstance(ev, dict):
                             structured_payload["role_execution_evidence"] = ev
+                        if step_key == "devops_plan":
+                            calls = int((ev or {}).get("tool_calls_count") or 0)
+                            out_check = text or ""
+                            if calls <= 0 and (
+                                operational_facts_intent(user_message)
+                                or looks_like_fake_tool_call_text(out_check)
+                            ):
+                                raise RuntimeError(
+                                    "direct_devops_no_tools: для запроса нужны get_development_context "
+                                    f"и ssh_run_command (tool_calls={calls})"
+                                )
                         # Direct frontend/backend: без tool calls шаг не считаем успешным (кроме явной паузы выше).
                         if step_key in ("frontend_plan", "backend_plan"):
                             calls = int((ev or {}).get("tool_calls_count") or 0)

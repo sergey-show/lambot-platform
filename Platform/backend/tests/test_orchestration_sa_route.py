@@ -1,6 +1,10 @@
 """Маршрутизация SA и слои DAG."""
 
-from services.agent_graph_service.orchestration_intents import formal_spec_intent
+from services.agent_graph_service.orchestration_intents import (
+    formal_spec_intent,
+    looks_like_fake_tool_call_text,
+    operational_facts_intent,
+)
 from services.agent_graph_service.orchestration_route import (
     active_dag_layers,
     enrich_route_with_sa_if_needed,
@@ -47,3 +51,12 @@ def test_enrich_route_injects_sa():
     out = enrich_route_with_sa_if_needed({"mode": "direct", "roles": ["pm"], "primary_role": "pm"}, "Нужен глоссарий")
     assert "sa" in out["roles"]
     assert out["mode"] == "full"
+
+
+def test_operational_facts_intent_uptime():
+    assert operational_facts_intent("какой uptime сервера сейчас? и хватает ли там ресурсов?")
+
+
+def test_looks_like_fake_tool_call_markdown_fence():
+    text = '```json\n{\n  "name": "ssh_run_command",\n  "arguments": {"target_id": "<target_id>"}\n}\n```'
+    assert looks_like_fake_tool_call_text(text)
