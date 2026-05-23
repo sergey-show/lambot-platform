@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 _BUILD_SITE = re.compile(
@@ -62,12 +63,69 @@ def _strip_markdown_json_fence(text: str) -> str:
     return t.strip()
 
 
+def user_requests_tool_execution_approval(message: str) -> bool:
+    """Пользователь явно просит выполнять действия, а не только планировать."""
+    t = (message or "").lower()
+    if not t:
+        return False
+    markers = (
+        "выполняй",
+        "выполнить",
+        "реальн",
+        "действ",
+        "продолж",
+        "делай",
+        "запускай",
+        "создай репо",
+        "не спрашивай",
+        "разреш",
+        "подтверж",
+        "да,",
+        "да ",
+        "yes",
+        "go ahead",
+        "continue",
+    )
+    return any(m in t for m in markers)
+
+
 def operational_facts_intent(message: str) -> bool:
     """Запрос фактов с сервера/инфры — нужны реальные tool calls, не текстовый JSON."""
     t = (message or "").strip()
     if not t:
         return False
     return bool(_OPS_FACTS.search(t))
+
+
+def extract_tool_names_from_assistant_content(text: str) -> list[str]:
+    """Имена tools из JSON в content (Ollama OpenAI API без message.tool_calls)."""
+    raw = _strip_markdown_json_fence(text or "")
+    names: list[str] = []
+    if not raw:
+        return names
+    # Один объект или массив вызовов
+    if raw.startswith("["):
+        try:
+            arr = json.loads(raw)
+        except json.JSONDecodeError:
+            arr = None
+        if isinstance(arr, list):
+            for item in arr:
+                if isinstance(item, dict):
+                    nm = item.get("name")
+                    if isinstance(nm, str) and nm.strip():
+                        names.append(nm.strip())
+            return names
+    if _FAKE_TOOL_JSON.search(raw):
+        try:
+            obj = json.loads(raw[raw.find("{") :])
+        except json.JSONDecodeError:
+            return names
+        if isinstance(obj, dict):
+            nm = obj.get("name")
+            if isinstance(nm, str) and nm.strip():
+                names.append(nm.strip())
+    return names
 
 
 def looks_like_fake_tool_call_text(text: str) -> bool:

@@ -1,9 +1,11 @@
 """Маршрутизация SA и слои DAG."""
 
 from services.agent_graph_service.orchestration_intents import (
+    extract_tool_names_from_assistant_content,
     formal_spec_intent,
     looks_like_fake_tool_call_text,
     operational_facts_intent,
+    user_requests_tool_execution_approval,
 )
 from services.agent_graph_service.orchestration_route import (
     active_dag_layers,
@@ -60,3 +62,15 @@ def test_operational_facts_intent_uptime():
 def test_looks_like_fake_tool_call_markdown_fence():
     text = '```json\n{\n  "name": "ssh_run_command",\n  "arguments": {"target_id": "<target_id>"}\n}\n```'
     assert looks_like_fake_tool_call_text(text)
+
+
+def test_extract_tool_names_from_content():
+    names = extract_tool_names_from_assistant_content(
+        '{"name": "gitlab_provision_status", "arguments": {}}'
+    )
+    assert names == ["gitlab_provision_status"]
+
+
+def test_user_requests_tool_execution_approval():
+    assert user_requests_tool_execution_approval("выполняй реальные действия")
+    assert not user_requests_tool_execution_approval("какой uptime")
