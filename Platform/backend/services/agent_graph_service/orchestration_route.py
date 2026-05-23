@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
-from services.agent_graph_service.orchestration_intents import formal_spec_intent, site_build_intent
+from services.agent_graph_service.orchestration_intents import formal_spec_intent
 
 VALID_PRIMARY_ROLES = frozenset({"sa", "pm", "architect", "devops", "backend", "frontend", "qa"})
 
@@ -142,27 +142,15 @@ def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
             "mode": "full",
             "primary_role": None,
             "roles": roles,
+            "live_execution": False,
             "reason": "heuristic: формальная спецификация — подключаем SA (артефакты + трекер)",
-        }
-    # «Сделай сайт с графиками» — не direct-чат одного frontend: нужен пайплайн (архитектор, репо, деплой).
-    if site_build_intent(user_message):
-        if "frontend" not in roles:
-            roles.append("frontend")
-        if "backend" not in roles and re.search(r"(api|mock|данн|backend|сервис)", user_message, re.I):
-            roles.append("backend")
-        if len(roles) == 1 and roles[0] == "frontend":
-            roles = ["frontend", "architect"]
-        return {
-            "mode": "full",
-            "primary_role": None,
-            "roles": roles,
-            "reason": "heuristic: создание сайта/дашборда — полный пайплайн",
         }
     if len(roles) >= 2:
         return {
             "mode": "full",
             "primary_role": None,
             "roles": roles,
+            "live_execution": False,
             "reason": "heuristic: в запросе несколько зон (роли: " + ", ".join(roles) + ")",
         }
     role = roles[0]
@@ -170,6 +158,7 @@ def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
         "mode": "direct",
         "primary_role": role,
         "roles": [role],
+        "live_execution": False,
         "reason": f"heuristic: одна зона — {role}",
     }
 
@@ -179,7 +168,13 @@ def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
     Ищет в тексте intake JSON с полем orchestration_route.
     Возвращает mode (full|direct), primary_role, reason.
     """
-    default: dict[str, Any] = {"mode": "full", "primary_role": None, "roles": [], "reason": ""}
+    default: dict[str, Any] = {
+        "mode": "full",
+        "primary_role": None,
+        "roles": [],
+        "live_execution": False,
+        "reason": "",
+    }
     text = _strip_markdown_fences(intake_output or "")
 
     def _normalize_roles(raw: Any) -> list[str]:
@@ -205,7 +200,13 @@ def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
         role = _normalize_role(obj.get("primary_role") or obj.get("role"))
         roles = _normalize_roles(obj.get("roles") or obj.get("needed_roles"))
         reason = str(obj.get("reason", ""))[:800]
-        out = {**default, "reason": reason, "roles": roles}
+        live_raw = obj.get("live_execution")
+        live = bool(live_raw) if isinstance(live_raw, bool) else str(live_raw or "").strip().lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        out = {**default, "reason": reason, "roles": roles, "live_execution": live}
         out["mode"] = mode
         out["primary_role"] = role
         if not role and len(roles) == 1:
@@ -289,22 +290,9 @@ def route_includes_sa(route: dict[str, Any] | None) -> bool:
 
 
 def enrich_route_with_sa_if_needed(route: dict[str, Any], user_message: str) -> dict[str, Any]:
-    """Если запрос требует формальных артефактов — включаем SA и full pipeline."""
-    out = dict(route)
-    if not formal_spec_intent(user_message):
-        return out
-    roles = list(out.get("roles") or [])
-    if "sa" not in roles:
-        roles.insert(0, "sa")
-    out["roles"] = roles
-    if out.get("mode") == "direct":
-        out["mode"] = "full"
-        out["primary_role"] = None
-    reason = str(out.get("reason") or "").strip()
-    suffix = "формальная спецификация — SA"
-    if suffix not in reason:
-        out["reason"] = f"{reason}; {suffix}".strip("; ").strip()
-    return out
+    """Маршрут задаёт intake (LLM); без повторной эвристики по ключевым словам."""
+    _ = user_message
+    return dict(route or {})
 
 
 # Слои DAG после intake (sa опционален по orchestration_route.roles).

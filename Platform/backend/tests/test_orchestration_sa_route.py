@@ -6,15 +6,21 @@ from services.agent_graph_service.orchestration_intents import (
     extract_tool_names_from_assistant_content,
     formal_spec_intent,
     looks_like_fake_tool_call_text,
-    operational_facts_intent,
     looks_like_invalid_architect_output,
     user_requests_tool_execution_approval,
+)
+from services.agent_graph_service.orchestration_policy import (
+    direct_skip_keys,
+    direct_use_execution_tail,
+    dod_applies_to_step,
+    live_execution_from_route,
 )
 from services.agent_graph_service.execution_plan_parse import normalize_worker_execution_tasks
 from services.agent_graph_service.orchestration_route import (
     active_dag_layers,
     enrich_route_with_sa_if_needed,
     heuristic_orchestration_route,
+    parse_orchestration_route,
     route_includes_sa,
 )
 
@@ -33,6 +39,7 @@ def test_heuristic_includes_sa():
     assert hr is not None
     assert "sa" in hr.get("roles", [])
     assert hr.get("mode") == "full"
+    assert hr.get("live_execution") is False
 
 
 def test_active_dag_layers_without_sa():
@@ -53,14 +60,46 @@ def test_route_includes_sa_none_roles():
     assert route_includes_sa(None) is False
 
 
-def test_enrich_route_injects_sa():
-    out = enrich_route_with_sa_if_needed({"mode": "direct", "roles": ["pm"], "primary_role": "pm"}, "Нужен глоссарий")
-    assert "sa" in out["roles"]
-    assert out["mode"] == "full"
+def test_enrich_route_no_keyword_override():
+    route_in = {"mode": "direct", "roles": ["pm"], "primary_role": "pm", "live_execution": False}
+    out = enrich_route_with_sa_if_needed(route_in, "Нужен глоссарий")
+    assert out == route_in
 
 
-def test_operational_facts_intent_uptime():
-    assert operational_facts_intent("какой uptime сервера сейчас? и хватает ли там ресурсов?")
+def test_parse_live_execution_from_intake_json():
+    raw = json.dumps(
+        {
+            "orchestration_route": {
+                "mode": "direct",
+                "roles": ["devops"],
+                "primary_role": "devops",
+                "live_execution": False,
+                "reason": "ops question",
+            }
+        }
+    )
+    route = parse_orchestration_route(raw)
+    assert route["mode"] == "direct"
+    assert route["live_execution"] is False
+    assert not live_execution_from_route(route)
+
+
+def test_direct_skip_keys_consultative():
+    skip = direct_skip_keys("devops_plan", live_execution=False)
+    assert "devops_plan" not in skip
+    assert "pm_summary" not in skip
+    assert "execution_plan" in skip
+
+
+def test_direct_use_execution_tail_requires_live_flag():
+    route = {"mode": "direct", "primary_role": "devops", "live_execution": True}
+    assert direct_use_execution_tail("devops_plan", route)
+    route["live_execution"] = False
+    assert not direct_use_execution_tail("devops_plan", route)
+
+
+def test_dod_not_applied_without_live_execution():
+    assert not dod_applies_to_step("pm_summary", role_execution_mode=False)
 
 
 def test_looks_like_fake_tool_call_markdown_fence():

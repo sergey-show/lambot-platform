@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 from uuid import UUID
 
@@ -13,6 +14,18 @@ from services.agent_graph_service.dev_prompts import fetch_development_context_s
 
 ADAPTER_URL = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
 OPS_PROBE_COMMAND = "uptime && free -m && df -h"
+
+
+def command_for_operational_query(message: str) -> str:
+    """Команда SSH под типовой ops-вопрос пользователя."""
+    t = (message or "").lower()
+    if re.search(r"мест[оа]|диск|disk|df\b|свободн|занят", t):
+        return "df -h"
+    if re.search(r"памят|ram\b|memory|swap", t):
+        return "free -m"
+    if re.search(r"uptime|нагрузк|load average", t):
+        return "uptime"
+    return OPS_PROBE_COMMAND
 
 
 def _parse_context(project_id: str) -> dict[str, Any] | None:

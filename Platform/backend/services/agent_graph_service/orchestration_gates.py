@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.agent_graph_service.gitlab_actions import gitlab_repo_create_intent
-from services.agent_graph_service.orchestration_intents import site_build_intent
-
 DOD_GATE_STEP_KEYS = frozenset({"implementation", "deploy", "pm_summary"})
 
 EXECUTABLE_ACTION_KINDS = frozenset({"ssh_run_command", "kubernetes_query", "ansible_run_template"})
@@ -20,107 +17,6 @@ GITLAB_CODE_TOOLS = frozenset(
 )
 GITLAB_WRITE_TOOLS = frozenset({"repo_write_commit_push", "gitlab_create_repository"})
 DEPLOY_TOOL_NAMES = frozenset({"ssh_run_command", "ansible_run_template"})
-
-
-def dod_profile_for_message(user_message: str) -> str | None:
-    """Профиль DoD по запросу пользователя; None — не блокируем финальные шаги."""
-    msg = (user_message or "").strip()
-    if not msg:
-        return None
-    if site_build_intent(msg):
-        return "site_mvp"
-    if gitlab_repo_create_intent(msg):
-        return "gitlab_repo"
-    if _infra_change_intent(msg):
-        return "infra_change"
-    return None
-
-
-def _infra_change_intent(text: str) -> bool:
-    t = (text or "").lower()
-    markers = (
-        "задеплой",
-        "разверни",
-        "развернуть",
-        "деплой",
-        "deploy",
-        "на сервер",
-        "ssh",
-        "docker run",
-        "исправь на сервере",
-        "поменяй на сервере",
-        "обнови на сервере",
-    )
-    return any(m in t for m in markers)
-
-
-def dod_applies_to_step(step_key: str, user_message: str) -> bool:
-    return step_key in DOD_GATE_STEP_KEYS and dod_profile_for_message(user_message) is not None
-
-
-def dod_gate_issues(
-    *,
-    step_key: str,
-    user_message: str,
-    run_obj: dict[str, Any],
-    role_execution_evidence: dict[str, dict[str, Any]],
-    prev_steps: list[dict[str, Any]],
-) -> list[str]:
-    """Список нарушений DoD; пустой — gate пройден."""
-    if step_key not in DOD_GATE_STEP_KEYS:
-        return []
-    profile = dod_profile_for_message(user_message)
-    if not profile:
-        return []
-
-    evidence = _merge_role_evidence(role_execution_evidence, prev_steps)
-    tool_names = _all_tool_names(evidence)
-    tasks = run_obj.get("execution_tasks") if isinstance(run_obj.get("execution_tasks"), list) else []
-
-    gitlab_ok = _has_gitlab_code_artifact(tool_names, evidence)
-    deploy_ok = _has_deploy_artifact(tasks, tool_names, evidence)
-
-    issues: list[str] = []
-    if profile == "site_mvp":
-        if not gitlab_ok:
-            issues.append(
-                "DoD (сайт/MVP): нет подтверждения кода в GitLab "
-                "(нужен tool repo_write_commit_push или gitlab_create_repository + работа с репозиторием)."
-            )
-        if not deploy_ok:
-            issues.append(
-                "DoD (сайт/MVP): нет подтверждения деплоя на сервер "
-                "(SSH/ansible с развёртыванием, не только uname/df/docker --version)."
-            )
-    elif profile == "gitlab_repo":
-        if not gitlab_ok:
-            issues.append(
-                "DoD (репозиторий): нет подтверждения создания репозитория или коммита в GitLab."
-            )
-    elif profile == "infra_change":
-        if not (deploy_ok or gitlab_ok):
-            issues.append(
-                "DoD (изменение инфраструктуры): нет подтверждённых действий "
-                "(SSH/k8s/ansible или GitLab commit)."
-            )
-
-    return issues
-
-
-def dod_gate_user_questions(profile: str | None, issues: list[str]) -> list[str]:
-    if not issues:
-        return []
-    base = (
-        "Критерии готовности (DoD) не выполнены — нельзя считать деплой/реализацию успешными. "
-        "Нужно выполнить execution_plan / инструменты (GitLab, SSH), затем продолжить run."
-    )
-    if profile == "site_mvp":
-        return [
-            base,
-            "Для сайта: создайте репозиторий и закоммитьте файлы (repo_write_commit_push), "
-            "затем разверните на SSH-target (docker/nginx или аналог).",
-        ]
-    return [base]
 
 
 def _merge_role_evidence(
@@ -137,20 +33,6 @@ def _merge_role_evidence(
         if key and isinstance(ev, dict):
             merged[key] = ev
     return merged
-
-
-def _all_tool_names(evidence: dict[str, dict[str, Any]]) -> set[str]:
-    names: set[str] = set()
-    for ev in evidence.values():
-        if not isinstance(ev, dict):
-            continue
-        raw = ev.get("tool_names")
-        if isinstance(raw, list):
-            for n in raw:
-                s = str(n or "").strip()
-                if s:
-                    names.add(s)
-    return names
 
 
 def _has_gitlab_code_artifact(tool_names: set[str], evidence: dict[str, dict[str, Any]]) -> bool:
