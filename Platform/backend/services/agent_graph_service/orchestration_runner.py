@@ -22,9 +22,12 @@ from services.agent_graph_service.dev_prompts import (
 )
 from services.agent_graph_service.orchestration_route import (
     PRIMARY_ROLE_TO_STEP,
+    active_dag_layers,
+    enrich_route_with_sa_if_needed,
     heuristic_orchestration_route,
     parse_orchestration_route,
     pipeline_for_direct,
+    route_includes_sa,
     step_keys_to_skip_when_direct,
 )
 from services.agent_graph_service.orchestration_step_output import parse_step_envelope
@@ -65,6 +68,7 @@ from services.agent_graph_service.team_client import (
 # Какой промпт роли из admin подставить для шага
 STEP_PROMPT_ROLE: dict[str, str] = {
     "intake": "pm",
+    "sa": "sa",
     "pm": "pm",
     "architect": "architect",
     "devops_plan": "devops",
@@ -82,17 +86,29 @@ STEP_EXTRA: dict[str, str] = {
         "Сделай только маршрутизацию: кто нужен для решения задачи.\n"
         "Верни СТРОГО один JSON-объект, без преамбулы и без markdown.\n"
         "Формат:\n"
-        '{"orchestration_route":{"mode":"full|direct","roles":["pm|architect|devops|backend|frontend|qa"],"primary_role":"pm|architect|devops|backend|frontend|qa|null","reason":"кратко"}}\n'
+        '{"orchestration_route":{"mode":"full|direct","roles":["sa|pm|architect|devops|backend|frontend|qa"],'
+        '"primary_role":"sa|pm|architect|devops|backend|frontend|qa|null","reason":"кратко"}}\n'
         "rules:\n"
         "- roles: список реально нужных ролей для задачи (без лишних).\n"
-        "- если нужна ровно одна роль -> mode=direct и primary_role=<эта роль>.\n"
-        "- если нужно 2+ роли -> mode=full.\n"
+        "- если нужны ТЗ/глоссарий/traceability/эпики и задачи в трекере — включи sa и mode=full.\n"
+        "- простой MVP/сайт без формальной спеки — sa не включай.\n"
+        "- если нужна ровно одна роль (без sa) -> mode=direct и primary_role=<эта роль>.\n"
+        "- если нужно 2+ роли или sa -> mode=full.\n"
         "- Никакого плана/анализа/архитектуры на intake."
     ),
+    "sa": (
+        "Ты системный аналитик. Обязательные артефакты:\n"
+        "1) wiki: upsert_project_document — doc_type=spec (ТЗ), glossary, traceability; в ТЗ — mermaid (контекст, процессы).\n"
+        "2) трекер: tracker_create_epic (1+ эпиков), tracker_create_task (задачи с assignee_role devops|backend|frontend|qa|architect).\n"
+        "3) в meta_json/run_id карточек укажи run_id оркестрации; в задачах — requirement_id (REQ-001…).\n"
+        "4) tracker_list_items — проверь созданные карточки.\n"
+        "PM и архитектор работают после тебя — не дублируй их зоны (приоритеты релиза, стек). "
+        "В тексте шага дай краткое резюме + ссылки (slug документов, id эпиков/задач)."
+    ),
     "pm": (
-        "Ты PM-координатор. Сконцентрируйся на управлении ходом работ: декомпозиция задач, приоритеты, зависимости, "
-        "контроль последовательности шагов и критерии готовности для команды. "
-        "Не выдумывай технические детали кода/инфраструктуры — их формируют профильные роли."
+        "Ты PM: продуктовый scope релиза, приоритеты, KPI, риски для стейкхолдеров, согласование сроков. "
+        "Опирайся на артефакты SA (ТЗ, трекер) если они есть в накопленных шагах. "
+        "Не пиши детальную техспеку, диаграммы AS-IS/TO-BE и матрицу traceability — это зона SA."
     ),
     "architect": (
         "Опиши целевую архитектуру, стек технологий, границы сервисов, данные и интеграции. "
@@ -174,7 +190,7 @@ STEP_META: dict[str, tuple[str, str]] = {k: (lbl, task) for k, lbl, task in DEFA
 STEP_ORDER: dict[str, int] = {k: i for i, (k, _lbl, _task) in enumerate(DEFAULT_PIPELINE)}
 # Только narrative-шаги ролей для финального отчёта (без execution_plan / implementation / deploy).
 PM_SUMMARY_SOURCE_STEP_KEYS = frozenset(
-    {"pm", "architect", "devops_plan", "backend_plan", "frontend_plan", "qa_validation"}
+    {"sa", "pm", "architect", "devops_plan", "backend_plan", "frontend_plan", "qa_validation"}
 )
 PM_SUMMARY_STEP_BODY_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_STEP_MAX_CHARS", "28000"))
 PM_SUMMARY_CTX_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_PM_SUMMARY_CTX_MAX_CHARS", "10000"))
@@ -194,16 +210,6 @@ CODING_MODEL_STEPS = frozenset(
     }
 )
 EXECUTABLE_ACTION_KINDS = frozenset({"ssh_run_command", "kubernetes_query", "ansible_run_template"})
-FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
-    ("pm",),
-    ("architect",),
-    ("devops_plan", "backend_plan", "frontend_plan"),
-    ("execution_plan",),
-    ("implementation",),
-    ("deploy",),
-    ("qa_validation",),
-    ("pm_summary",),
-)
 MAX_STEP_RETRIES = 3
 MAX_INTAKE_RETRIES = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_RETRIES", "1"))
 MAX_STEP_INVOCATIONS_PER_RUN = 4
@@ -786,10 +792,6 @@ def _task_is_diagnostic_only(task: dict[str, Any]) -> bool:
     return all(any(m in c.lower() for m in diagnostic_markers) for c in commands)
 
 
-def _active_dag_layers() -> tuple[tuple[str, ...], ...]:
-    return FULL_DAG_LAYERS
-
-
 def _should_force_tool_analysis(step_key: str, execution_change: bool) -> bool:
     if step_key not in ("devops_plan", "backend_plan", "frontend_plan"):
         return False
@@ -936,7 +938,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         step_output_signatures: dict[str, str] = {}
         step_output_repeats: dict[str, int] = {}
         role_execution_evidence: dict[str, dict[str, Any]] = {}
-        dag_layers = _active_dag_layers()
+        orchestration_route: dict[str, Any] = {}
+        route_obj0 = existing_run.get("architecture_json") if isinstance(existing_run.get("architecture_json"), dict) else {}
+        inner0 = route_obj0.get("orchestration_route") if isinstance(route_obj0.get("orchestration_route"), dict) else {}
+        if inner0:
+            orchestration_route = inner0
+        dag_layers = active_dag_layers(orchestration_route)
         # Режим «живого» исполнения (граф/инструменты на планах): из JSON шагов pm/architect (live_execution),
         # либо при resume — по факту execution_tasks / текущему шагу; отдельного LLM после intake нет.
         role_execution_mode = site_build_intent(
@@ -1417,6 +1424,39 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         + (_sanitize_model_text(text) if text else "")
                     )
                 return _sanitize_model_text(text)
+            if step_key == "sa":
+                graph_prompt = (
+                    f"{user_message}\n\n"
+                    f"ID прогона оркестрации (run_id для wiki и meta трекера): {run_id}\n\n"
+                    "Выполни шаг системного аналитика через function calling (не JSON в тексте):\n"
+                    "- upsert_project_document: spec, glossary, traceability (mermaid в content_md где нужно).\n"
+                    "- tracker_create_epic / tracker_create_task с assignee_role и meta run_id, requirement_id.\n"
+                    "- tracker_list_items в конце для проверки.\n"
+                    "Краткий итог в ответе: что создано (slug, id карточек)."
+                )
+                graph_pv = f"### LangGraph ReAct (SA)\n\n{graph_prompt}"
+                _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
+                team_patch_step(
+                    run_id,
+                    step_key,
+                    status="running",
+                    output_md="⏳ SA: wiki-артефакты и карточки трекера…",
+                )
+                graph_result = invoke_graph(project_id, graph_prompt, orchestration_run_id=run_id)
+                role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
+                text = _extract_graph_text(graph_result)
+                if not text:
+                    return (
+                        "Шаг SA выполнен через инструменты, но финальный текст не сформирован. "
+                        "Проверьте wiki и трекер в UI."
+                    )
+                ev = role_execution_evidence.get(step_key) or {}
+                if int(ev.get("tool_calls_count") or 0) == 0:
+                    return (
+                        "SA не вызвал инструменты (wiki/трекер). Повторите прогон или включите модель с tool calling.\n\n"
+                        + _sanitize_model_text(text)
+                    )
+                return _sanitize_model_text(text)
             if step_key == "intake":
                 intake_model_override = (os.getenv("AGENT_ORCHESTRATION_INTAKE_MODEL") or "").strip() or None
                 model = build_chat_model(
@@ -1452,8 +1492,17 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             debug_hint: str = "",
         ) -> tuple[bool, str | None, str | None, bool]:
             """Последний bool: halt_pipeline — остановить прогон (ожидание ответа пользователя)."""
-            nonlocal execution_ctx, role_execution_mode
+            nonlocal execution_ctx, role_execution_mode, dag_layers, orchestration_route
             label, _task = STEP_META.get(step_key, (step_key, ""))
+            if step_key == "sa" and not route_includes_sa(orchestration_route):
+                team_patch_step(
+                    run_id,
+                    step_key,
+                    status="skipped",
+                    output_md="Пропущено: intake не подключил системного аналитика (sa).",
+                    finished_at=_utc_iso(),
+                )
+                return True, "Пропущено: SA не в orchestration_route.roles.", None, False
             step_invocations[step_key] = step_invocations.get(step_key, 0) + 1
             if step_invocations[step_key] > MAX_STEP_INVOCATIONS_PER_RUN:
                 err = (
@@ -2148,7 +2197,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             return
         # Ранний flush: intake виден в Langfuse без ожидания конца всего пайплайна.
         langfuse_tracing.flush()
-        route = parse_orchestration_route(intake_text or "")
+        route = enrich_route_with_sa_if_needed(parse_orchestration_route(intake_text or ""), user_message)
+        orchestration_route = route
+        dag_layers = active_dag_layers(orchestration_route)
         team_patch_run(run_id, architecture_json={"orchestration_route": route})
         if route.get("mode") == "direct" and route.get("primary_role"):
             tail, specialist_key = pipeline_for_direct(route["primary_role"])

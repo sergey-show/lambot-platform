@@ -500,6 +500,129 @@ def _make_ansible_run_template(pid: str):
     return ansible_run_template
 
 
+def _parse_meta_json(meta_json: str) -> dict[str, Any]:
+    raw = (meta_json or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _make_tracker_list_items(pid: str):
+    @tool
+    def tracker_list_items(kind: str = "", limit: int = 200) -> str:
+        """Список эпиков и задач трекера проекта (видно в UI «Задачи агентов»). kind: epic|task или пусто."""
+        params: dict[str, str] = {"limit": str(max(1, min(int(limit or 200), 500)))}
+        k = (kind or "").strip().lower()
+        if k in ("epic", "task"):
+            params["kind"] = k
+        try:
+            r = httpx.get(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN},
+                params=params,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_list_items
+
+
+def _make_tracker_create_epic(pid: str):
+    @tool
+    def tracker_create_epic(
+        title: str,
+        description: str = "",
+        meta_json: str = "",
+        run_id: str = "",
+        seq: int = 0,
+    ) -> str:
+        """Создать эпик в трекере (backlog). meta_json — JSON: requirement_id, run_id и др."""
+        if not title.strip():
+            return json.dumps({"error": "title is required"})
+        meta = _parse_meta_json(meta_json)
+        rid = (run_id or "").strip()
+        if rid:
+            meta["run_id"] = rid
+        payload: dict[str, Any] = {
+            "kind": "epic",
+            "title": title.strip(),
+            "description": description or "",
+            "seq": int(seq or 0),
+        }
+        if meta:
+            payload["meta"] = meta
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_create_epic
+
+
+def _make_tracker_create_task(pid: str):
+    @tool
+    def tracker_create_task(
+        parent_epic_id: str,
+        title: str,
+        assignee_role: str,
+        description: str = "",
+        meta_json: str = "",
+        run_id: str = "",
+        requirement_id: str = "",
+        seq: int = 0,
+    ) -> str:
+        """Создать задачу под эпиком с ролью агента (devops|backend|frontend|qa|architect|pm|sa)."""
+        if not title.strip():
+            return json.dumps({"error": "title is required"})
+        parent = (parent_epic_id or "").strip()
+        if not parent:
+            return json.dumps({"error": "parent_epic_id is required"})
+        role = (assignee_role or "").strip().lower()
+        if not role:
+            return json.dumps({"error": "assignee_role is required"})
+        meta = _parse_meta_json(meta_json)
+        rid = (run_id or "").strip()
+        if rid:
+            meta["run_id"] = rid
+        req = (requirement_id or "").strip()
+        if req:
+            meta["requirement_id"] = req
+        payload: dict[str, Any] = {
+            "kind": "task",
+            "parent_id": parent,
+            "title": title.strip(),
+            "description": description or "",
+            "assignee_role": role,
+            "seq": int(seq or 0),
+        }
+        if meta:
+            payload["meta"] = meta
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_create_task
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     **GIT_PLATFORM_FACTORIES,
     "get_development_context": _make_get_development_context,
@@ -517,6 +640,9 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "upsert_project_document": _make_upsert_project_document,
     "list_project_documents": _make_list_project_documents,
     "ansible_run_template": _make_ansible_run_template,
+    "tracker_list_items": _make_tracker_list_items,
+    "tracker_create_epic": _make_tracker_create_epic,
+    "tracker_create_task": _make_tracker_create_task,
 }
 
 

@@ -31,6 +31,9 @@ def fetch_tool_policy() -> dict[str, Any]:
             "get_project_docs_context": True,
             "upsert_project_document": True,
             "list_project_documents": True,
+            "tracker_list_items": True,
+            "tracker_create_epic": True,
+            "tracker_create_task": True,
         },
         "http_tools": [],
     }

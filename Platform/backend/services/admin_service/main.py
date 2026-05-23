@@ -158,7 +158,7 @@ class AgentSettingsInternalResponse(BaseModel):
 
 class AgentDevelopmentPromptsPublicResponse(BaseModel):
     prompts: dict[str, str] = Field(
-        description="Ключ — роль: devops, backend, frontend, qa, architect, pm; значение — системный промпт"
+        description="Ключ — роль: sa, devops, backend, frontend, qa, architect, pm; значение — системный промпт"
     )
 
 
@@ -689,7 +689,7 @@ def admin_put_agent_development_prompts(
     _: None = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    allowed = {"devops", "backend", "frontend", "qa", "architect", "pm"}
+    allowed = {"sa", "devops", "backend", "frontend", "qa", "architect", "pm"}
     for role, text in body.prompts.items():
         if role not in allowed:
             raise HTTPException(status_code=400, detail=f"Unknown role: {role}")
@@ -744,6 +744,9 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "repo_read_file",
         "repo_write_commit_push",
         "search_codebase",
+        "tracker_list_items",
+        "tracker_create_epic",
+        "tracker_create_task",
     }
 )
 
@@ -1095,6 +1098,7 @@ class TrackerItemCreateBody(BaseModel):
     assignee_role: str | None = None
     status: str | None = None
     seq: int = 0
+    meta: dict | None = None
 
 
 class TrackerItemPatchBody(BaseModel):
@@ -1144,6 +1148,7 @@ def internal_tracker_create(
             assignee_role=body.assignee_role,
             status=st,
             seq=body.seq,
+            meta=body.meta,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

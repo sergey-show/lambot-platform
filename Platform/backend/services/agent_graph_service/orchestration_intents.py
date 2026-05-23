@@ -14,6 +14,27 @@ _FAKE_TOOL_JSON = re.compile(
 )
 
 
+_FORMAL_SPEC = re.compile(
+    r"(тз\b|техническ\w*\s+задани|спецификац\w*\s+требован|формальн\w*\s+требован|"
+    r"as[- ]?is|to[- ]?be|глоссарий|traceability|трассировк\w*\s+требован|"
+    r"матриц\w*\s+требован|user\s*stor|use\s*case|bpmn|диаграмм\w*\s+процесс|"
+    r"интеграц\w+\s+с\s+(crm|erp|1c|битрикс)|согласован\w*\s+тз)",
+    re.I,
+)
+
+
+def formal_spec_intent(message: str) -> bool:
+    """Нужен системный аналитик: формальные артефакты, эпики/задачи в трекере."""
+    t = (message or "").strip()
+    if not t:
+        return False
+    if _FORMAL_SPEC.search(t):
+        return True
+    if re.search(r"(эпик|бэклог|карточк\w*\s+в\s+трекер|задач\w+\s+для\s+агент)", t, re.I):
+        return True
+    return False
+
+
 def site_build_intent(message: str) -> bool:
     """Запрос на создание/сборку сайта или дашборда — не «консультация одной ролью»."""
     t = (message or "").strip()

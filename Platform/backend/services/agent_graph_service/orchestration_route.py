@@ -7,12 +7,15 @@ import re
 from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
-from services.agent_graph_service.orchestration_intents import site_build_intent
+from services.agent_graph_service.orchestration_intents import formal_spec_intent, site_build_intent
 
-VALID_PRIMARY_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend", "qa"})
+VALID_PRIMARY_ROLES = frozenset({"sa", "pm", "architect", "devops", "backend", "frontend", "qa"})
 
 # Роль из JSON → step_key в DEFAULT_PIPELINE
 PRIMARY_ROLE_TO_STEP: dict[str, str] = {
+    "sa": "sa",
+    "systems_analyst": "sa",
+    "analyst": "sa",
     "pm": "pm",
     "architect": "architect",
     "devops": "devops_plan",
@@ -35,6 +38,10 @@ def _normalize_role(raw: str | None) -> str | None:
         "be": "backend",
         "tester": "qa",
         "quality_assurance": "qa",
+        "systems_analyst": "sa",
+        "system_analyst": "sa",
+        "business_analyst": "sa",
+        "ba": "sa",
     }
     r = aliases.get(r, r)
     return r if r in VALID_PRIMARY_ROLES else None
@@ -53,9 +60,17 @@ def _strip_markdown_fences(text: str) -> str:
 
 _ROLE_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "sa",
+        re.compile(
+            r"(тз\b|техническ\w*\s+задани|спецификац\w*|глоссарий|traceability|трассировк|"
+            r"as[- ]?is|to[- ]?be|bpmn|use\s*case|формальн\w*\s+требован)",
+            re.I,
+        ),
+    ),
+    (
         "pm",
         re.compile(
-            r"(требован|mvp|продукт|user\s*stor|бэклог|roadmap|функциональн)",
+            r"(mvp|продукт|roadmap|приоритет|релиз|стейкхолдер|kpi|метрик\w*\s+продук)",
             re.I,
         ),
     ),
@@ -120,6 +135,15 @@ def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
     roles = _roles_from_message(user_message)
     if not roles:
         return None
+    if formal_spec_intent(user_message):
+        if "sa" not in roles:
+            roles.insert(0, "sa")
+        return {
+            "mode": "full",
+            "primary_role": None,
+            "roles": roles,
+            "reason": "heuristic: формальная спецификация — подключаем SA (артефакты + трекер)",
+        }
     # «Сделай сайт с графиками» — не direct-чат одного frontend: нужен пайплайн (архитектор, репо, деплой).
     if site_build_intent(user_message):
         if "frontend" not in roles:
@@ -187,12 +211,18 @@ def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
         if not role and len(roles) == 1:
             role = roles[0]
             out["primary_role"] = role
-        if mode == "full" and role and len(out["roles"]) <= 1:
+        if len(roles) >= 2:
+            out["mode"] = "full"
+            out["primary_role"] = None
+        elif mode == "full" and role and len(out["roles"]) <= 1:
             out["mode"] = "direct"
         if mode == "direct" and not role:
             out["mode"] = "full"
         if mode == "full" and role and not roles:
             out["roles"] = [role]
+        if "sa" in roles and len(roles) > 1:
+            out["mode"] = "full"
+            out["primary_role"] = None
         return out
 
     if '"orchestration_route"' not in text and "'orchestration_route'" not in text:
@@ -251,3 +281,46 @@ def step_keys_to_skip_when_direct(specialist_step_key: str) -> list[str]:
     """Все шаги кроме уже выполненного intake и выбранного специалиста (включая pm_summary)."""
     keep = {specialist_step_key, "intake"}
     return [k for k in ALL_STEP_KEYS if k not in keep]
+
+
+def route_includes_sa(route: dict[str, Any] | None) -> bool:
+    return "sa" in (route or {}).get("roles") or []
+
+
+def enrich_route_with_sa_if_needed(route: dict[str, Any], user_message: str) -> dict[str, Any]:
+    """Если запрос требует формальных артефактов — включаем SA и full pipeline."""
+    out = dict(route)
+    if not formal_spec_intent(user_message):
+        return out
+    roles = list(out.get("roles") or [])
+    if "sa" not in roles:
+        roles.insert(0, "sa")
+    out["roles"] = roles
+    if out.get("mode") == "direct":
+        out["mode"] = "full"
+        out["primary_role"] = None
+    reason = str(out.get("reason") or "").strip()
+    suffix = "формальная спецификация — SA"
+    if suffix not in reason:
+        out["reason"] = f"{reason}; {suffix}".strip("; ").strip()
+    return out
+
+
+# Слои DAG после intake (sa опционален по orchestration_route.roles).
+FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
+    ("sa",),
+    ("pm",),
+    ("architect",),
+    ("devops_plan", "backend_plan", "frontend_plan"),
+    ("execution_plan",),
+    ("implementation",),
+    ("deploy",),
+    ("qa_validation",),
+    ("pm_summary",),
+)
+
+
+def active_dag_layers(route: dict[str, Any] | None = None) -> tuple[tuple[str, ...], ...]:
+    if route_includes_sa(route):
+        return FULL_DAG_LAYERS
+    return tuple(layer for layer in FULL_DAG_LAYERS if layer != ("sa",))

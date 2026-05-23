@@ -759,6 +759,7 @@ function renderPortal(): void {
             <label>Роль агента</label>
             <select class="lp-select" id="tracker-new-role">
               <option value="">—</option>
+              <option value="sa">Системный аналитик</option>
               <option value="pm">PM</option>
               <option value="architect">Архитектор</option>
               <option value="devops">DevOps</option>
@@ -793,6 +794,7 @@ function renderPortal(): void {
             <label for="tracker-edit-role">Роль агента (для задачи)</label>
             <select class="lp-select" id="tracker-edit-role" style="max-width:280px;">
               <option value="">—</option>
+              <option value="sa">Системный аналитик</option>
               <option value="pm">PM</option>
               <option value="architect">Архитектор</option>
               <option value="devops">DevOps</option>
@@ -3031,6 +3033,13 @@ function renderPortal(): void {
           const kind = escapeHtml(String(it.kind || ""));
           const st = escapeHtml(rawSt);
           const role = it.assignee_role ? escapeHtml(String(it.assignee_role)) : "—";
+          const meta = it.meta && typeof it.meta === "object" ? (it.meta as Record<string, unknown>) : {};
+          const reqId = meta.requirement_id ? escapeHtml(String(meta.requirement_id)) : "";
+          const runRef = meta.run_id ? escapeHtml(String(meta.run_id).slice(0, 8)) : "";
+          const metaLine =
+            reqId || runRef
+              ? `<div class="lp-muted" style="font-size:11px;margin-top:4px;">${reqId ? `REQ: ${reqId}` : ""}${reqId && runRef ? " · " : ""}${runRef ? `run: ${runRef}…` : ""}</div>`
+              : "";
           const key = it.assignee_agent_key ? escapeHtml(String(it.assignee_agent_key)) : "";
           const editBtn = canEdit(it)
             ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-edit" data-id="${escapeHtml(id)}">Редактировать</button>`
@@ -3046,7 +3055,7 @@ function renderPortal(): void {
             editBtn || dispatchBtn || closeBtn || detailsBtn
               ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${detailsBtn}${editBtn}${dispatchBtn}${closeBtn}</div>`
               : "";
-          return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Роль: ${role}</p><p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
+          return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Роль: ${role}</p>${metaLine}<p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
         })
         .join("");
       const showTrackerEdit = (show: boolean) => {

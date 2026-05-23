@@ -1,7 +1,8 @@
 flowchart TB
   subgraph orchestrator["Оркестратор (orchestration_runner)"]
-    intake[intake: full / direct]
-    narrative[Шаги PM, architect, *_plan, implementation, deploy, QA]
+    intake[intake: full / direct + sa?]
+    sa[SA: spec, glossary, traceability, трекер]
+    narrative[PM, architect, *_plan, implementation, deploy, QA]
     execplan[execution_plan: JSON батч]
   end
 
@@ -22,7 +23,8 @@ flowchart TB
     ansible[ansible_run_template]
   end
 
-  intake --> narrative
+  intake --> sa
+  sa --> narrative
   narrative --> chat
   narrative --> react
   react -.->|get_project_docs_context по запросу| storage

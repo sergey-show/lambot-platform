@@ -76,6 +76,11 @@ def _seed_agent_development_prompts() -> None:
             "даёшь решение GO/NO_GO на основе фактов исполнения и доступных интеграций. "
             "Не выдумывай прохождение тестов — фиксируй только проверенные результаты."
         ),
+        "sa": (
+            "Ты системный аналитик проекта в Lambot. Формализуешь требования: ТЗ (spec), глоссарий, "
+            "traceability, диаграммы (mermaid в wiki). Создаёшь эпики и задачи в трекере с assignee_role "
+            "для DevOps/Backend/Frontend/QA/Architect. Не подменяешь PM (приоритеты релиза) и архитектора (стек)."
+        ),
     }
     try:
         with SessionLocal() as db:
@@ -120,6 +125,9 @@ def _seed_agent_graph_builtin_tools() -> None:
         "repo_read_file": "Чтение файла из workspace",
         "repo_write_commit_push": "Запись файлов, commit, push",
         "search_codebase": "Семантический поиск по индексу кода",
+        "tracker_list_items": "Трекер: список эпиков и задач проекта",
+        "tracker_create_epic": "Трекер: создать эпик (backlog)",
+        "tracker_create_task": "Трекер: создать задачу под эпиком с ролью агента",
     }
     try:
         with SessionLocal() as db:
