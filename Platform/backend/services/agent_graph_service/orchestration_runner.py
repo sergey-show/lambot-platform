@@ -34,6 +34,7 @@ from services.agent_graph_service.orchestration_step_output import parse_step_en
 from services.agent_graph_service.execution_plan_parse import (
     default_execution_tasks_if_empty,
     format_execution_tasks_markdown,
+    normalize_worker_execution_tasks,
     parse_execution_plan_payload,
     wait_for_ai_team_execution_tasks,
 )
@@ -54,6 +55,7 @@ from services.agent_graph_service.orchestration_gates import (
 from services.agent_graph_service.orchestration_intents import (
     extract_tool_names_from_assistant_content,
     looks_like_fake_tool_call_text,
+    looks_like_invalid_architect_output,
     operational_facts_intent,
     site_build_intent,
     user_requests_tool_execution_approval,
@@ -158,9 +160,12 @@ STEP_EXTRA: dict[str, str] = {
         "{\"target_id\":\"<uuid>\",\"template_id\":\"<template-id>\",\"variables\":{...},"
         "\"allow_fallback\":true,\"fallback_service\":\"<service-id>\"}.\n"
         "- noop: ничего не делать (только если реально нет доступных действий).\n"
-        "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, использовать только по явному запросу пользователя и при наличии соответствующих ресурсов.\n"
-        "- GitLab платформа (группа при создании проекта): gitlab_create_repository → repo_clone_or_sync (feature_branch) → search_codebase → repo_write_commit_push; "
-        "не выдумывай репозитории без gitlab_provision_status / list_project_repos.\n"
+        "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, только по явному запросу.\n"
+        "ЗАПРЕЩЕНО в action_kind: gitlab_create_repository, repo_clone_or_sync, search_codebase, repo_write_commit_push — "
+        "это инструменты LangGraph на шагах devops/backend/frontend_plan, воркеры их не выполняют. "
+        "Для GitLab/кода на этом шаге используй adapter_agent_demo (если уместно) или ssh_run_command.\n"
+        "kubernetes_query — только если в контексте есть kubernetes_clusters (не пустой список).\n"
+        "ansible_run_template — только с реальным template_id из каталога marketplace, не выдумывай *_template.\n"
         "Верни только один исполнимый батч с ограниченным числом задач за итерацию (не монолитный план).\n"
         "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
         "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
@@ -318,6 +323,8 @@ def _sanitize_model_text(text: str) -> str:
     if not t:
         return ""
     t = re.sub(r"<\|[^|>]+?\|>", "", t)
+    t = re.sub(r"<\|?(?:im_start|im_end|endoftext)\|?>", "", t, flags=re.I)
+    t = re.sub(r"</?redacted_thinking>", "", t, flags=re.I)
     return t.strip()
 
 
@@ -1824,6 +1831,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     if apply_structured:
                         env, _fb = parse_step_envelope(text)
                         if env:
+                            if (
+                                step_key == "architect"
+                                and site_build_intent(user_message)
+                                and looks_like_invalid_architect_output(env.summary_md, user_message)
+                            ):
+                                raise RuntimeError(
+                                    "architect_invalid_output: модель вернула шаблонный/meta-текст "
+                                    "вместо архитектуры по запросу (сайт/акции). "
+                                    "Повторите шаг или смените модель архитектора (не qwen с утечкой chat-template)."
+                                )
                             if env.live_execution is True:
                                 role_execution_mode = True
                             peer_responses: list[dict[str, Any]] = []
@@ -1898,6 +1915,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         while iteration <= PLAN_MAX_ITERATIONS:
                             team_patch_run(run_id, phase=f"planning_batch_{iteration}")
                             parsed, planner_meta = parse_execution_plan_payload(planner_text)
+                            parsed, norm_notes = normalize_worker_execution_tasks(parsed, ctx)
+                            if norm_notes:
+                                planner_meta = {**planner_meta, "task_normalization": norm_notes}
                             if not parsed and iteration == 1:
                                 parsed = default_execution_tasks_if_empty(ctx)
                             if PLAN_MAX_TASKS_PER_ITER > 0:

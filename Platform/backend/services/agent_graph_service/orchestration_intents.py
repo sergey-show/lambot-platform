@@ -134,3 +134,31 @@ def looks_like_fake_tool_call_text(text: str) -> bool:
     if not t:
         return False
     return bool(_FAKE_TOOL_JSON.search(t))
+
+
+_GARBAGE_ARCHITECT = re.compile(
+    r"initial analysis\s*&\s*planning|text fragment|await user feedback|"
+    r"provided text, which appears to be a fragment|redacted_thinking|"
+    r"end of response\"\s*,\s*\"questions_for_user\"|step 1:\s*initial analysis",
+    re.I,
+)
+
+
+def looks_like_invalid_architect_output(summary_md: str, user_message: str) -> bool:
+    """
+    Ответ архитектора не про задачу пользователя (утечка chat-template / meta-English).
+    """
+    s = (summary_md or "").strip()
+    if len(s) < 120:
+        return True
+    if _GARBAGE_ARCHITECT.search(s):
+        return True
+    if site_build_intent(user_message):
+        domain = re.search(
+            r"(акци|заявк|сайт|catalog|stock|order|frontend|backend|api|postgres|docker|gitlab|fastapi|react)",
+            s,
+            re.I,
+        )
+        if not domain and re.search(r"step\s+\d+:\s*", s, re.I):
+            return True
+    return False

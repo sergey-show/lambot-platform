@@ -1,12 +1,16 @@
 """Маршрутизация SA и слои DAG."""
 
+import json
+
 from services.agent_graph_service.orchestration_intents import (
     extract_tool_names_from_assistant_content,
     formal_spec_intent,
     looks_like_fake_tool_call_text,
     operational_facts_intent,
+    looks_like_invalid_architect_output,
     user_requests_tool_execution_approval,
 )
+from services.agent_graph_service.execution_plan_parse import normalize_worker_execution_tasks
 from services.agent_graph_service.orchestration_route import (
     active_dag_layers,
     enrich_route_with_sa_if_needed,
@@ -74,3 +78,30 @@ def test_extract_tool_names_from_content():
 def test_user_requests_tool_execution_approval():
     assert user_requests_tool_execution_approval("выполняй реальные действия")
     assert not user_requests_tool_execution_approval("какой uptime")
+
+
+def test_invalid_architect_output_detected():
+    bad = "## Step 1: Initial Analysis & Planning\n\nAwait User Feedback"
+    assert looks_like_invalid_architect_output(bad, "сделай сайт про акции")
+
+
+def test_normalize_execution_plan_drops_gitlab_and_k8s():
+    ctx = json.dumps(
+        {
+            "ssh_tools": {"ssh_targets_for_tools": [{"target_id": "ssh-1"}]},
+            "kubernetes_clusters": [],
+        }
+    )
+    tasks = [
+        {"title": "GitLab", "action_kind": "gitlab_create_repository", "payload": {}},
+        {"title": "K8s", "action_kind": "kubernetes_query", "payload": {"operation": "pods"}},
+        {
+            "title": "Ansible fake",
+            "action_kind": "ansible_run_template",
+            "payload": {"template_id": "api_service_template"},
+        },
+    ]
+    out, notes = normalize_worker_execution_tasks(tasks, ctx)
+    assert not any(t["action_kind"] == "gitlab_create_repository" for t in out)
+    assert any("ssh_run_command" in t["action_kind"] for t in out)
+    assert notes

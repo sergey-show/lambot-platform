@@ -12,6 +12,95 @@ from services.agent_graph_service.team_client import team_get_run
 
 MAX_TASKS_PER_BATCH = int(os.getenv("AGENT_PLAN_MAX_TASKS_PER_ITER", "5"))
 
+# action_kind, которые реально выполняет agent-worker-service.
+WORKER_ACTION_KINDS = frozenset(
+    {
+        "ssh_run_command",
+        "kubernetes_query",
+        "ansible_run_template",
+        "noop",
+        "adapter_agent_demo",
+        "gitlab_pipeline",
+    }
+)
+
+# Только LangGraph tools на шагах *_plan — воркеры не умеют.
+LANGGRAPH_ONLY_ACTION_KINDS = frozenset(
+    {
+        "gitlab_create_repository",
+        "repo_clone_or_sync",
+        "repo_read_file",
+        "repo_write_commit_push",
+        "search_codebase",
+        "gitlab_provision_status",
+        "list_project_repos",
+        "get_development_context",
+        "tracker_create_epic",
+        "tracker_create_task",
+    }
+)
+
+_FAKE_ANSIBLE_TEMPLATE = re.compile(
+    r"^(api_service|web_interface|auth_service|stock_market_service|observability_service)_template$",
+    re.I,
+)
+
+
+def _dev_context_flags(dev_context_summary: str) -> tuple[bool, bool]:
+    has_ssh = False
+    has_k8s = False
+    try:
+        parsed = json.loads(dev_context_summary)
+        if isinstance(parsed, dict):
+            ssh_tools = parsed.get("ssh_tools") if isinstance(parsed.get("ssh_tools"), dict) else {}
+            ssh_list = ssh_tools.get("ssh_targets_for_tools") if isinstance(ssh_tools, dict) else []
+            has_ssh = isinstance(ssh_list, list) and len(ssh_list) > 0
+            k8s_list = parsed.get("kubernetes_clusters")
+            has_k8s = isinstance(k8s_list, list) and len(k8s_list) > 0
+    except Exception:
+        pass
+    return has_ssh, has_k8s
+
+
+def normalize_worker_execution_tasks(
+    tasks: list[dict[str, Any]],
+    dev_context_summary: str = "",
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Отбрасывает задачи, которые воркер не может выполнить (GitLang tools, k8s без кластера, фейковые ansible).
+    """
+    has_ssh, has_k8s = _dev_context_flags(dev_context_summary)
+    notes: list[str] = []
+    out: list[dict[str, Any]] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        action = str(t.get("action_kind") or "noop").strip().lower()
+        title = str(t.get("title") or "Задача")[:80]
+        if action in LANGGRAPH_ONLY_ACTION_KINDS:
+            notes.append(f"пропущено `{action}` ({title}): только инструменты LangGraph, не воркер")
+            continue
+        if action not in WORKER_ACTION_KINDS:
+            notes.append(f"пропущено неизвестное `{action}` ({title})")
+            continue
+        if action == "kubernetes_query" and not has_k8s:
+            notes.append(f"пропущено kubernetes_query ({title}): в проекте нет Kubernetes")
+            continue
+        if action == "ansible_run_template":
+            payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
+            tid = str(payload.get("template_id") or "").strip()
+            if tid and _FAKE_ANSIBLE_TEMPLATE.match(tid):
+                notes.append(f"пропущено ansible_run_template ({title}): выдуманный template_id={tid!r}")
+                continue
+        if action == "ssh_run_command" and not has_ssh:
+            notes.append(f"пропущено ssh_run_command ({title}): нет SSH target")
+            continue
+        out.append(t)
+    if not out and has_ssh:
+        notes.append("батч пуст после фильтрации — подставлен SSH smoke из контекста")
+        out = default_execution_tasks_if_empty(dev_context_summary)
+    return out, notes
+
 
 def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
     """Пытается достать первый JSON-объект даже при префиксе/суффиксе текста."""
