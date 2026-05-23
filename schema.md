@@ -33,3 +33,4 @@ flowchart TB
   steps --> run
   tasks --> run
   orchestrator --> storage
+  narrative -->|DoD gate deploy/pm_summary| orchestrator

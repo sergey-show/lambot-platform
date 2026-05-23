@@ -41,6 +41,12 @@ from services.agent_graph_service.gitlab_actions import (
     gitlab_repo_create_intent,
     parse_repo_slug_from_message,
 )
+from services.agent_graph_service.orchestration_gates import (
+    dod_applies_to_step,
+    dod_gate_issues,
+    dod_gate_user_questions,
+    dod_profile_for_message,
+)
 from services.agent_graph_service.orchestration_intents import (
     looks_like_fake_tool_call_text,
     site_build_intent,
@@ -1470,9 +1476,20 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             if step_key in ("implementation", "deploy", "qa_validation", "pm_summary"):
                 run_now = team_get_run(run_id) or {}
                 blockers_now = _execution_blockers(run_now)
-                real_work_issues = (
-                    _execution_real_work_issues(run_now) if role_execution_mode else []
+                dod_issues = (
+                    dod_gate_issues(
+                        step_key=step_key,
+                        user_message=user_message,
+                        run_obj=run_now,
+                        role_execution_evidence=role_execution_evidence,
+                        prev_steps=prev_steps,
+                    )
+                    if dod_applies_to_step(step_key, user_message)
+                    else []
                 )
+                real_work_issues = list(dod_issues)
+                if role_execution_mode:
+                    real_work_issues.extend(_execution_real_work_issues(run_now))
                 if blockers_now:
                     lines = []
                     for b in blockers_now[:8]:
@@ -1504,10 +1521,18 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     )
                     return True, msg, None, True
                 if real_work_issues:
-                    msg = (
-                        "Блокировка шага: нет подтверждения фактического выполнения изменений.\n"
-                        + "\n".join(f"- {x}" for x in real_work_issues)
+                    dod_only = bool(dod_issues) and not role_execution_mode
+                    title = (
+                        "DoD не выполнен — нельзя считать шаг успешным."
+                        if dod_only or dod_issues
+                        else "Блокировка шага: нет подтверждения фактического выполнения изменений."
                     )
+                    msg = title + "\n" + "\n".join(f"- {x}" for x in real_work_issues)
+                    profile = dod_profile_for_message(user_message)
+                    questions = dod_gate_user_questions(profile, dod_issues) if dod_issues else [
+                        "Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). "
+                        "Разрешить повтор профильных шагов с обязательным tool-calling?"
+                    ]
                     team_patch_step(
                         run_id,
                         step_key,
@@ -1515,18 +1540,18 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         output_md=msg,
                         structured={
                             "paused_for_user": True,
+                            "dod_gate_failed": bool(dod_issues),
+                            "dod_issues": dod_issues,
                             "execution_real_work_issues": real_work_issues,
-                            "questions_for_user": [
-                                "Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). Разрешить повтор профильных шагов с обязательным tool-calling?"
-                            ],
+                            "questions_for_user": questions,
                         },
                         finished_at=_utc_iso(),
                     )
                     accumulated[step_key] = msg
                     _pause_run_with_question(
                         step_key,
-                        ["Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). Разрешить повтор профильных шагов с обязательным tool-calling?"],
-                        "Нет подтверждения фактического выполнения изменений.",
+                        questions,
+                        "DoD / исполнение не подтверждено." if dod_issues else "Нет подтверждения фактического выполнения изменений.",
                     )
                     return True, msg, None, True
 
@@ -1883,6 +1908,52 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             if all(x.get("status") == "done" for x in (run_done.get("execution_tasks") or []))
                             else "execution_mixed",
                         )
+
+                    if dod_applies_to_step(step_key, user_message):
+                        run_post = team_get_run(run_id) or {}
+                        post_dod = dod_gate_issues(
+                            step_key=step_key,
+                            user_message=user_message,
+                            run_obj=run_post,
+                            role_execution_evidence=role_execution_evidence,
+                            prev_steps=prev_steps,
+                        )
+                        if post_dod:
+                            profile = dod_profile_for_message(user_message)
+                            questions = dod_gate_user_questions(profile, post_dod)
+                            gate_msg = (
+                                "DoD не выполнен — нельзя зафиксировать успех деплоя/реализации/итога.\n"
+                                + "\n".join(f"- {x}" for x in post_dod)
+                            )
+                            gate_structured = (
+                                dict(structured_payload) if isinstance(structured_payload, dict) else {}
+                            )
+                            gate_structured.update(
+                                {
+                                    "paused_for_user": True,
+                                    "dod_gate_failed": True,
+                                    "dod_issues": post_dod,
+                                    "questions_for_user": questions,
+                                    "llm_output_rejected": (text or "")[:4000],
+                                }
+                            )
+                            team_patch_step(
+                                run_id,
+                                step_key,
+                                status="done",
+                                output_md=gate_msg,
+                                structured=gate_structured,
+                                finished_at=_utc_iso(),
+                            )
+                            accumulated[step_key] = gate_msg
+                            if step_key == "pm_summary":
+                                team_patch_run(run_id, final_report_md=gate_msg, phase="summary_blocked_dod")
+                            _pause_run_with_question(
+                                step_key,
+                                questions,
+                                "DoD не выполнен.",
+                            )
+                            return True, gate_msg, None, True
 
                     team_patch_step(
                         run_id,
