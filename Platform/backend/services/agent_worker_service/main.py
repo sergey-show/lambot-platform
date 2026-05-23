@@ -1,7 +1,8 @@
 """
 Agent worker: читает Kafka `platform.agent.tasks`.
-- AGENT_WORKER_USE_LLM=0 (default): только логировать TaskEnvelope (dry-run).
-- AGENT_WORKER_USE_LLM=1: вызов llm-adapter-service с промптом из задачи.
+- AGENT_WORKER_USE_LLM=0: dry-run (без LLM).
+- AGENT_WORKER_USE_LLM=1: задачи трекера — ReAct через agent-graph-service (/invoke);
+  прочие задачи — llm-adapter /generate (если не tracker).
 """
 
 from __future__ import annotations
@@ -21,6 +22,15 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from fastapi import FastAPI
 from pydantic import ValidationError
 
+from services.agent_worker_service.tracker_react import (
+    augment_tracker_prompt,
+    build_tracker_result,
+    collect_react_evidence,
+    extract_final_text,
+    tracker_react_timeout_sec,
+    tracker_require_tools,
+    tracker_use_react,
+)
 from shared.contracts.agent_task import TaskEnvelope, TaskResult, TaskStatus, TaskType
 from shared.contracts.api import LlmGenerateRequest
 from shared.kafka import (
@@ -38,6 +48,7 @@ USE_LLM = os.getenv("AGENT_WORKER_USE_LLM", "0").lower() in ("1", "true", "yes")
 LLM_ADAPTER_URL = os.getenv("LLM_ADAPTER_SERVICE_URL", "http://llm-adapter-service:8005")
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://admin-service:8006")
 ADAPTER_SERVICE_URL = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
+AGENT_GRAPH_SERVICE_URL = os.getenv("AGENT_GRAPH_SERVICE_URL", "http://agent-graph-service:8013")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 SEED_SAMPLE = os.getenv("AGENT_WORKER_SEED_SAMPLE", "0").lower() in ("1", "true", "yes")
 
@@ -216,6 +227,20 @@ def _result_error_hint(action: str, result: dict[str, Any]) -> str:
     return "task result is not ok"
 
 
+async def _invoke_tracker_react(project_id: str, message: str) -> dict[str, Any]:
+    """ReAct с инструментами платформы (тот же путь, что чат / agent-graph invoke)."""
+    url = f"{AGENT_GRAPH_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/invoke"
+    timeout = tracker_react_timeout_sec()
+    payload = {"message": augment_tracker_prompt(message), "history": []}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, json=payload)
+        r.raise_for_status()
+        body = r.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("agent-graph invoke returned non-object")
+    return body
+
+
 async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str, Any]) -> None:
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.patch(
@@ -227,7 +252,7 @@ async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str
 
 
 async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict[str, Any]]:
-    """Задача из трекера пользователя: LLM по промпту, статусы в admin."""
+    """Задача из трекера: ReAct (/invoke) или legacy llm/generate."""
     inline = envelope.input_inline or {}
     item_id = str(inline.get("tracker_item_id") or "").strip()
     project_id = str(envelope.project_id)
@@ -283,46 +308,55 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
 
     if USE_LLM:
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                req = LlmGenerateRequest(
-                    prompt=prompt,
-                    model=None,
-                    temperature=0.2,
-                    purpose="coding",
+            if tracker_use_react():
+                graph_body = await _invoke_tracker_react(project_id, prompt)
+                output = extract_final_text(graph_body)
+                evidence = collect_react_evidence(graph_body)
+                result_inline, ok_run = build_tracker_result(
+                    output=output,
+                    evidence=evidence,
+                    title=title,
+                    role=role,
+                    execution_id=execution_id,
+                    require_tools=tracker_require_tools(),
                 )
-                resp = await client.post(
-                    f"{LLM_ADAPTER_URL.rstrip('/')}/api/v1/llm/generate",
-                    json=req.model_dump(exclude_none=True),
-                )
-                resp.raise_for_status()
-                body = resp.json()
-            output = str(body.get("output", "") or "").strip()
-            result_inline = {
-                "mode": "tracker",
-                "dry_run": False,
-                "output": output,
-                "provider": body.get("provider", ""),
-                "commentary": output[:1200],
-                "work_done": [
-                    "Задача обработана агентом с использованием LLM",
-                    "Сформирован текстовый результат по задаче",
-                ],
-                "dod": {
-                    "status": "self_reported",
-                    "done": bool(output),
-                    "criteria": [
-                        "Результат по задаче сформирован",
-                        "Комментарий исполнителя сохранён в трекере",
+                if not ok_run:
+                    status = TaskStatus.FAILED
+            else:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    req = LlmGenerateRequest(
+                        prompt=prompt,
+                        model=None,
+                        temperature=0.2,
+                        purpose="coding",
+                    )
+                    resp = await client.post(
+                        f"{LLM_ADAPTER_URL.rstrip('/')}/api/v1/llm/generate",
+                        json=req.model_dump(exclude_none=True),
+                    )
+                    resp.raise_for_status()
+                    body = resp.json()
+                output = str(body.get("output", "") or "").strip()
+                result_inline = {
+                    "mode": "tracker",
+                    "engine": "llm_generate",
+                    "dry_run": False,
+                    "output": output,
+                    "provider": body.get("provider", ""),
+                    "commentary": output[:1200],
+                    "work_done": [
+                        "Задача обработана через llm-adapter (legacy, без инструментов)",
                     ],
-                    "notes": (
-                        "Статус DoD выставлен по факту наличия результата агента. "
-                        "При необходимости добавьте human-review."
-                    ),
-                },
-                "task_context": {"title": title, "assignee_role": role},
-            }
+                    "dod": {
+                        "status": "self_reported",
+                        "done": bool(output),
+                        "criteria": ["Текстовый результат сформирован"],
+                        "notes": "TRACKER_USE_REACT=0 — инструменты не вызывались.",
+                    },
+                    "task_context": {"title": title, "assignee_role": role},
+                }
         except Exception as exc:
-            logger.exception("tracker LLM failed")
+            logger.exception("tracker execution failed")
             status = TaskStatus.FAILED
             result_inline = {"mode": "tracker", "error": str(exc)}
             try:

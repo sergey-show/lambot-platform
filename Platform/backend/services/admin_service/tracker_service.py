@@ -378,7 +378,8 @@ def dispatch_item(
 def _build_tracker_prompt(row: TrackerItem) -> str:
     role = row.assignee_role or "developer"
     return (
-        f"Ты агент роли «{role}» в проекте пользователя. Выполни задачу по сути, опираясь на контекст платформы.\n\n"
+        f"Ты агент роли «{role}» в проекте пользователя. "
+        f"Задача из трекера «Задачи агентов» — нужен проверяемый результат через инструменты платформы.\n\n"
         f"Заголовок: {row.title}\n\n"
         f"Описание:\n{row.description or '(нет)'}\n"
     )

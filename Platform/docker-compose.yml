@@ -391,6 +391,10 @@ services:
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-1}
       AGENT_WORKER_SEED_SAMPLE: ${AGENT_WORKER_SEED_SAMPLE:-1}
+      AGENT_GRAPH_SERVICE_URL: http://agent-graph-service:8013
+      TRACKER_USE_REACT: ${TRACKER_USE_REACT:-1}
+      TRACKER_REQUIRE_TOOLS: ${TRACKER_REQUIRE_TOOLS:-1}
+      TRACKER_REACT_TIMEOUT_SEC: ${TRACKER_REACT_TIMEOUT_SEC:-600}
     depends_on:
       kafka:
         condition: service_healthy
@@ -399,6 +403,8 @@ services:
       adapter-service:
         condition: service_started
       llm-adapter-service:
+        condition: service_started
+      agent-graph-service:
         condition: service_started
 
   # ИИ-агенты запуска цепочки: при создании проекта → автоматический planning (IDEA → PLAN_READY).
