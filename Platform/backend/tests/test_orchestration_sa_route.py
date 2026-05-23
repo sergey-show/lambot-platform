@@ -37,6 +37,12 @@ def test_active_dag_layers_with_sa():
     assert route_includes_sa({"roles": ["sa"]})
 
 
+def test_route_includes_sa_none_roles():
+    assert route_includes_sa({}) is False
+    assert route_includes_sa({"roles": None}) is False
+    assert route_includes_sa(None) is False
+
+
 def test_enrich_route_injects_sa():
     out = enrich_route_with_sa_if_needed({"mode": "direct", "roles": ["pm"], "primary_role": "pm"}, "Нужен глоссарий")
     assert "sa" in out["roles"]

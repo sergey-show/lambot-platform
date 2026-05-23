@@ -284,7 +284,8 @@ def step_keys_to_skip_when_direct(specialist_step_key: str) -> list[str]:
 
 
 def route_includes_sa(route: dict[str, Any] | None) -> bool:
-    return "sa" in (route or {}).get("roles") or []
+    roles = (route or {}).get("roles") or []
+    return "sa" in roles
 
 
 def enrich_route_with_sa_if_needed(route: dict[str, Any], user_message: str) -> dict[str, Any]:
