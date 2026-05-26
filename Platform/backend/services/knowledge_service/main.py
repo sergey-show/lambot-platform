@@ -10,7 +10,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -128,6 +129,17 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="knowledge-service", version="0.1.0", lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if not isinstance(detail, str):
+            detail = str(detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+    logger.exception("unhandled knowledge-service error")
+    return JSONResponse(status_code=500, content={"detail": str(exc)[:800]})
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -142,7 +154,9 @@ def _get_kb_or_404(db: Session, kb_id: UUID, *, project_id: UUID | None = None) 
     row = db.get(KnowledgeBase, kb_id)
     if row is None or row.status != "active":
         raise HTTPException(status_code=404, detail="knowledge base not found")
-    if project_id is not None and (row.project_id != project_id or row.scope != SCOPE_PROJECT):
+    if project_id is not None and (
+        row.scope != SCOPE_PROJECT or str(row.project_id or "") != str(project_id)
+    ):
         raise HTTPException(status_code=404, detail="knowledge base not found")
     return row
 

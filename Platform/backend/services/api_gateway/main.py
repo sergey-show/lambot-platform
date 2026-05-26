@@ -1768,13 +1768,22 @@ async def admin_knowledge_document_upload(kb_id: str, request: Request):
     if upload is None or not hasattr(upload, "read"):
         raise HTTPException(status_code=400, detail="file is required")
     data = await upload.read()
+    filename = (getattr(upload, "filename", None) or "upload.bin").strip() or "upload.bin"
+    content_type = getattr(upload, "content_type", None) or "application/octet-stream"
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents",
-            headers=_knowledge_internal_headers(),
-            files={"file": (upload.filename, data, upload.content_type or "application/octet-stream")},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/knowledge/bases/{kb_id}/documents",
+                headers=_knowledge_internal_headers(),
+                files={"file": (filename, data, content_type)},
+            )
+    except httpx.HTTPError as exc:
+        logger.exception("knowledge document upload proxy failed kb=%s", kb_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"knowledge-service unreachable: {exc}",
+        ) from exc
     mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
     return _response_from_httpx(response)
 
@@ -1883,13 +1892,22 @@ async def project_knowledge_document_upload(project_id: str, kb_id: str, request
     if upload is None or not hasattr(upload, "read"):
         raise HTTPException(status_code=400, detail="file is required")
     data = await upload.read()
+    filename = (getattr(upload, "filename", None) or "upload.bin").strip() or "upload.bin"
+    content_type = getattr(upload, "content_type", None) or "application/octet-stream"
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}/documents",
-            headers=_knowledge_internal_headers(),
-            files={"file": (upload.filename, data, upload.content_type or "application/octet-stream")},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{KNOWLEDGE_SERVICE_URL.rstrip('/')}/api/v1/internal/projects/{project_id}/knowledge/bases/{kb_id}/documents",
+                headers=_knowledge_internal_headers(),
+                files={"file": (filename, data, content_type)},
+            )
+    except httpx.HTTPError as exc:
+        logger.exception("knowledge document upload proxy failed project=%s kb=%s", project_id, kb_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"knowledge-service unreachable: {exc}",
+        ) from exc
     mark_request("POST", request.url.path, str(response.status_code), time.monotonic() - started)
     return _response_from_httpx(response)
 

@@ -30,12 +30,22 @@ def bucket() -> str:
 def ensure_bucket() -> None:
     b = bucket()
     if not b:
-        return
+        raise RuntimeError("KNOWLEDGE_S3_BUCKET is empty")
     cli = _client()
     try:
         cli.head_bucket(Bucket=b)
-    except ClientError:
+        return
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", "") or "")
+        if code not in ("404", "NoSuchBucket", "NotFound"):
+            raise
+    try:
         cli.create_bucket(Bucket=b)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", "") or "")
+        if code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+            return
+        raise
 
 
 def object_key(*, scope: str, kb_id: str, document_id: str, filename: str) -> str:
