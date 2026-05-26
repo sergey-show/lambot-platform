@@ -9,6 +9,7 @@ description = "Backend services for multi-agent development platform MVP."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
+  "python-multipart>=0.0.9",
   "pydantic>=2.8.0",
   "uvicorn>=0.30.0",
   "sqlalchemy>=2.0.35",
