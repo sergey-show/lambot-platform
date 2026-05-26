@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -25,33 +26,67 @@ VECTOR_SIZE = int(os.getenv("KNOWLEDGE_VECTOR_SIZE", os.getenv("CODE_INDEX_VECTO
 UPSERT_BATCH = int(os.getenv("KNOWLEDGE_QDRANT_UPSERT_BATCH", "64"))
 
 _client: QdrantClient | None = None
-_collection_ready = False
 
 
 def get_client() -> QdrantClient:
     global _client
     if _client is None:
-        kwargs: dict[str, Any] = {"url": QDRANT_URL}
+        kwargs: dict[str, Any] = {"url": QDRANT_URL, "check_compatibility": False}
         if QDRANT_API_KEY:
             kwargs["api_key"] = QDRANT_API_KEY
         _client = QdrantClient(**kwargs)
     return _client
 
 
-def ensure_collection(*, vector_size: int | None = None) -> None:
-    global _collection_ready
-    if _collection_ready:
-        return
-    size = vector_size or VECTOR_SIZE
-    client = get_client()
+def _collection_vector_size(client: QdrantClient) -> int | None:
     names = {c.name for c in client.get_collections().collections}
     if COLLECTION not in names:
+        return None
+    info = client.get_collection(COLLECTION)
+    vectors = info.config.params.vectors
+    if hasattr(vectors, "size"):
+        return int(vectors.size)
+    if isinstance(vectors, dict):
+        raw = vectors.get("size")
+        return int(raw) if raw else None
+    return None
+
+
+def ensure_collection(*, vector_size: int | None = None) -> None:
+    """Создать коллекцию или проверить размерность векторов."""
+    size = vector_size or VECTOR_SIZE
+    if size <= 0:
+        raise ValueError("vector_size must be positive")
+    client = get_client()
+    existing = _collection_vector_size(client)
+    if existing is None:
         client.create_collection(
             collection_name=COLLECTION,
             vectors_config=VectorParams(size=size, distance=Distance.COSINE),
         )
         logger.info("created qdrant collection %s size=%s", COLLECTION, size)
-    _collection_ready = True
+        return
+    if existing == size:
+        return
+    points_count = int(getattr(client.get_collection(COLLECTION), "points_count", 0) or 0)
+    if points_count == 0:
+        client.delete_collection(COLLECTION)
+        client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=VectorParams(size=size, distance=Distance.COSINE),
+        )
+        logger.warning(
+            "recreated empty qdrant collection %s vector size %s -> %s",
+            COLLECTION,
+            existing,
+            size,
+        )
+        return
+    raise ValueError(
+        f"Qdrant collection {COLLECTION} expects vector dim {existing}, got {size}. "
+        f"Set KNOWLEDGE_VECTOR_SIZE={size} and delete the collection to re-index, "
+        f"or switch embedding model to dim={existing}."
+    )
 
 
 def delete_document_points(document_id: str) -> None:
@@ -67,7 +102,13 @@ def delete_document_points(document_id: str) -> None:
 def upsert_rows(rows: list[tuple[str, list[float], dict[str, Any]]]) -> int:
     if not rows:
         return 0
-    ensure_collection(vector_size=len(rows[0][1]))
+    dim = len(rows[0][1])
+    if dim <= 0:
+        raise ValueError("embedding vector is empty")
+    for _pid, vec, _payload in rows[1:]:
+        if len(vec) != dim:
+            raise ValueError(f"inconsistent embedding dims in batch: expected {dim}, got {len(vec)}")
+    ensure_collection(vector_size=dim)
     client = get_client()
     written = 0
     for i in range(0, len(rows), UPSERT_BATCH):
