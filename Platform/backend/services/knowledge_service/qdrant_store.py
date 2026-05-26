@@ -31,7 +31,7 @@ _client: QdrantClient | None = None
 def get_client() -> QdrantClient:
     global _client
     if _client is None:
-        kwargs: dict[str, Any] = {"url": QDRANT_URL, "check_compatibility": False}
+        kwargs: dict[str, Any] = {"url": QDRANT_URL}
         if QDRANT_API_KEY:
             kwargs["api_key"] = QDRANT_API_KEY
         _client = QdrantClient(**kwargs)
