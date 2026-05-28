@@ -21,6 +21,7 @@ def _migrate_llm_adapter_columns() -> None:
     stmts = [
         "ALTER TABLE llm_adapter_settings ADD COLUMN IF NOT EXISTS coding_model VARCHAR(128)",
         "ALTER TABLE llm_adapter_settings ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(128)",
+        "ALTER TABLE llm_adapter_settings ADD COLUMN IF NOT EXISTS reranking_model VARCHAR(128)",
     ]
     try:
         with engine.begin() as conn:

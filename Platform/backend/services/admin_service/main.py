@@ -113,6 +113,10 @@ class LlmSettingsPublicResponse(BaseModel):
         default=None,
         description="Модель для эмбеддингов; пусто = использовать env/дефолт на стороне adapter",
     )
+    reranking_model: str | None = Field(
+        default=None,
+        description="Модель для LLM-reranking в knowledge search; пусто = default_model",
+    )
     has_api_key: bool
     api_key_hint: str | None = Field(
         default=None, description="Последние символы ключа, если задан"
@@ -130,6 +134,10 @@ class LlmSettingsUpdateBody(BaseModel):
         default=None,
         description="Пустая строка — сбросить",
     )
+    reranking_model: str | None = Field(
+        default=None,
+        description="Пустая строка — сбросить (будет default_model)",
+    )
     api_key: str | None = Field(
         default=None,
         description="Новый ключ; пустая строка = не менять",
@@ -141,6 +149,7 @@ class LlmSettingsInternalResponse(BaseModel):
     default_model: str
     coding_model: str | None = None
     embedding_model: str | None = None
+    reranking_model: str | None = None
     api_key: str | None = None
 
 
@@ -243,12 +252,14 @@ def _get_llm_row(db: Session) -> LlmAdapterSettings:
     if row is None:
         cm = os.getenv("DEFAULT_OPENAI_CODING_MODEL", "").strip() or None
         em = os.getenv("DEFAULT_OPENAI_EMBEDDING_MODEL", "").strip() or None
+        rm = os.getenv("DEFAULT_OPENAI_RERANKING_MODEL", "").strip() or None
         row = LlmAdapterSettings(
             id=LLM_SETTINGS_SINGLETON_ID,
             openai_base_url=os.getenv("DEFAULT_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             default_model=os.getenv("DEFAULT_OPENAI_MODEL", "gpt-4o-mini"),
             coding_model=cm,
             embedding_model=em,
+            reranking_model=rm,
             api_key_encrypted=None,
             updated_at=datetime.utcnow(),
         )
@@ -578,6 +589,7 @@ def admin_get_llm_settings(
         default_model=row.default_model,
         coding_model=row.coding_model,
         embedding_model=row.embedding_model,
+        reranking_model=row.reranking_model,
         has_api_key=bool(plain_key),
         api_key_hint=_mask_key_hint(plain_key),
     )
@@ -598,6 +610,8 @@ def admin_put_llm_settings(
         row.coding_model = body.coding_model.strip() or None
     if body.embedding_model is not None:
         row.embedding_model = body.embedding_model.strip() or None
+    if body.reranking_model is not None:
+        row.reranking_model = body.reranking_model.strip() or None
     if body.api_key is not None and body.api_key.strip() != "":
         row.api_key_encrypted = settings_crypto.encrypt_secret(body.api_key.strip())
     row.updated_at = datetime.utcnow()
@@ -623,6 +637,7 @@ def internal_get_llm_settings(
         default_model=row.default_model,
         coding_model=row.coding_model,
         embedding_model=row.embedding_model,
+        reranking_model=row.reranking_model,
         api_key=api_key,
     )
 

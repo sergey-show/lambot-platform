@@ -22,6 +22,7 @@ class LlmAdapterSettings(Base):
     default_model: Mapped[str] = mapped_column(String(128), nullable=False)
     coding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reranking_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 

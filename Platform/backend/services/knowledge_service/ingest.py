@@ -21,13 +21,17 @@ from services.knowledge_service.models import (
 )
 from services.knowledge_service.qdrant_store import delete_document_points, upsert_rows
 from services.knowledge_service.text_extract import extract_document
-from shared.rag_util import embed_many, tokenize
+from shared.rag_util import embed_many, rerank_llm, tokenize
 
 logger = logging.getLogger("knowledge_ingest")
 
 CHUNK_SIZE = int(os.getenv("KNOWLEDGE_CHUNK_CHARS", "2000"))
 CHUNK_OVERLAP = int(os.getenv("KNOWLEDGE_CHUNK_OVERLAP", "200"))
 EMBED_BATCH = int(os.getenv("KNOWLEDGE_EMBED_BATCH", "32"))
+RERANK_ENABLED = os.getenv("KNOWLEDGE_RERANK_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+RERANK_USE_LLM = os.getenv("KNOWLEDGE_RERANK_USE_LLM", "1").strip().lower() not in {"0", "false", "off", "no"}
+RERANK_CANDIDATES = int(os.getenv("KNOWLEDGE_RERANK_CANDIDATES", "40"))
+RERANK_TEXT_WINDOW = int(os.getenv("KNOWLEDGE_RERANK_TEXT_WINDOW", "1600"))
 
 
 def chunk_text(text: str) -> list[str]:
@@ -52,6 +56,43 @@ def chunk_text(text: str) -> list[str]:
     if buf:
         chunks.append(buf)
     return chunks
+
+
+def _normalize_tokens(text: str) -> list[str]:
+    out: list[str] = []
+    for raw in re.findall(r"[a-zA-Z0-9_]{2,}", (text or "").lower()):
+        if len(raw) >= 2:
+            out.append(raw)
+    return out
+
+
+def _token_f1(query_tokens: set[str], text_tokens: list[str]) -> float:
+    if not query_tokens or not text_tokens:
+        return 0.0
+    text_set = set(text_tokens)
+    common = len(query_tokens.intersection(text_set))
+    if common <= 0:
+        return 0.0
+    precision = common / max(1, len(text_set))
+    recall = common / max(1, len(query_tokens))
+    if precision + recall <= 0:
+        return 0.0
+    return (2.0 * precision * recall) / (precision + recall)
+
+
+def _rerank_score(*, query: str, query_tokens: set[str], vec_score: float, chunk_text: str) -> float:
+    """Second-stage reranking over retrieved vector candidates."""
+    text = (chunk_text or "").strip()
+    if not text:
+        return vec_score
+    window = text[:RERANK_TEXT_WINDOW]
+    window_l = window.lower()
+    lex_recall = 0.0
+    if query_tokens:
+        lex_recall = sum(1 for t in query_tokens if t in window_l) / max(1, len(query_tokens))
+    token_f1 = _token_f1(query_tokens, _normalize_tokens(window_l))
+    phrase_boost = 0.1 if query.strip().lower() in window_l else 0.0
+    return (0.65 * vec_score) + (0.2 * lex_recall) + (0.15 * token_f1) + phrase_boost
 
 
 def reindex_document_vectors(db: Session, document_id: UUID) -> int:
@@ -208,13 +249,14 @@ def search_knowledge(
     if not q_embed_list:
         return []
     kb_id_strs = [str(x) for x in kb_ids] if kb_ids else []
+    candidate_limit = max(top_k * 4, RERANK_CANDIDATES if RERANK_ENABLED else top_k * 4)
     hits = search_vectors(
         query_vector=q_embed_list[0],
         kb_ids=kb_id_strs,
         scope=None,
         project_id=str(project_id) if project_id else None,
         include_platform=include_platform,
-        limit=min(80, top_k * 4),
+        limit=min(120, candidate_limit),
     )
     if not hits:
         return []
@@ -250,6 +292,18 @@ def search_knowledge(
             .all()
         )
     q_tokens = tokenize(q)
+    llm_scores: dict[str, float] = {}
+    rerank_model: str | None = None
+    if RERANK_ENABLED and RERANK_USE_LLM:
+        rerank_docs: list[tuple[str, str]] = []
+        for _vec_score, cid, _payload in hits:
+            ch = by_id.get(cid)
+            if ch is None:
+                continue
+            rerank_docs.append((cid, ch.chunk_text or ""))
+        llm_scores, rerank_model = rerank_llm(q, rerank_docs)
+        if rerank_model:
+            logger.info("knowledge rerank model=%s candidates=%s", rerank_model, len(rerank_docs))
     scored: list[tuple[float, KnowledgeChunk, dict]] = []
     for vec_score, cid, payload in hits:
         ch = by_id.get(cid)
@@ -257,11 +311,16 @@ def search_knowledge(
             continue
         if active_kb_ids is not None and ch.knowledge_base_id not in active_kb_ids:
             continue
-        text_l = (ch.chunk_text or "").lower()
-        lex = 0.0
-        if q_tokens:
-            lex = sum(1 for t in q_tokens if t in text_l) / max(1, len(q_tokens))
-        score = (0.75 * vec_score) + (0.25 * lex)
+        if RERANK_ENABLED and RERANK_USE_LLM and llm_scores:
+            score = (0.45 * vec_score) + (0.55 * llm_scores.get(cid, 0.0))
+        elif RERANK_ENABLED:
+            score = _rerank_score(query=q, query_tokens=q_tokens, vec_score=vec_score, chunk_text=ch.chunk_text or "")
+        else:
+            text_l = (ch.chunk_text or "").lower()
+            lex = 0.0
+            if q_tokens:
+                lex = sum(1 for t in q_tokens if t in text_l) / max(1, len(q_tokens))
+            score = (0.75 * vec_score) + (0.25 * lex)
         scored.append((score, ch, payload))
     scored.sort(key=lambda x: x[0], reverse=True)
 

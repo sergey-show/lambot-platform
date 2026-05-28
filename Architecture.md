@@ -276,6 +276,71 @@ mindmap
 
 Агенты **не ведут постоянный групповой чат** и **не вызывают друг друга как отдельные LangGraph-инстансы**. Связь идёт через **оркестратор** и **общее состояние прогона** (паттерн «blackboard»).
 
+### Оркестрация с общим state и failback-контролем
+
+```mermaid
+flowchart TB
+  classDef control fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+  classDef state fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+  classDef agent fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+  classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px
+
+  USER["Запрос пользователя"]
+  INTAKE["Intake + policy<br/>route/full/direct · live_execution"]:::control
+  ORCH["orchestration_runner"]:::control
+  STATE[("Shared Run State<br/>AITeamRun + steps + execution_tasks<br/>status · retries · evidence · gates")]:::state
+
+  subgraph TEAM["Роли-агенты"]
+    SA["SA"]:::agent
+    PM["PM"]:::agent
+    AR["Architect"]:::agent
+    DO["DevOps"]:::agent
+    BE["Backend"]:::agent
+    FE["Frontend"]:::agent
+    QA["QA"]:::agent
+  end
+
+  TOOLS["ReAct tools<br/>SSH · GitLab · K8s · Docs · KB"]:::control
+  WQ["Worker queue (Kafka)"]:::control
+  WRK["agent-worker"]:::control
+
+  FB["Failback controller<br/>DoD gate · retry policy · rollback policy"]:::fail
+  RETRY["Auto retry with debug_hint<br/>exp backoff · max attempts"]:::fail
+  ROLLBACK["Compensation / rollback task<br/>если side effects уже применены"]:::fail
+  ESC["Escalation: questions_for_user<br/>или manual approve gate"]:::fail
+  DONE["Run done / pm_summary"]:::state
+
+  USER --> INTAKE --> ORCH
+  ORCH --> STATE
+  ORCH --> SA --> STATE
+  ORCH --> PM --> STATE
+  ORCH --> AR --> STATE
+  ORCH --> DO --> STATE
+  ORCH --> BE --> STATE
+  ORCH --> FE --> STATE
+  ORCH --> QA --> STATE
+
+  ORCH --> TOOLS
+  ORCH --> WQ --> WRK --> STATE
+
+  ORCH --> FB
+  FB -->|DoD passed| DONE
+  FB -->|step/tool failed| RETRY
+  RETRY --> ORCH
+  FB -->|partial side-effect| ROLLBACK
+  ROLLBACK --> WRK
+  FB -->|attempts exhausted / high risk| ESC
+  ESC --> ORCH
+```
+
+**Как читать схему:**
+
+- Все агенты читают и пишут единый `Shared Run State` (blackboard): это источник истины по шагам, артефактам, execution tasks, evidence, retry count.
+- Оркестратор принимает решения только через policy + state (а не локальные эвристики агента): запуск шага, переход, пауза, завершение.
+- Failback-контур встроен в каждый шаг: `DoD gate` -> retry -> rollback/compensation -> escalation к пользователю.
+- Контроль исполнения задач в worker идёт через `execution_tasks` со статусами (`queued/running/done/failed`) и подтверждением `tool_verified`.
+- После исчерпания retry либо при рискованных изменениях включается `manual approve gate` (continue от пользователя), затем run продолжается из того же state.
+
 ### Способы «общения»
 
 | Способ | Когда | Как |

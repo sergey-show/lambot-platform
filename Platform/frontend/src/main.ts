@@ -5426,6 +5426,7 @@ async function loadSuperadminData(): Promise<void> {
   const modelEl = document.getElementById("llm-default-model") as HTMLInputElement | null;
   const codingEl = document.getElementById("llm-coding-model") as HTMLInputElement | null;
   const embeddingEl = document.getElementById("llm-embedding-model") as HTMLInputElement | null;
+  const rerankingEl = document.getElementById("llm-reranking-model") as HTMLInputElement | null;
   const keyStatusEl = document.getElementById("llm-key-status");
   if (llmResp.ok && baseUrlEl && modelEl) {
     const llm = (await llmResp.json()) as {
@@ -5433,6 +5434,7 @@ async function loadSuperadminData(): Promise<void> {
       default_model: string;
       coding_model: string | null;
       embedding_model: string | null;
+      reranking_model: string | null;
       has_api_key: boolean;
       api_key_hint: string | null;
     };
@@ -5440,6 +5442,7 @@ async function loadSuperadminData(): Promise<void> {
     modelEl.value = llm.default_model ?? "";
     if (codingEl) codingEl.value = llm.coding_model ?? "";
     if (embeddingEl) embeddingEl.value = llm.embedding_model ?? "";
+    if (rerankingEl) rerankingEl.value = llm.reranking_model ?? "";
     if (keyStatusEl) {
       keyStatusEl.textContent = llm.has_api_key
         ? `(ключ задан${llm.api_key_hint ? ` ${llm.api_key_hint}` : ""})`
@@ -5772,6 +5775,10 @@ function renderSuperadmin(): void {
           <div class="lp-field">
             <label>Модель эмбеддингов</label>
             <input class="lp-input" id="llm-embedding-model" placeholder="text-embedding-3-small" style="min-width: 220px" />
+          </div>
+          <div class="lp-field">
+            <label>Модель reranking</label>
+            <input class="lp-input" id="llm-reranking-model" placeholder="gpt-4o-mini" style="min-width: 220px" />
           </div>
         </div>
         <div class="lp-field">
@@ -6143,6 +6150,7 @@ function renderSuperadmin(): void {
       default_model: (document.getElementById("llm-default-model") as HTMLInputElement).value.trim(),
       coding_model: (document.getElementById("llm-coding-model") as HTMLInputElement).value.trim(),
       embedding_model: (document.getElementById("llm-embedding-model") as HTMLInputElement).value.trim(),
+      reranking_model: (document.getElementById("llm-reranking-model") as HTMLInputElement).value.trim(),
     };
     const newKey = (document.getElementById("llm-api-key") as HTMLInputElement).value;
     if (newKey.trim()) body.api_key = newKey.trim();

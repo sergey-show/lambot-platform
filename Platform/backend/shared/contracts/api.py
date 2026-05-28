@@ -94,3 +94,28 @@ class LlmEmbedResponse(BaseModel):
     embeddings: list[list[float]]
     model: str
     provider: str
+
+
+class LlmRerankDocument(BaseModel):
+    id: str = Field(..., min_length=1, max_length=128)
+    text: str = Field(..., min_length=1, max_length=8000)
+
+
+class LlmRerankRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=5000)
+    documents: list[LlmRerankDocument] = Field(default_factory=list, max_length=64)
+    model: str | None = Field(
+        default=None,
+        description="Переопределение; иначе reranking_model из admin / env / default_model",
+    )
+
+
+class LlmRerankScore(BaseModel):
+    id: str
+    score: float = Field(..., ge=0.0, le=1.0)
+
+
+class LlmRerankResponse(BaseModel):
+    scores: list[LlmRerankScore]
+    model: str
+    provider: str
