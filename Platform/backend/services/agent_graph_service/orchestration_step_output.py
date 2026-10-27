@@ -22,9 +22,11 @@ class StepEnvelope:
     questions_for_user: list[str] = field(default_factory=list)
     peer_queries: list[PeerQuery] = field(default_factory=list)
     pipeline_continue: bool = True
+    # True — дальше нужен режим с инструментами/инфра (оркестратор поднимает direct_answer на планах).
+    live_execution: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "schema_version": self.schema_version,
             "step_status": self.step_status,
             "summary_md": self.summary_md,
@@ -32,6 +34,9 @@ class StepEnvelope:
             "peer_queries": [{"role": q.role, "question": q.question} for q in self.peer_queries],
             "pipeline_continue": self.pipeline_continue,
         }
+        if self.live_execution is not None:
+            out["live_execution"] = self.live_execution
+        return out
 
 
 def _strip_markdown_json_fence(text: str) -> str:
@@ -108,6 +113,13 @@ def parse_step_envelope(raw_text: str) -> tuple[StepEnvelope | None, str]:
     else:
         pipeline_continue = status == "complete" and not questions
 
+    live_raw = obj.get("live_execution")
+    live_execution: bool | None = None
+    if isinstance(live_raw, bool):
+        live_execution = live_raw
+    elif isinstance(live_raw, str) and live_raw.strip().lower() in ("true", "false"):
+        live_execution = live_raw.strip().lower() == "true"
+
     env = StepEnvelope(
         schema_version=ver,
         step_status=status,
@@ -115,6 +127,7 @@ def parse_step_envelope(raw_text: str) -> tuple[StepEnvelope | None, str]:
         questions_for_user=questions,
         peer_queries=peers,
         pipeline_continue=pipeline_continue,
+        live_execution=live_execution,
     )
     if questions or status == "need_user_clarification":
         env.pipeline_continue = False

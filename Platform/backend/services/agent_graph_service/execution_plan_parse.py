@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
 
 from services.agent_graph_service.team_client import team_get_run
+
+MAX_TASKS_PER_BATCH = int(os.getenv("AGENT_PLAN_MAX_TASKS_PER_ITER", "5"))
 
 
 def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
@@ -63,7 +66,27 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
                 "plan_summary": plan_summary,
             }
         )
+    if MAX_TASKS_PER_BATCH > 0:
+        return out[:MAX_TASKS_PER_BATCH]
     return out
+
+
+def parse_execution_plan_payload(text: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Возвращает (tasks, meta) для batch-планировщика."""
+    data = _extract_first_json_object(text)
+    if not isinstance(data, dict):
+        return [], {"continue_planning": True, "done_reason": "invalid_json"}
+    tasks = parse_execution_plan_json(text)
+    meta = {
+        "continue_planning": bool(data.get("continue_planning", False)),
+        "goal_done": bool(data.get("goal_done", False)),
+        "done_reason": str(data.get("done_reason") or "").strip()[:1000],
+    }
+    # Если нет задач и не указан continue_planning, считаем это завершением.
+    if not tasks and "continue_planning" not in data:
+        meta["continue_planning"] = False
+        meta["goal_done"] = True
+    return tasks, meta
 
 
 def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str, Any]]:
@@ -121,7 +144,11 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
     ]
 
 
-def wait_for_ai_team_execution_tasks(run_id: str, timeout_sec: float = 900.0) -> bool:
+def wait_for_ai_team_execution_tasks(
+    run_id: str,
+    timeout_sec: float = 900.0,
+    task_ids: list[str] | None = None,
+) -> bool:
     """Блокирует оркестратор, пока воркеры не завершат все задачи; False при таймауте."""
     t0 = time.time()
     while time.time() - t0 < timeout_sec:
@@ -131,6 +158,11 @@ def wait_for_ai_team_execution_tasks(run_id: str, timeout_sec: float = 900.0) ->
         tasks = r.get("execution_tasks") or []
         if not tasks:
             return True
+        if task_ids:
+            wanted = {str(x) for x in task_ids}
+            tasks = [x for x in tasks if str(x.get("id")) in wanted]
+            if not tasks:
+                return True
         if all(x.get("status") in ("done", "error") for x in tasks):
             return True
         time.sleep(2.0)

@@ -71,7 +71,17 @@ def team_patch_step(
     if output_md is not None:
         body["output_md"] = output_md
     if structured is not None:
-        body["structured"] = structured
+        # Не терять llm_prompt_preview / llm_model при финальном structured (шаг завершён).
+        prev: dict[str, Any] = {}
+        row = team_get_run(run_id)
+        if row:
+            for s in row.get("steps") or []:
+                if isinstance(s, dict) and str(s.get("step_key")) == step_key:
+                    p = s.get("structured")
+                    prev = dict(p) if isinstance(p, dict) else {}
+                    break
+        llm_keep = {k: prev[k] for k in ("llm_prompt_preview", "llm_model") if k in prev and k not in structured}
+        body["structured"] = {**llm_keep, **structured}
     if error is not None:
         body["error"] = error
     if started_at is not None:
@@ -91,6 +101,17 @@ def team_patch_step(
 def team_replace_execution_tasks(run_id: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
     r = httpx.post(
         f"{ADMIN_SERVICE_URL.rstrip('/')}/api/v1/internal/ai-team/runs/{run_id}/execution-tasks",
+        json={"tasks": tasks},
+        headers=_headers(),
+        timeout=60.0,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def team_append_execution_tasks(run_id: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    r = httpx.post(
+        f"{ADMIN_SERVICE_URL.rstrip('/')}/api/v1/internal/ai-team/runs/{run_id}/execution-tasks/append",
         json={"tasks": tasks},
         headers=_headers(),
         timeout=60.0,

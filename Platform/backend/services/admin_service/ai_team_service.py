@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from services.admin_service.models import AITeamExecutionTask, AITeamRun, AITeamStep
@@ -162,6 +162,48 @@ def replace_execution_tasks(
             id=uuid4(),
             run_id=run_id,
             seq=seq,
+            title=title,
+            action_kind=action_kind,
+            payload=payload,
+            plan_summary=plan_summary,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        out.append(row)
+    run.updated_at = now
+    db.commit()
+    for r in out:
+        db.refresh(r)
+    return out
+
+
+def append_execution_tasks(
+    db: Session,
+    run_id: UUID,
+    items: list[dict],
+) -> list[AITeamExecutionTask]:
+    """Добавляет задачи исполнения в конец существующей очереди run (батчами)."""
+    run = db.get(AITeamRun, run_id)
+    if run is None:
+        return []
+    max_seq = db.execute(
+        select(func.max(AITeamExecutionTask.seq)).where(AITeamExecutionTask.run_id == run_id)
+    ).scalar_one()
+    next_seq = (int(max_seq) + 1) if max_seq is not None else 0
+    out: list[AITeamExecutionTask] = []
+    now = datetime.utcnow()
+    for idx, raw in enumerate(items):
+        title = str(raw.get("title") or f"Задача {next_seq + idx + 1}")[:512]
+        action_kind = str(raw.get("action_kind") or raw.get("action") or "noop")[:64]
+        payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else None
+        plan_summary = raw.get("plan_summary")
+        plan_summary = str(plan_summary)[:8000] if plan_summary is not None else None
+        row = AITeamExecutionTask(
+            id=uuid4(),
+            run_id=run_id,
+            seq=next_seq + idx,
             title=title,
             action_kind=action_kind,
             payload=payload,

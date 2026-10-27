@@ -1230,3 +1230,53 @@ table.lp-table {
 .lp-portal-view.lp-portal-view--active {
   display: block;
 }
+
+.lp-markdown {
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.lp-markdown h1,
+.lp-markdown h2,
+.lp-markdown h3,
+.lp-markdown h4 {
+  margin: 0.7rem 0 0.45rem;
+}
+
+.lp-markdown p {
+  margin: 0.45rem 0;
+}
+
+.lp-markdown ul,
+.lp-markdown ol {
+  margin: 0.5rem 0 0.5rem 1.15rem;
+  padding: 0;
+}
+
+.lp-markdown code {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.lp-markdown pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.lp-markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.lp-markdown blockquote {
+  border-left: 3px solid #cbd5e1;
+  margin: 0.5rem 0;
+  padding: 0.1rem 0 0.1rem 0.7rem;
+  color: #475569;
+}

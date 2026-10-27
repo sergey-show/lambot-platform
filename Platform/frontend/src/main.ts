@@ -5,6 +5,13 @@ import {
   setEditorContent,
   type AnsibleSwarmEditorPair,
 } from "./ansibleSwarmEditor";
+import {
+  getDocsMarkdownContent,
+  mountDocsMarkdownEditor,
+  setDocsMarkdownContent,
+} from "./docsMarkdownEditor";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { escapeHtml } from "./shared/html";
 import { GATEWAY_BASE } from "./infrastructure/gateway";
 import {
@@ -29,6 +36,29 @@ type ProjectRow = {
 };
 
 let lastAdminProjectsSnapshot: ProjectRow[] = [];
+let superadminPhasePollTimer: number | null = null;
+let portalPhasePollTimer: number | null = null;
+
+type AiTeamLiveRun = {
+  run_id: string;
+  project_id: string;
+  project_name?: string;
+  status: string;
+  phase?: string | null;
+  iteration?: number;
+  batch_status?: string;
+  updated_at?: string | null;
+  created_at?: string | null;
+  error?: string | null;
+};
+
+marked.setOptions({ gfm: true, breaks: true });
+
+function renderMarkdownHtml(input: string): string {
+  const src = String(input || "");
+  const parsed = marked.parse(src, { async: false }) as string;
+  return DOMPurify.sanitize(parsed, { USE_PROFILES: { html: true } });
+}
 
 function projectAiChatStorageKey(projectId: string): string {
   return `lambot_project_ai_chat_v1_${projectId}`;
@@ -592,6 +622,15 @@ function renderPortal(): void {
           <div id="orch-node-modal-body"></div>
         </div>
       </div>
+      <div id="orchestration-markdown-modal" class="lp-modal-backdrop" hidden>
+        <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="orch-markdown-modal-title" style="max-width:1200px;max-height:88vh;display:flex;flex-direction:column;">
+          <div class="lp-modal-head">
+            <h3 id="orch-markdown-modal-title" style="margin:0;">Markdown</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="orch-markdown-modal-close">Закрыть</button>
+          </div>
+          <div id="orch-markdown-modal-body" class="lp-markdown lp-orch-pre" style="overflow:auto;flex:1 1 auto;"></div>
+        </div>
+      </div>
       </div>
       <div id="view-docs" class="lp-portal-view">
       <div class="lp-panel" id="docs-panel">
@@ -645,7 +684,15 @@ function renderPortal(): void {
         </div>
         <div class="lp-field">
           <label>Содержимое (Markdown)</label>
-          <textarea class="lp-textarea" id="docs-edit-content" rows="12" placeholder="# Заголовок&#10;&#10;Текст..."></textarea>
+          <div class="lp-row" style="gap:10px;align-items:stretch;">
+            <div style="flex:1;min-width:320px;">
+              <div id="docs-md-editor" class="ansible-ide-editor" aria-label="markdown editor"></div>
+            </div>
+            <div style="flex:1;min-width:320px;">
+              <div class="lp-muted" style="font-size:12px;margin-bottom:6px;">Preview</div>
+              <div id="docs-md-preview" class="lp-markdown lp-pre" style="max-height:420px;overflow:auto;"></div>
+            </div>
+          </div>
         </div>
         <div class="lp-field">
           <label>Комментарий версии</label>
@@ -740,6 +787,15 @@ function renderPortal(): void {
           </div>
         </div>
         <div id="tracker-items-list" class="lp-orch-grid"></div>
+      </div>
+      <div id="tracker-task-modal" class="lp-modal-backdrop" hidden>
+        <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="tracker-task-modal-title">
+          <div class="lp-modal-head">
+            <h3 id="tracker-task-modal-title" style="margin:0;">Результат задачи</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-task-modal-close">Закрыть</button>
+          </div>
+          <div id="tracker-task-modal-body"></div>
+        </div>
       </div>
       </div>
       <div id="view-servers" class="lp-portal-view">
@@ -974,6 +1030,28 @@ function renderPortal(): void {
       </div>
       <div id="view-service" class="lp-portal-view">
       <div class="lp-panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h2 style="margin:0;">AI Team phase dashboard (live)</h2>
+          <button type="button" class="lp-btn lp-btn-ghost" id="portal-ai-team-live-refresh" style="padding:4px 8px;font-size:12px;">Обновить</button>
+        </div>
+        <div style="overflow:auto;margin-top:8px;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Run</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Status</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Phase</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Iteration</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Batch</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Updated</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="portal-ai-team-runs-live-body"><tr><td colspan="7" class="lp-muted">Выберите проект</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="lp-panel">
         <h2>Журнал действий</h2>
         <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">Операции по проекту (Ansible, серверы, назначения) в ClickHouse. После «Запустить Ansible» обновите список — в деталях будут stdout/stderr.</p>
         <div class="lp-row" style="margin-bottom:8px;flex-wrap:wrap;gap:8px;align-items:center;">
@@ -1178,11 +1256,14 @@ function renderPortal(): void {
 
   let orchPollTimer: number | null = null;
   let orchStreamAbort: AbortController | null = null;
+  let orchStreamSocket: WebSocket | null = null;
+  let orchStreamFinished = false;
   let orchStreamLastRun: OrchRunData | null = null;
   let orchBrowserLogsTs = 0;
   let orchModalStepKey = "";
   let orchModalRunId = "";
   let orchModalReasoningMode: "brief" | "detailed" = "brief";
+  let docsMdEditor: ReturnType<typeof mountDocsMarkdownEditor> | null = null;
   const orchLiveLogMax = 180_000;
   const orchStateMax = 260_000;
 
@@ -1194,6 +1275,18 @@ function renderPortal(): void {
   };
 
   const stopOrchestrationStream = () => {
+    const sock = orchStreamSocket;
+    orchStreamSocket = null;
+    if (sock) {
+      try {
+        sock.onmessage = null;
+        sock.onerror = null;
+        sock.onclose = null;
+        sock.close();
+      } catch {
+        /* ignore */
+      }
+    }
     if (orchStreamAbort) {
       try {
         orchStreamAbort.abort();
@@ -1266,6 +1359,8 @@ function renderPortal(): void {
     final_message?: string | null;
     error?: string | null;
     phase?: string | null;
+    iteration?: number;
+    batch_status?: string;
     execution_tasks?: Array<Record<string, unknown>>;
   };
 
@@ -1427,6 +1522,8 @@ function renderPortal(): void {
           .map((x) => x as Record<string, unknown>)
       : [];
     const qaGate = String(stObj.qa_gate || "");
+    const llmModel = String(stObj.llm_model || "").trim();
+    const llmPrompt = String(stObj.llm_prompt_preview || "").trim();
     const liveAction: string[] = [];
     if ((step?.status || "") === "running") {
       liveAction.push("Выполняет текущую задачу шага");
@@ -1538,6 +1635,14 @@ function renderPortal(): void {
           <div><b>Финиш:</b> ${escapeHtml(fmtTs(step?.finished_at))}</div>
           <div><b>Фаза run:</b> ${escapeHtml(String(data.phase || "—"))}</div>
         </div>
+        <div class="lp-orch-modal-block" style="background:#f8fafc;border-radius:8px;">
+          <h4>Модель и промпт (LLM)</h4>
+          <p class="lp-muted" style="font-size:12px;margin:0 0 6px;"><b>Модель:</b> ${escapeHtml(llmModel || "—")}</p>
+          <p class="lp-muted" style="font-size:11px;margin:0 0 8px;">Текст ниже — сообщения в чат-модель (роли system / human). Пока шаг <code>running</code>, ответ подставляется сюда и в «Результат шага» по мере генерации (стрим через обновления run).</p>
+          <pre class="lp-orch-pre" style="max-height:240px;overflow:auto;font-size:11px;white-space:pre-wrap;">${escapeHtml(
+            llmPrompt || "Промпт появится в начале вызова LLM. Для LangGraph сначала виден запрос к графу инструментов.",
+          )}</pre>
+        </div>
         <div class="lp-orch-modal-block">
           <h4>С кем работает</h4>
           <p class="lp-muted">${peers.length ? escapeHtml(peers.join(" · ")) : "Этот шаг не имеет параллельных коллег в текущем DAG-слое."}</p>
@@ -1554,11 +1659,11 @@ function renderPortal(): void {
               <button type="button" id="orch-reasoning-detailed" class="${detailedBtnClass}" style="padding:4px 8px;font-size:12px;">Подробно</button>
             </div>
           </div>
-          <pre class="lp-orch-pre">${escapeHtml(reasoningText)}</pre>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(reasoningText)}</div>
         </div>
         <div class="lp-orch-modal-block">
           <h4>Над чем работает</h4>
-          <pre class="lp-orch-pre">${escapeHtml(outputTail || "Пока нет live-вывода шага")}</pre>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(outputTail || "Пока нет live-вывода шага")}</div>
         </div>
         ${
           execRows
@@ -1570,8 +1675,8 @@ function renderPortal(): void {
           <pre class="lp-orch-pre lp-error">${escapeHtml(err || "Нет")}</pre>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>Результат шага</h4>
-          <pre class="lp-orch-pre">${escapeHtml(output || "Пока нет вывода")}</pre>
+          <h4>Результат шага (live)</h4>
+          <div id="orch-modal-step-output" class="lp-markdown lp-orch-pre" style="max-height:420px;overflow:auto;">${renderMarkdownHtml(output || "Пока нет вывода")}</div>
         </div>
       `;
       const briefBtn = bodyEl.querySelector("#orch-reasoning-brief");
@@ -1583,6 +1688,10 @@ function renderPortal(): void {
       detailedBtn?.addEventListener("click", () => {
         orchModalReasoningMode = "detailed";
         openOrchNodeModal(stepKey, data);
+      });
+      requestAnimationFrame(() => {
+        const outScroll = document.getElementById("orch-modal-step-output");
+        if (outScroll) outScroll.scrollTop = outScroll.scrollHeight;
       });
     }
     orchModalStepKey = stepKey;
@@ -1598,6 +1707,55 @@ function renderPortal(): void {
     document.body.classList.remove("lp-modal-open");
     orchModalStepKey = "";
     orchModalRunId = "";
+  };
+
+  const openOrchMarkdownModal = (title: string, markdown: string) => {
+    const root = document.getElementById("orchestration-markdown-modal");
+    const titleEl = document.getElementById("orch-markdown-modal-title");
+    const bodyEl = document.getElementById("orch-markdown-modal-body");
+    if (!root || !titleEl || !bodyEl) return;
+    titleEl.textContent = title || "Markdown";
+    bodyEl.innerHTML = renderMarkdownHtml(markdown || "Пусто");
+    root.removeAttribute("hidden");
+    document.body.classList.add("lp-modal-open");
+  };
+
+  const closeOrchMarkdownModal = () => {
+    const root = document.getElementById("orchestration-markdown-modal");
+    if (!root) return;
+    root.setAttribute("hidden", "hidden");
+    document.body.classList.remove("lp-modal-open");
+  };
+
+  const getStepRealtimeSummary = (s: OrchStep): { nowMd: string; reasoningMd: string; previewMd: string } => {
+    const stObj = (s.structured && typeof s.structured === "object"
+      ? (s.structured as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+    const output = String(s.output || "").trim();
+    const outputTail = output ? output.split(/\r?\n/).filter((x) => x.trim()).slice(-8).join("\n") : "";
+    const envelope = stObj.step_envelope && typeof stObj.step_envelope === "object"
+      ? (stObj.step_envelope as Record<string, unknown>)
+      : null;
+    const qfu = Array.isArray(stObj.questions_for_user)
+      ? stObj.questions_for_user.map((x) => String(x)).filter(Boolean)
+      : [];
+    const peerResp = Array.isArray(stObj.peer_responses) ? stObj.peer_responses.length : 0;
+    const attempt = Number(stObj.attempt || 0);
+    const maxAttempts = Number(stObj.max_attempts || 0);
+    const liveRows: string[] = [];
+    if ((s.status || "") === "running") liveRows.push("- Шаг сейчас выполняется.");
+    if (attempt > 0 && maxAttempts > 0) liveRows.push(`- Попытка ${attempt}/${maxAttempts}.`);
+    if (envelope && envelope.step_status) liveRows.push(`- Решение шага: \`${String(envelope.step_status)}\`.`);
+    if (qfu.length) liveRows.push(`- Ожидает уточнений: ${qfu.length}.`);
+    if (peerResp > 0) liveRows.push(`- Получено ответов коллег: ${peerResp}.`);
+    if (!liveRows.length) liveRows.push("- Явных live-меток нет, смотрите поток ниже.");
+    const summary = envelope ? String(envelope.summary_md || "").trim() : "";
+    const reasoningMd = summary || outputTail || "Пока нет детального reasoning-трейса.";
+    return {
+      nowMd: liveRows.join("\n"),
+      reasoningMd,
+      previewMd: outputTail || "Пока нет live-вывода шага.",
+    };
   };
 
   const renderOrchestrationGraph = (data: OrchRunData | null) => {
@@ -1854,7 +2012,7 @@ function renderPortal(): void {
       statusEl.textContent = `Прогон: ${data.status || "—"} · фаза ${data.phase || "—"} · run ${data.run_id || ""}${data.error && data.status === "error" ? ` · ${data.error}` : ""}`;
     }
     if (archWrap && data.architecture_md) {
-      archWrap.innerHTML = `<div class="lp-orch-arch"><h3 style="margin:0 0 8px;font-size:15px;">Архитектура</h3><pre class="lp-orch-pre" style="max-height:360px;">${escapeHtml(data.architecture_md)}</pre></div>`;
+      archWrap.innerHTML = `<div class="lp-orch-arch"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:15px;">Архитектура</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="Архитектура" data-md-kind="architecture" style="padding:4px 8px;font-size:12px;">Открыть полноэкранно</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(data.architecture_md || ""))}</div></div>`;
     }
     const execTasks = data.execution_tasks;
     if (execWrap && execTasks && execTasks.length > 0) {
@@ -1876,30 +2034,151 @@ function renderPortal(): void {
         const lbl = s.role_label || s.label || s.step_key || "—";
         const tsk = s.task_title || s.task || "";
         const badge = orchBadgeClass(st);
-        const body = s.error
-          ? `<pre class="lp-orch-pre lp-error">${escapeHtml(s.error)}</pre>`
-          : s.output
-            ? `<pre class="lp-orch-pre">${escapeHtml(s.output)}</pre>`
-            : `<p class="lp-muted" style="margin:0;font-size:12px;">${
-                st === "running"
-                  ? "Выполняется…"
-                  : st === "skipped"
-                    ? "Пропущено"
-                    : "Ожидание"
-              }</p>`;
-        return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="${badge}">${escapeHtml(lbl)}</span><span class="lp-muted" style="font-size:12px;">${escapeHtml(tsk)}</span></div>${body}</article>`;
+        const stepKey = String(s.step_key || "");
+        const insight = getStepRealtimeSummary(s);
+        const detailsBtn = s.output
+          ? `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="${escapeHtml(`${lbl}: полный markdown`) }" data-md-kind="step_output" data-step-key="${escapeHtml(stepKey)}" style="padding:4px 8px;font-size:12px;">Полный markdown</button>`
+          : "";
+        const errBlock = s.error
+          ? `<div class="lp-orch-modal-block" style="margin-top:8px;"><h4 style="font-size:12px;">Ошибка</h4><div class="lp-markdown lp-orch-pre lp-error">${renderMarkdownHtml(String(s.error || ""))}</div></div>`
+          : "";
+        const compactPreview = s.error
+          ? String(s.error || "").split(/\r?\n/).filter((x) => x.trim()).slice(0, 2).join("\n")
+          : insight.previewMd;
+        const body = `<div class="lp-markdown lp-orch-pre" style="max-height:96px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(compactPreview)}</div>
+          <details style="margin-top:8px;">
+            <summary class="lp-muted" style="cursor:pointer;font-size:12px;">Подробнее: действия и рассуждения</summary>
+            <div class="lp-orch-modal-block" style="margin-top:8px;">
+              <h4 style="font-size:12px;">Что делает</h4>
+              <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(insight.nowMd)}</div>
+            </div>
+            <div class="lp-orch-modal-block" style="margin-top:8px;">
+              <h4 style="font-size:12px;">Ход рассуждений</h4>
+              <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(insight.reasoningMd)}</div>
+            </div>
+            <div class="lp-orch-modal-block" style="margin-top:8px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                <h4 style="font-size:12px;margin:0;">Live preview</h4>
+                ${detailsBtn}
+              </div>
+              <div class="lp-markdown lp-orch-pre" style="max-height:150px;overflow:auto;margin-top:6px;">${renderMarkdownHtml(insight.previewMd)}</div>
+            </div>
+            ${errBlock}
+          </details>`;
+        return `<article class="lp-orch-card lp-orch-step-card" data-step-key="${escapeHtml(stepKey)}" style="cursor:pointer;"><div class="lp-orch-card-head"><span class="${badge}">${escapeHtml(lbl)}</span><span class="lp-muted" style="font-size:12px;">${escapeHtml(tsk)}</span></div>${body}</article>`;
       })
       .join("");
     stepsEl.innerHTML = html;
+    stepsEl.querySelectorAll<HTMLElement>(".lp-orch-step-card").forEach((card) => {
+      card.addEventListener("click", (ev) => {
+        const t = ev.target as HTMLElement | null;
+        if (t?.closest("details") || t?.closest("button") || t?.closest("summary")) return;
+        const k = (card.dataset.stepKey || "").trim();
+        if (k && data) openOrchNodeModal(k, data);
+      });
+    });
     const fin = data.final_report_md || data.final_message;
     if (finalWrap) {
       if (data.status === "paused") {
         finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и нажмите «Запустить ИИ команду» — цепочка продолжится с текущего шага.</p></div>`;
       } else if (fin && (data.status === "done" || data.status === "running")) {
-        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Итог для пользователя (PM)</h3><pre class="lp-orch-pre">${escapeHtml(fin)}</pre></div>`;
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:14px;">Итог для пользователя (PM)</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="Итог PM" data-md-kind="final" style="padding:4px 8px;font-size:12px;">Открыть полноэкранно</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(fin || ""))}</div></div>`;
       } else {
         finalWrap.innerHTML = "";
       }
+    }
+    document.querySelectorAll<HTMLButtonElement>(".lp-open-orch-markdown").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const kind = String(btn.dataset.mdKind || "");
+        const title = String(btn.dataset.mdTitle || "Markdown");
+        if (kind === "architecture") {
+          openOrchMarkdownModal(title, String(data.architecture_md || ""));
+          return;
+        }
+        if (kind === "final") {
+          openOrchMarkdownModal(title, String(fin || ""));
+          return;
+        }
+        if (kind === "step_output") {
+          const key = String(btn.dataset.stepKey || "");
+          const step = (data.steps || []).find((x) => String(x.step_key || "") === key);
+          openOrchMarkdownModal(title, String(step?.output || ""));
+        }
+      });
+    });
+  };
+
+  const renderPortalRunsLive = (runs: AiTeamLiveRun[]): void => {
+    const tbody = document.getElementById("portal-ai-team-runs-live-body");
+    if (!tbody) return;
+    if (!currentProjectId) {
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
+      return;
+    }
+    if (!runs.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Нет активных или недавних run</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = runs
+      .map((r) => {
+        const runId = escapeHtml(String(r.run_id || "—"));
+        const st = escapeHtml(String(r.status || "—"));
+        const phase = escapeHtml(String(r.phase || "—"));
+        const iter = Number(r.iteration || 0);
+        const batch = escapeHtml(String(r.batch_status || "idle"));
+        const updated = r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : "—";
+        const err = r.error ? `<span class="lp-muted" title="${escapeHtml(String(r.error))}">⚠</span>` : "";
+        const openBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-run" data-run-id="${runId}" style="padding:4px 8px;font-size:12px;">Открыть</button>`;
+        return `<tr>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${runId}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><span class="lp-badge">${st}</span>${err}</td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${phase}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${iter}</td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${batch}</code></td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${escapeHtml(updated)}</td>
+          <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${openBtn}</td>
+        </tr>`;
+      })
+      .join("");
+  };
+
+  const inspectOrchestrationRun = async (runId: string): Promise<void> => {
+    if (!currentProjectId || !runId) return;
+    if (!route().startsWith("/portal/team")) {
+      location.hash = "#/portal/team";
+    }
+    stopOrchestrationPoll();
+    stopOrchestrationStream();
+    resetOrchestrationLiveLog();
+    sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, runId);
+    appendOrchestrationLiveLog(`ручной просмотр run ${runId}: подключение к stream LLM…`);
+    await pollOrchestration(runId);
+    void loadBrowserLogs(runId);
+    void startOrchestrationStream(runId);
+  };
+
+  const loadPortalRunsLive = async (): Promise<void> => {
+    const tbody = document.getElementById("portal-ai-team-runs-live-body");
+    if (!tbody) return;
+    if (!currentProjectId) {
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
+      return;
+    }
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      const resp = await fetch(
+        `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/ai-team/runs/live?${params.toString()}`,
+        { headers: authHeader(token()) },
+      );
+      if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">ai-team/runs/live: ${resp.status}</td></tr>`;
+        return;
+      }
+      const data = (await resp.json()) as { runs?: AiTeamLiveRun[] };
+      renderPortalRunsLive(Array.isArray(data.runs) ? data.runs : []);
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">${escapeHtml(String(e))}</td></tr>`;
     }
   };
 
@@ -1916,11 +2195,19 @@ function renderPortal(): void {
     }
 
     const prev = orchStreamLastRun;
+    const iter = Number(data.iteration || 0);
+    const batchStatus = String(data.batch_status || "—");
+    const runLine = `run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")} · iteration ${iter} · batch ${batchStatus}`;
     if (!prev) {
-      appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+      appendOrchestrationLiveLog(runLine);
     } else {
-      if ((data.status || "") !== (prev.status || "") || (data.phase || "") !== (prev.phase || "")) {
-        appendOrchestrationLiveLog(`run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")}`);
+      if (
+        (data.status || "") !== (prev.status || "") ||
+        (data.phase || "") !== (prev.phase || "") ||
+        Number(data.iteration || 0) !== Number(prev.iteration || 0) ||
+        String(data.batch_status || "") !== String(prev.batch_status || "")
+      ) {
+        appendOrchestrationLiveLog(runLine);
       }
       const prevSteps = new Map((prev.steps || []).map((s) => [String(s.step_key || ""), s]));
       for (const s of data.steps || []) {
@@ -1975,6 +2262,8 @@ function renderPortal(): void {
       run_id: runId,
       status: "running",
       phase: "stream",
+      iteration: 0,
+      batch_status: "streaming",
       steps: [],
       execution_tasks: [],
     };
@@ -1982,6 +2271,10 @@ function renderPortal(): void {
 
   const applyOrchestrationDeltaEvent = (runId: string, ev: Record<string, unknown>) => {
     const typ = String(ev.type || "");
+    if (typ === "snapshot" && ev.run && typeof ev.run === "object") {
+      applyOrchestrationRunRealtime(runId, ev.run as OrchRunData);
+      return;
+    }
     if (typ === "run" && ev.run && typeof ev.run === "object") {
       applyOrchestrationRunRealtime(runId, ev.run as OrchRunData);
       return;
@@ -2039,14 +2332,21 @@ function renderPortal(): void {
       return;
     }
     if (typ === "stream_end") {
+      orchStreamFinished = true;
       appendOrchestrationLiveLog(`stream завершён: ${String(ev.status || "unknown")}`);
+      return;
+    }
+    if (typ === "agent_trace") {
+      const stepKey = String(ev.step_key || "agent");
+      const message = String(ev.message || "").trim();
+      if (message) appendOrchestrationLiveLog(`[trace:${stepKey}] ${message}`);
       return;
     }
   };
 
-  const startOrchestrationStream = async (runId: string) => {
+  const startOrchestrationNdjsonStream = async (runId: string) => {
     if (!currentProjectId || !runId) return;
-    stopOrchestrationStream();
+    await pollOrchestration(runId);
     const ctrl = new AbortController();
     orchStreamAbort = ctrl;
     try {
@@ -2099,6 +2399,65 @@ function renderPortal(): void {
     }
   };
 
+  const startOrchestrationStream = async (runId: string) => {
+    if (!currentProjectId || !runId) return;
+    stopOrchestrationStream();
+    orchStreamFinished = false;
+
+    const t = token();
+    if (!t) {
+      void startOrchestrationNdjsonStream(runId);
+      return;
+    }
+
+    let ws: WebSocket;
+    try {
+      const path = `/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(runId)}/ws`;
+      const baseRef =
+        GATEWAY_BASE && GATEWAY_BASE.trim() !== ""
+          ? GATEWAY_BASE
+          : typeof window !== "undefined"
+            ? window.location.origin
+            : "http://localhost";
+      const u = new URL(path, baseRef);
+      u.searchParams.set("access_token", t);
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(u.href);
+    } catch {
+      void startOrchestrationNdjsonStream(runId);
+      return;
+    }
+
+    orchStreamSocket = ws;
+
+    let wsFallbackStarted = false;
+
+    ws.onmessage = (evt) => {
+      let ev: Record<string, unknown>;
+      try {
+        ev = JSON.parse(String(evt.data)) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const typ = String(ev.type || "");
+      if (typ === "error") {
+        appendOrchestrationLiveLog(`stream error: ${String(ev.detail || "unknown")}`);
+        return;
+      }
+      applyOrchestrationDeltaEvent(runId, ev);
+    };
+
+    ws.onclose = () => {
+      if (orchStreamSocket !== ws) return;
+      orchStreamSocket = null;
+      if (orchStreamFinished) return;
+      if (wsFallbackStarted) return;
+      wsFallbackStarted = true;
+      appendOrchestrationLiveLog("websocket закрыт, переключение на NDJSON stream");
+      void startOrchestrationNdjsonStream(runId);
+    };
+  };
+
   const pollOrchestration = async (runId: string) => {
     if (!currentProjectId) return;
     try {
@@ -2129,20 +2488,41 @@ function renderPortal(): void {
     }
   };
 
+  const renderDocsMarkdownPreview = () => {
+    const preview = document.getElementById("docs-md-preview");
+    if (!preview) return;
+    const markdown = docsMdEditor ? getDocsMarkdownContent(docsMdEditor) : "";
+    if (!markdown.trim()) {
+      preview.innerHTML = `<p class="lp-muted">Предпросмотр появится здесь…</p>`;
+      return;
+    }
+    preview.innerHTML = renderMarkdownHtml(markdown);
+  };
+
+  const ensureDocsMarkdownEditor = () => {
+    if (docsMdEditor) return;
+    const host = document.getElementById("docs-md-editor");
+    if (!host) return;
+    docsMdEditor = mountDocsMarkdownEditor(host, "");
+    docsMdEditor.onDidChangeModelContent(() => renderDocsMarkdownPreview());
+    renderDocsMarkdownPreview();
+  };
+
   const resetDocsEditor = () => {
     currentDocId = "";
     const idEl = document.getElementById("docs-edit-id") as HTMLInputElement | null;
     const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
     const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
     const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
-    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
     const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
     const versionsWrap = document.getElementById("docs-versions-wrap");
     if (idEl) idEl.value = "";
     if (titleEl) titleEl.value = "";
     if (typeEl) typeEl.value = "architecture";
     if (slugEl) slugEl.value = "";
-    if (contentEl) contentEl.value = "";
+    ensureDocsMarkdownEditor();
+    if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, "");
+    renderDocsMarkdownPreview();
     if (chgEl) chgEl.value = "Создано/обновлено вручную";
     if (versionsWrap) versionsWrap.innerHTML = `<p class="lp-muted">Выберите документ в списке слева.</p>`;
   };
@@ -2193,8 +2573,9 @@ function renderPortal(): void {
         }
         const payload = (await r.json()) as { version?: Record<string, unknown> };
         const content = String(payload.version?.content_md ?? "");
-        const cEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
-        if (cEl) cEl.value = content;
+        ensureDocsMarkdownEditor();
+        if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, content);
+        renderDocsMarkdownPreview();
       });
     });
   };
@@ -2217,13 +2598,14 @@ function renderPortal(): void {
     const titleEl = document.getElementById("docs-edit-title") as HTMLInputElement | null;
     const typeEl = document.getElementById("docs-edit-type") as HTMLSelectElement | null;
     const slugEl = document.getElementById("docs-edit-slug") as HTMLInputElement | null;
-    const contentEl = document.getElementById("docs-edit-content") as HTMLTextAreaElement | null;
     const chgEl = document.getElementById("docs-edit-change-summary") as HTMLInputElement | null;
     if (idEl) idEl.value = currentDocId;
     if (titleEl) titleEl.value = String(doc.title ?? "");
     if (typeEl) typeEl.value = String(doc.doc_type ?? "other");
     if (slugEl) slugEl.value = String(doc.slug ?? "");
-    if (contentEl) contentEl.value = String(ver.content_md ?? "");
+    ensureDocsMarkdownEditor();
+    if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, String(ver.content_md ?? ""));
+    renderDocsMarkdownPreview();
     if (chgEl) chgEl.value = "Обновлено вручную";
     await loadDocumentVersions(currentDocId);
   };
@@ -2305,7 +2687,8 @@ function renderPortal(): void {
     const title = (document.getElementById("docs-edit-title") as HTMLInputElement | null)?.value.trim() || "";
     const docType = (document.getElementById("docs-edit-type") as HTMLSelectElement | null)?.value || "other";
     const slug = (document.getElementById("docs-edit-slug") as HTMLInputElement | null)?.value.trim() || "";
-    const content = (document.getElementById("docs-edit-content") as HTMLTextAreaElement | null)?.value || "";
+    ensureDocsMarkdownEditor();
+    const content = docsMdEditor ? getDocsMarkdownContent(docsMdEditor) : "";
     const changeSummary =
       (document.getElementById("docs-edit-change-summary") as HTMLInputElement | null)?.value.trim() || "Updated";
     if (!title || !content.trim()) {
@@ -2413,6 +2796,144 @@ function renderPortal(): void {
     });
   };
 
+  const closeTrackerTaskModal = () => {
+    const root = document.getElementById("tracker-task-modal");
+    if (!root) return;
+    root.setAttribute("hidden", "");
+    document.body.classList.remove("lp-modal-open");
+  };
+
+  const openTrackerTaskModal = async (itemId: string) => {
+    if (!currentProjectId || !itemId) return;
+    const root = document.getElementById("tracker-task-modal");
+    const body = document.getElementById("tracker-task-modal-body");
+    if (!root || !body) return;
+    body.innerHTML = `<p class="lp-muted">Загрузка…</p>`;
+    root.removeAttribute("hidden");
+    document.body.classList.add("lp-modal-open");
+    try {
+      const [itemResp, eventsResp] = await Promise.all([
+        fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/tracker/items/${encodeURIComponent(itemId)}`, {
+          headers: authHeader(token()),
+        }),
+        fetch(
+          `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/tracker/items/${encodeURIComponent(itemId)}/events?limit=60`,
+          { headers: authHeader(token()) },
+        ),
+      ]);
+      const itemRaw = await itemResp.text();
+      const eventsRaw = await eventsResp.text();
+      let item: Record<string, unknown> = {};
+      let evData: { events?: Array<Record<string, unknown>> } = {};
+      try {
+        item = JSON.parse(itemRaw) as Record<string, unknown>;
+      } catch {
+        item = {};
+      }
+      try {
+        evData = JSON.parse(eventsRaw) as { events?: Array<Record<string, unknown>> };
+      } catch {
+        evData = {};
+      }
+      if (!itemResp.ok) {
+        body.innerHTML = `<p class="lp-error">Ошибка загрузки задачи: ${escapeHtml(String((item as { detail?: string }).detail || itemRaw || itemResp.status))}</p>`;
+        return;
+      }
+      const meta = (item.meta && typeof item.meta === "object" ? (item.meta as Record<string, unknown>) : {}) || {};
+      const resultObj = (meta.last_result && typeof meta.last_result === "object"
+        ? (meta.last_result as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const lastErr = String(meta.last_error || "");
+      const commentary = String(resultObj.commentary || resultObj.output || "").trim();
+      const workDone = Array.isArray(resultObj.work_done)
+        ? resultObj.work_done.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      const dodObj = resultObj.dod && typeof resultObj.dod === "object"
+        ? (resultObj.dod as Record<string, unknown>)
+        : null;
+      const dodDone = Boolean(dodObj?.done);
+      const dodStatus = String(dodObj?.status || "").trim();
+      const dodNotes = String(dodObj?.notes || "").trim();
+      const dodCriteria = Array.isArray(dodObj?.criteria)
+        ? (dodObj?.criteria as unknown[]).map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      const resultJson = resultObj && Object.keys(resultObj).length > 0 ? JSON.stringify(resultObj, null, 2) : "";
+      const events = Array.isArray(evData.events) ? evData.events : [];
+      const eventsHtml = events.length
+        ? events
+            .map((e) => {
+              const at = String(e.created_at || "");
+              const action = String(e.action || "");
+              const actor = String(e.actor_ref || "");
+              const payload =
+                e.payload && typeof e.payload === "object"
+                  ? JSON.stringify(e.payload as Record<string, unknown>, null, 2)
+                  : "";
+              return `<article class="lp-orch-card" style="margin-bottom:8px;">
+                <div class="lp-orch-card-head">
+                  <span class="lp-orch-badge run">${escapeHtml(action || "event")}</span>
+                  <span class="lp-muted" style="font-size:12px;">${escapeHtml(at ? new Date(at).toLocaleString() : "—")}</span>
+                </div>
+                <p class="lp-muted" style="margin:6px 0 0;font-size:12px;">actor: ${escapeHtml(actor || "—")}</p>
+                ${payload ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(payload)}</pre>` : ""}
+              </article>`;
+            })
+            .join("")
+        : `<p class="lp-muted">Событий пока нет.</p>`;
+      body.innerHTML = `
+        <div class="lp-orch-grid">
+          <article class="lp-orch-card">
+            <div class="lp-orch-card-head">
+              <span class="lp-orch-badge wait">${escapeHtml(String(item.kind || "task"))}</span>
+              <span class="lp-orch-badge run">${escapeHtml(String(item.status || "unknown"))}</span>
+            </div>
+            <p style="margin:8px 0;font-weight:600;">${escapeHtml(String(item.title || "—"))}</p>
+            <p class="lp-muted" style="font-size:12px;white-space:pre-wrap;">${escapeHtml(String(item.description || ""))}</p>
+            <p class="lp-muted" style="font-size:12px;">execution_id: <code>${escapeHtml(String(item.last_execution_id || "—"))}</code></p>
+          </article>
+          <article class="lp-orch-card">
+            <h4 style="margin:0 0 8px;font-size:14px;">Результат агента</h4>
+            ${
+              commentary
+                ? `<p style="margin:0 0 10px;font-size:13px;white-space:pre-wrap;">${escapeHtml(commentary)}</p>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">Комментарий агента пока отсутствует.</p>`
+            }
+            <h4 style="margin:0 0 8px;font-size:14px;">Что было сделано</h4>
+            ${
+              workDone.length
+                ? `<ul style="margin:0 0 10px 18px;padding:0;">${workDone
+                    .map((row) => `<li style="margin:0 0 4px;">${escapeHtml(row)}</li>`)
+                    .join("")}</ul>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">Нет явного списка выполненных действий.</p>`
+            }
+            <h4 style="margin:0 0 8px;font-size:14px;">DoD</h4>
+            <p style="margin:0 0 8px;font-size:13px;">
+              <span class="lp-orch-badge ${dodDone ? "ok" : "wait"}">${escapeHtml(dodDone ? "DONE" : "NOT DONE")}</span>
+              <span class="lp-muted" style="margin-left:8px;">${escapeHtml(dodStatus || "unknown")}</span>
+            </p>
+            ${
+              dodCriteria.length
+                ? `<ul style="margin:0 0 10px 18px;padding:0;">${dodCriteria
+                    .map((row) => `<li style="margin:0 0 4px;">${escapeHtml(row)}</li>`)
+                    .join("")}</ul>`
+                : ""
+            }
+            ${dodNotes ? `<p class="lp-muted" style="margin:0 0 10px;">${escapeHtml(dodNotes)}</p>` : ""}
+            <details>
+              <summary class="lp-muted" style="cursor:pointer;">Показать raw result JSON</summary>
+              ${resultJson ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(resultJson)}</pre>` : `<p class="lp-muted">Результат ещё не сформирован.</p>`}
+            </details>
+            ${lastErr ? `<h4 style="margin:12px 0 8px;font-size:14px;">Ошибка</h4><pre class="lp-orch-pre lp-error">${escapeHtml(lastErr)}</pre>` : ""}
+          </article>
+        </div>
+        <h4 style="margin:12px 0 8px;font-size:14px;">История выполнения</h4>
+        <div>${eventsHtml}</div>
+      `;
+    } catch (e) {
+      body.innerHTML = `<p class="lp-error">${escapeHtml(String(e))}</p>`;
+    }
+  };
+
   const loadTrackerItems = async () => {
     const listEl = document.getElementById("tracker-items-list");
     const stEl = document.getElementById("tracker-status-line");
@@ -2486,9 +3007,10 @@ function renderPortal(): void {
           const closeBtn = canClose(it)
             ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-close" data-id="${escapeHtml(id)}">Закрыть</button>`
             : "";
+          const detailsBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-result" data-id="${escapeHtml(id)}">Результат</button>`;
           const actions =
-            editBtn || dispatchBtn || closeBtn
-              ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${editBtn}${dispatchBtn}${closeBtn}</div>`
+            editBtn || dispatchBtn || closeBtn || detailsBtn
+              ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${detailsBtn}${editBtn}${dispatchBtn}${closeBtn}</div>`
               : "";
           return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Роль: ${role}</p><p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
         })
@@ -2584,6 +3106,12 @@ function renderPortal(): void {
           void loadTrackerItems();
         });
       });
+      listEl.querySelectorAll(".lp-tracker-result").forEach((b) => {
+        b.addEventListener("click", () => {
+          const id = (b as HTMLButtonElement).dataset.id;
+          if (id) void openTrackerTaskModal(id);
+        });
+      });
     } catch (e) {
       listEl.innerHTML = `<p class="lp-muted">${escapeHtml(String(e))}</p>`;
       if (stEl) stEl.textContent = "";
@@ -2592,11 +3120,14 @@ function renderPortal(): void {
 
   const restoreOrchestrationForProject = () => {
     closeOrchNodeModal();
+    closeOrchMarkdownModal();
+    closeTrackerTaskModal();
     stopOrchestrationPoll();
     stopOrchestrationStream();
     resetOrchestrationLiveLog();
     void loadTrackerItems();
     void loadDocumentsList();
+    void loadPortalRunsLive();
     if (!currentProjectId) {
       renderOrchestrationPanel(null);
       void loadBrowserLogs("");
@@ -2606,7 +3137,10 @@ function renderPortal(): void {
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
     if (last) {
       appendOrchestrationLiveLog(`подключение к stream run ${last}…`);
-      void startOrchestrationStream(last);
+      void (async () => {
+        await pollOrchestration(last);
+        void startOrchestrationStream(last);
+      })();
       return;
     }
     void (async () => {
@@ -2616,9 +3150,9 @@ function renderPortal(): void {
         });
         const j = (await r.json()) as { run?: Record<string, unknown> };
         if (r.ok && j.run) {
-          renderOrchestrationPanel(j.run);
           const rid = typeof j.run.run_id === "string" ? j.run.run_id : "";
           if (rid) {
+            applyOrchestrationRunRealtime(rid, j.run as OrchRunData);
             void loadBrowserLogs(rid);
             const um = typeof j.run.user_message === "string" ? j.run.user_message.trim() : "";
             if (um && projectAiChatHistory.length === 0) {
@@ -2633,6 +3167,8 @@ function renderPortal(): void {
               appendOrchestrationLiveLog(`подключение к stream run ${rid}…`);
               void startOrchestrationStream(rid);
             }
+          } else {
+            renderOrchestrationPanel(j.run as OrchRunData);
           }
         } else {
           renderOrchestrationPanel(null);
@@ -2684,6 +3220,7 @@ function renderPortal(): void {
             } else if (st === "running") {
               if (stLine) stLine.textContent = `run ${lastRunId} уже выполняется — дождитесь завершения шага`;
               appendOrchestrationLiveLog(`run ${lastRunId} уже running: новое сообщение будет доступно после завершения текущего цикла`);
+              await pollOrchestration(lastRunId);
               void startOrchestrationStream(lastRunId);
               return;
             }
@@ -3734,11 +4271,33 @@ function renderPortal(): void {
 
   document.getElementById("project-ai-chat-send")?.addEventListener("click", () => void sendProjectAiChat());
   document.getElementById("project-orchestrate-btn")?.addEventListener("click", () => void startOrchestration());
+  document.getElementById("portal-ai-team-live-refresh")?.addEventListener("click", () => void loadPortalRunsLive());
+  document.getElementById("portal-ai-team-runs-live-body")?.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest(".lp-open-orch-run") as HTMLButtonElement | null;
+    if (!btn) return;
+    const runId = String(btn.dataset.runId || "").trim();
+    if (!runId) return;
+    void inspectOrchestrationRun(runId);
+  });
   document.getElementById("orch-node-modal-close")?.addEventListener("click", () => closeOrchNodeModal());
   document.getElementById("orchestration-node-modal")?.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement | null;
     if (t && t.id === "orchestration-node-modal") {
       closeOrchNodeModal();
+    }
+  });
+  document.getElementById("orch-markdown-modal-close")?.addEventListener("click", () => closeOrchMarkdownModal());
+  document.getElementById("orchestration-markdown-modal")?.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement | null;
+    if (t && t.id === "orchestration-markdown-modal") {
+      closeOrchMarkdownModal();
+    }
+  });
+  document.getElementById("tracker-task-modal-close")?.addEventListener("click", () => closeTrackerTaskModal());
+  document.getElementById("tracker-task-modal")?.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement | null;
+    if (t && t.id === "tracker-task-modal") {
+      closeTrackerTaskModal();
     }
   });
 
@@ -4240,10 +4799,72 @@ function renderPortal(): void {
   statusPoll = window.setInterval(() => {
     if (currentProjectId) void refreshStatus();
   }, 8000);
+  if (portalPhasePollTimer !== null) {
+    window.clearInterval(portalPhasePollTimer);
+    portalPhasePollTimer = null;
+  }
+  portalPhasePollTimer = window.setInterval(() => {
+    if (route().startsWith("/portal/service")) {
+      void loadPortalRunsLive();
+    }
+  }, 3000);
 
   (window as unknown as { __lpPortalMounted?: boolean }).__lpPortalMounted = true;
   bindPortalNav();
   syncPortalView(portalViewFromRoute(route()));
+}
+
+function renderSuperadminRunsLive(runs: AiTeamLiveRun[]): void {
+  const tbody = document.getElementById("ai-team-runs-live-body");
+  if (!tbody) return;
+  if (!runs.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">Нет активных или недавних run</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = runs
+    .map((r) => {
+      const st = escapeHtml(r.status || "—");
+      const phase = escapeHtml(String(r.phase || "—"));
+      const iter = Number(r.iteration || 0);
+      const b = escapeHtml(String(r.batch_status || "idle"));
+      const updated = r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : "—";
+      const name = escapeHtml(r.project_name || "—");
+      const pid = escapeHtml(r.project_id || "—");
+      const runId = escapeHtml(r.run_id || "—");
+      const err = r.error ? `<span class="lp-muted" title="${escapeHtml(String(r.error))}">⚠</span>` : "";
+      return `<tr>
+        <td><code>${runId}</code></td>
+        <td title="${pid}">${name}</td>
+        <td><span class="lp-badge">${st}</span>${err}</td>
+        <td><code>${phase}</code></td>
+        <td>${iter}</td>
+        <td><code>${b}</code></td>
+        <td>${escapeHtml(updated)}</td>
+        <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;" data-superadmin-open-project="${pid}">Открыть</button></td>
+      </tr>`;
+    })
+    .join("");
+}
+
+async function loadSuperadminRunsLive(): Promise<void> {
+  const token =
+    (document.getElementById("superadmin-token") as HTMLInputElement | null)?.value.trim() ||
+    getSuperadminTokenForUi();
+  if (!token) return;
+  const status = (document.getElementById("ai-team-live-status") as HTMLSelectElement | null)?.value.trim() || "";
+  const params = new URLSearchParams();
+  params.set("limit", "80");
+  if (status) params.set("status", status);
+  const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/ai-team/runs/live?${params.toString()}`, {
+    headers: authHeader(token),
+  });
+  if (!resp.ok) {
+    const tbody = document.getElementById("ai-team-runs-live-body");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">ai-team/runs/live: ${resp.status}</td></tr>`;
+    return;
+  }
+  const data = (await resp.json()) as { runs?: AiTeamLiveRun[] };
+  renderSuperadminRunsLive(Array.isArray(data.runs) ? data.runs : []);
 }
 
 async function loadSuperadminData(): Promise<void> {
@@ -4450,6 +5071,7 @@ async function loadSuperadminData(): Promise<void> {
         : `<tr><td colspan="5" class="lp-muted">Нет HTTP tools</td></tr>`;
     }
   }
+  await loadSuperadminRunsLive();
 }
 
 function setupAnsibleTemplates(): void {
@@ -4651,6 +5273,10 @@ function setupAnsibleTemplates(): void {
 }
 
 function renderSuperadmin(): void {
+  if (superadminPhasePollTimer !== null) {
+    window.clearInterval(superadminPhasePollTimer);
+    superadminPhasePollTimer = null;
+  }
   mount(
     shell({
       active: "superadmin",
@@ -4747,6 +5373,40 @@ function renderSuperadmin(): void {
           <div class="lp-field"><label>Описание</label><input class="lp-input" id="ag-http-desc" placeholder="Кратко для LLM" style="min-width:220px" /></div>
           <div class="lp-field" style="flex:1;min-width:280px;"><label>url_template</label><input class="lp-input" id="ag-http-url" placeholder="http://project-service:8002/api/v1/projects/{project_id}/facts" style="width:100%;max-width:480px" /></div>
           <button type="button" class="lp-btn" id="agent-graph-http-add">Добавить</button>
+        </div>
+      </div>
+      <div class="lp-panel">
+        <h2>AI Team phase dashboard (live)</h2>
+        <p class="lp-muted">Обновляется автоматически каждые 3с. Показывает текущую фазу, iteration батча и состояние исполнения.</p>
+        <div class="lp-row" style="align-items:flex-end;gap:8px;">
+          <div class="lp-field">
+            <label>Фильтр статуса run</label>
+            <select id="ai-team-live-status" class="lp-select" style="min-width:180px;">
+              <option value="">Все</option>
+              <option value="running">running</option>
+              <option value="paused">paused</option>
+              <option value="error">error</option>
+              <option value="done">done</option>
+            </select>
+          </div>
+          <button type="button" class="lp-btn lp-btn-ghost" id="ai-team-live-refresh">Обновить сейчас</button>
+        </div>
+        <div class="lp-table-wrap" style="margin-top:12px;">
+          <table class="lp-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Phase</th>
+                <th>Iteration</th>
+                <th>Batch status</th>
+                <th>Updated</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="ai-team-runs-live-body"><tr><td colspan="8" class="lp-muted">Загрузка…</td></tr></tbody>
+          </table>
         </div>
       </div>
       <div class="lp-stat-grid">
@@ -4866,6 +5526,15 @@ function renderSuperadmin(): void {
     });
   document.getElementById("refresh-all")?.addEventListener("click", safeLoad);
   document.getElementById("apply-filters")?.addEventListener("click", safeLoad);
+  document.getElementById("ai-team-live-refresh")?.addEventListener("click", () => void loadSuperadminRunsLive());
+  document.getElementById("ai-team-live-status")?.addEventListener("change", () => void loadSuperadminRunsLive());
+  document.getElementById("ai-team-runs-live-body")?.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest("button[data-superadmin-open-project]") as HTMLButtonElement | null;
+    if (!btn) return;
+    const pid = btn.getAttribute("data-superadmin-open-project");
+    if (!pid) return;
+    location.hash = `#/portal/project/${encodeURIComponent(pid)}`;
+  });
   document.getElementById("projects-table-body")?.addEventListener("click", async (ev) => {
     const el = (ev.target as HTMLElement).closest("button[data-pa]");
     if (!el) return;
@@ -5085,10 +5754,21 @@ function renderSuperadmin(): void {
   });
   void safeLoad();
   setupAnsibleTemplates();
+  superadminPhasePollTimer = window.setInterval(() => {
+    void loadSuperadminRunsLive();
+  }, 3000);
 }
 
 function renderRoute(): void {
   const r = route();
+  if (!r.startsWith("/portal") && portalPhasePollTimer !== null) {
+    window.clearInterval(portalPhasePollTimer);
+    portalPhasePollTimer = null;
+  }
+  if (r !== "/admin" && superadminPhasePollTimer !== null) {
+    window.clearInterval(superadminPhasePollTimer);
+    superadminPhasePollTimer = null;
+  }
   if (isPortalUserSession() && (r === "/dashboard" || r === "/superadmin" || r === "/admin")) {
     location.replace(`${location.pathname}${location.search}#/portal/home`);
     return;

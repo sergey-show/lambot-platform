@@ -287,6 +287,11 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ADMIN_SERVICE_URL: http://admin-service:8006
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
     depends_on:
       admin-service:
         condition: service_started
@@ -306,7 +311,7 @@ services:
       ADMIN_SERVICE_URL: http://admin-service:8006
       ADAPTER_SERVICE_URL: http://adapter-service:8008
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
-      AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-0}
+      AGENT_WORKER_USE_LLM: ${AGENT_WORKER_USE_LLM:-1}
       AGENT_WORKER_SEED_SAMPLE: ${AGENT_WORKER_SEED_SAMPLE:-1}
     depends_on:
       kafka:
@@ -406,7 +411,18 @@ services:
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      # LangChain → llm-adapter /v1/chat/completions → провайдер: каждый LLM-вызов в Langfuse (input/output).
+      AGENT_GRAPH_OPENAI_BASE_URL: ${AGENT_GRAPH_OPENAI_BASE_URL:-http://llm-adapter-service:8005/v1}
       OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
+      # Langfuse: LANGFUSE_TRACING_ENABLED=0 выключает SDK; по умолчанию 1.
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      # ReAct LangGraph: шаги графа (вызов инструмента + ответ считаются как шаги). По умолчанию было 25 — часто мало.
+      LANGGRAPH_RECURSION_LIMIT: ${LANGGRAPH_RECURSION_LIMIT:-100}
+      # Режим «живого» исполнения: JSON pm/architect (live_execution), resume по execution_tasks; отдельного LLM-классификатора после intake нет.
       AGENT_ORCHESTRATION_MAX_SECONDS: ${AGENT_ORCHESTRATION_MAX_SECONDS:-10800}
       AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS: ${AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS:-7200}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -532,6 +548,144 @@ services:
       api-gateway:
         condition: service_started
 
+  # Langfuse LLM observability (опционально): docker compose --profile langfuse up -d
+  # Внутри сети compose: Postgres/Redis/ClickHouse/Minio/worker без проброса портов на хост.
+  # Снаружи только UI: http://localhost:3100 (см. LANGFUSE_NEXTAUTH_URL).
+  langfuse-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-langfuse}
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  langfuse-redis:
+    image: redis:7
+    restart: unless-stopped
+    environment:
+      REDISCLI_AUTH: ${LANGFUSE_REDIS_PASSWORD:-langfuse-redis-dev}
+    command: ["redis-server", "--requirepass", "${LANGFUSE_REDIS_PASSWORD:-langfuse-redis-dev}"]
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  langfuse-minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /data/langfuse &&
+        minio server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    environment: &langfuse-worker-env
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3100}
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_POSTGRES_PASSWORD:-langfuse}@langfuse-postgres:5432/langfuse
+      SALT: ${LANGFUSE_SALT:-lambot-langfuse-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_USE_AZURE_BLOB: "false"
+      LANGFUSE_USE_OCI_NATIVE_OBJECT_STORAGE: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-langfuse-redis-dev}
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    ports:
+      - "${LANGFUSE_UI_BIND:-3100}:3000"
+    environment:
+      <<: *langfuse-worker-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-lambot-langfuse-nextauth-change-me}
+      # Headless init (https://langfuse.com/self-hosting/administration/headless-initialization)
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-lambot-local}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Lambot}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-lambot-platform}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-platform}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@lambot.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Lambot Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-lambot-langfuse-admin}
+      LANGFUSE_READ_FROM_CLICKHOUSE_ONLY: "true"
+      LANGFUSE_RETURN_FROM_CLICKHOUSE: "true"
+
 volumes:
   postgres_project_data:
   postgres_planning_data:
@@ -541,3 +695,8 @@ volumes:
   postgres_documents_data:
   clickhouse_data:
   rustfs_data:
+  langfuse_postgres_data:
+  langfuse_redis_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
