@@ -16,7 +16,7 @@ from shared.contracts.agent_task import TaskEnvelope, TaskType
 TRACKER_KIND_EPIC = "epic"
 TRACKER_KIND_TASK = "task"
 
-VALID_ASSIGNEE_ROLES = frozenset({"pm", "architect", "devops", "backend", "frontend", "qa"})
+VALID_ASSIGNEE_ROLES = frozenset({"sa", "pm", "architect", "devops", "backend", "frontend", "qa"})
 
 # Статусы карточки
 S_BACKLOG = "backlog"
@@ -158,6 +158,7 @@ def create_item(
     assignee_role: str | None = None,
     status: str = S_BACKLOG,
     seq: int = 0,
+    meta: dict[str, Any] | None = None,
     actor_ref: str = "user",
 ) -> TrackerItem:
     tenant_id = get_tenant_id_for_project(db, project_id)
@@ -190,7 +191,7 @@ def create_item(
         assignee_agent_key=ak,
         assignee_role=role,
         seq=seq,
-        meta={},
+        meta=meta if isinstance(meta, dict) else {},
     )
     db.add(row)
     db.flush()
@@ -377,7 +378,8 @@ def dispatch_item(
 def _build_tracker_prompt(row: TrackerItem) -> str:
     role = row.assignee_role or "developer"
     return (
-        f"Ты агент роли «{role}» в проекте пользователя. Выполни задачу по сути, опираясь на контекст платформы.\n\n"
+        f"Ты агент роли «{role}» в проекте пользователя. "
+        f"Задача из трекера «Задачи агентов» — нужен проверяемый результат через инструменты платформы.\n\n"
         f"Заголовок: {row.title}\n\n"
         f"Описание:\n{row.description or '(нет)'}\n"
     )

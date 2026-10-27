@@ -12,6 +12,7 @@ from uuid import UUID
 import httpx
 from langchain_core.tools import StructuredTool, tool
 
+from services.agent_graph_service.git_platform_tools import GIT_PLATFORM_FACTORIES, build_git_platform_tools
 from services.agent_graph_service.tool_policy import fetch_tool_policy
 
 ADAPTER_URL = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
@@ -369,7 +370,7 @@ def _make_browser_session(pid: str):
 def _make_get_project_docs_context(pid: str):
     @tool
     def get_project_docs_context(query: str = "", doc_types_csv: str = "", top_k: int = 8) -> str:
-        """RAG-контекст проектной документации (Wiki): архитектура, user/admin guide, runbook, ADR. Используй перед планированием и изменениями. doc_types_csv пример: architecture,user_guide,admin_guide."""
+        """Поиск в wiki проекта (RAG по запросу). Вызывай только когда нужны факты из документации; query — конкретный вопрос (не весь user_message). doc_types_csv: architecture,user_guide,admin_guide. top_k 3–8."""
         types = []
         for raw in (doc_types_csv or "").split(","):
             v = raw.strip().lower()
@@ -499,7 +500,164 @@ def _make_ansible_run_template(pid: str):
     return ansible_run_template
 
 
+def _parse_meta_json(meta_json: str) -> dict[str, Any]:
+    raw = (meta_json or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _make_tracker_list_items(pid: str):
+    @tool
+    def tracker_list_items(kind: str = "", limit: int = 200) -> str:
+        """Список эпиков и задач трекера проекта (видно в UI «Задачи агентов»). kind: epic|task или пусто."""
+        params: dict[str, str] = {"limit": str(max(1, min(int(limit or 200), 500)))}
+        k = (kind or "").strip().lower()
+        if k in ("epic", "task"):
+            params["kind"] = k
+        try:
+            r = httpx.get(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN},
+                params=params,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_list_items
+
+
+def _make_tracker_create_epic(pid: str):
+    @tool
+    def tracker_create_epic(
+        title: str,
+        description: str = "",
+        meta_json: str = "",
+        run_id: str = "",
+        seq: int = 0,
+    ) -> str:
+        """Создать эпик в трекере (backlog). meta_json — JSON: requirement_id, run_id и др."""
+        if not title.strip():
+            return json.dumps({"error": "title is required"})
+        meta = _parse_meta_json(meta_json)
+        rid = (run_id or "").strip()
+        if rid:
+            meta["run_id"] = rid
+        payload: dict[str, Any] = {
+            "kind": "epic",
+            "title": title.strip(),
+            "description": description or "",
+            "seq": int(seq or 0),
+        }
+        if meta:
+            payload["meta"] = meta
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_create_epic
+
+
+def _make_tracker_create_task(pid: str):
+    @tool
+    def tracker_create_task(
+        parent_epic_id: str,
+        title: str,
+        assignee_role: str,
+        description: str = "",
+        meta_json: str = "",
+        run_id: str = "",
+        requirement_id: str = "",
+        seq: int = 0,
+    ) -> str:
+        """Создать задачу под эпиком с ролью агента (devops|backend|frontend|qa|architect|pm|sa)."""
+        if not title.strip():
+            return json.dumps({"error": "title is required"})
+        parent = (parent_epic_id or "").strip()
+        if not parent:
+            return json.dumps({"error": "parent_epic_id is required"})
+        role = (assignee_role or "").strip().lower()
+        if not role:
+            return json.dumps({"error": "assignee_role is required"})
+        meta = _parse_meta_json(meta_json)
+        rid = (run_id or "").strip()
+        if rid:
+            meta["run_id"] = rid
+        req = (requirement_id or "").strip()
+        if req:
+            meta["requirement_id"] = req
+        payload: dict[str, Any] = {
+            "kind": "task",
+            "parent_id": parent,
+            "title": title.strip(),
+            "description": description or "",
+            "assignee_role": role,
+            "seq": int(seq or 0),
+        }
+        if meta:
+            payload["meta"] = meta
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/tracker/items",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=30.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return tracker_create_task
+
+
+def _make_search_knowledge(pid: str):
+    @tool
+    def search_knowledge(
+        query: str,
+        kb_ids_csv: str = "",
+        include_platform: bool = True,
+        top_k: int = 8,
+    ) -> str:
+        """Семантический поиск по базам знаний (платформа + проект). kb_ids_csv — uuid через запятую или пусто = все доступные."""
+        q = (query or "").strip()
+        if not q:
+            return json.dumps({"error": "query is required"})
+        kb_ids = [x.strip() for x in kb_ids_csv.split(",") if x.strip()]
+        payload: dict[str, Any] = {
+            "query": q,
+            "kb_ids": kb_ids,
+            "include_platform": bool(include_platform),
+            "top_k": max(1, min(int(top_k or 8), 25)),
+        }
+        try:
+            r = httpx.post(
+                f"{API_GATEWAY_URL.rstrip('/')}/api/v1/internal/projects/{pid}/knowledge/search",
+                headers={"X-Internal-Token": INTERNAL_TOKEN, "Content-Type": "application/json"},
+                json=payload,
+                timeout=90.0,
+            )
+            return r.text if r.text else json.dumps({"http": r.status_code})
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    return search_knowledge
+
+
 BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
+    **GIT_PLATFORM_FACTORIES,
     "get_development_context": _make_get_development_context,
     "get_project_status": _make_get_project_status,
     "list_infra_resources": _make_list_infra_resources,
@@ -515,6 +673,10 @@ BUILTIN_FACTORIES: dict[str, Callable[[str], Any]] = {
     "upsert_project_document": _make_upsert_project_document,
     "list_project_documents": _make_list_project_documents,
     "ansible_run_template": _make_ansible_run_template,
+    "tracker_list_items": _make_tracker_list_items,
+    "tracker_create_epic": _make_tracker_create_epic,
+    "tracker_create_task": _make_tracker_create_task,
+    "search_knowledge": _make_search_knowledge,
 }
 
 
@@ -549,8 +711,11 @@ def build_platform_tools(project_id: UUID) -> list[Any]:
     tools: list[Any] = []
 
     for key, factory in BUILTIN_FACTORIES.items():
+        if key in GIT_PLATFORM_FACTORIES:
+            continue
         if builtin_flags.get(key, True):
             tools.append(factory(pid))
+    tools.extend(build_git_platform_tools(project_id, builtin_flags))
 
     for spec in policy.get("http_tools") or []:
         if isinstance(spec, dict) and spec.get("tool_name") and spec.get("url_template"):

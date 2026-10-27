@@ -28,6 +28,9 @@ DOC_TYPES = frozenset(
         "runbook",
         "adr",
         "api_contract",
+        "spec",
+        "glossary",
+        "traceability",
         "other",
     }
 )

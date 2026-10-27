@@ -12,10 +12,19 @@ from shared.contracts.api import (
     LlmEmbedResponse,
     LlmGenerateRequest,
     LlmGenerateResponse,
+    LlmRerankRequest,
+    LlmRerankResponse,
+    LlmRerankScore,
 )
 from services.agent_graph_service import langfuse_tracing
+from services.llm_adapter_service.ollama_tool_coerce import coerce_chat_completion_payload
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_tool_calls_enabled() -> bool:
+    v = (os.getenv("LLM_ADAPTER_COERCE_OLLAMA_TOOL_CALLS") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 app = FastAPI(title="llm-adapter-service", version="0.4.0")
 
@@ -55,6 +64,22 @@ def _resolve_chat_model(cfg: dict[str, Any] | None, request: LlmGenerateRequest)
     if request.purpose == "coding" and coding_model:
         return coding_model
     return default_model
+
+
+def _resolve_reranking_model(cfg: dict[str, Any] | None, override: str | None) -> str:
+    if override and override.strip():
+        return override.strip()
+    env_m = (os.getenv("OPENAI_RERANKING_MODEL") or "").strip()
+    if env_m:
+        return env_m
+    if cfg:
+        rm = cfg.get("reranking_model")
+        if isinstance(rm, str) and rm.strip():
+            return rm.strip()
+        dm = cfg.get("default_model")
+        if isinstance(dm, str) and dm.strip():
+            return dm.strip()
+    return os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
 
 
 def _resolve_embedding_model(cfg: dict[str, Any] | None, override: str | None) -> str:
@@ -144,6 +169,17 @@ def _parse_sse_assistant_text(sse_raw: str) -> str:
     return "".join(parts)
 
 
+def _upstream_timeout_sec(body: dict[str, Any]) -> float:
+    """Короткие ответы (intake, классификаторы) — не держать upstream 15 минут."""
+    default = float(os.getenv("LLM_ADAPTER_UPSTREAM_TIMEOUT_SEC", "900"))
+    short = float(os.getenv("LLM_ADAPTER_SHORT_UPSTREAM_TIMEOUT_SEC", "90"))
+    threshold = int(os.getenv("LLM_ADAPTER_SHORT_MAX_TOKENS_THRESHOLD", "256"))
+    mt = body.get("max_tokens")
+    if isinstance(mt, int) and 0 < mt <= threshold:
+        return min(short, default)
+    return default
+
+
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
     """Прокси OpenAI chat.completions для LangChain ChatOpenAI: каждый вызов пишется в Langfuse (input/output)."""
@@ -203,7 +239,13 @@ async def openai_chat_completions(request: Request):
             langfuse_tracing.flush()
         return JSONResponse(out)
 
+    request_had_tools = bool(body.get("tools"))
     stream = bool(body.get("stream"))
+    # Ollama OpenAI API отдаёт tool call в content; LangChain ждёт message.tool_calls.
+    if request_had_tools and stream and _coerce_tool_calls_enabled():
+        body = {**body, "stream": False}
+        stream = False
+    upstream_timeout = _upstream_timeout_sec(body)
 
     async def _finish_obs(acc: bytes, *, streamed: bool) -> None:
         if observation is None:
@@ -231,9 +273,24 @@ async def openai_chat_completions(request: Request):
     if not stream:
         acc = b""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(900.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(upstream_timeout)) as client:
                 r = await client.post(upstream, headers=headers, json=body)
                 acc = r.content
+                if (
+                    r.status_code == 200
+                    and request_had_tools
+                    and _coerce_tool_calls_enabled()
+                    and acc
+                ):
+                    try:
+                        parsed = json.loads(acc)
+                        if isinstance(parsed, dict):
+                            coerced = coerce_chat_completion_payload(
+                                parsed, request_had_tools=True
+                            )
+                            acc = json.dumps(coerced, ensure_ascii=False).encode("utf-8")
+                    except Exception:
+                        logger.exception("ollama tool_calls coerce failed")
                 if r.status_code >= 400:
                     if observation is not None:
                         try:
@@ -281,7 +338,7 @@ async def openai_chat_completions(request: Request):
     async def stream_gen():
         acc = bytearray()
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(900.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(upstream_timeout)) as client:
                 async with client.stream("POST", upstream, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
                         err = (await resp.aread()).decode("utf-8", errors="replace")
@@ -373,6 +430,87 @@ def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
                 logger.exception("langfuse observation context exit failed in generate")
         if lf is not None:
             langfuse_tracing.flush()
+
+
+def _parse_rerank_scores(raw: str, doc_ids: list[str]) -> list[LlmRerankScore]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    payload = text
+    if not text.startswith("["):
+        start = text.find("[")
+        end = text.rfind("]")
+        if start >= 0 and end > start:
+            payload = text[start : end + 1]
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    by_id: dict[str, float] = {}
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or "").strip()
+        if not rid:
+            continue
+        try:
+            score = float(item.get("score", 0.0))
+        except (TypeError, ValueError):
+            continue
+        by_id[rid] = max(0.0, min(1.0, score))
+    out: list[LlmRerankScore] = []
+    for rid in doc_ids:
+        if rid in by_id:
+            out.append(LlmRerankScore(id=rid, score=by_id[rid]))
+    return out
+
+
+def _build_rerank_prompt(query: str, documents: list[Any]) -> str:
+    lines = [
+        "You are a search relevance scorer.",
+        "For each document excerpt, assign relevance score from 0.0 (irrelevant) to 1.0 (highly relevant).",
+        'Return ONLY JSON array: [{"id":"...","score":0.0}, ...] with one object per input id.',
+        f"Query: {query.strip()}",
+        "Documents:",
+    ]
+    for doc in documents:
+        excerpt = (doc.text or "").strip().replace("\n", " ")
+        if len(excerpt) > 1400:
+            excerpt = excerpt[:1400] + "…"
+        lines.append(f'- id="{doc.id}": {excerpt}')
+    return "\n".join(lines)
+
+
+@app.post("/api/v1/llm/rerank", response_model=LlmRerankResponse)
+def rerank(request: LlmRerankRequest) -> LlmRerankResponse:
+    if not request.documents:
+        return LlmRerankResponse(scores=[], model="none", provider="none")
+    cfg = _fetch_settings_from_admin()
+    base_url, api_key = _resolve_base_and_key(cfg)
+    model = _resolve_reranking_model(cfg, request.model)
+    doc_ids = [d.id for d in request.documents]
+    if not api_key:
+        mock_scores = [LlmRerankScore(id=d.id, score=0.5) for d in request.documents]
+        return LlmRerankResponse(scores=mock_scores, model="mock-rerank", provider="mock")
+
+    prompt = _build_rerank_prompt(request.query, request.documents)
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    with httpx.Client(timeout=120.0) as client:
+        response = client.post(f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        body = response.json()
+    content = str(body.get("choices", [{}])[0].get("message", {}).get("content") or "")
+    scores = _parse_rerank_scores(content, doc_ids)
+    if not scores:
+        scores = [LlmRerankScore(id=d.id, score=0.0) for d in request.documents]
+    return LlmRerankResponse(scores=scores, model=str(body.get("model") or model), provider="openai-compatible")
 
 
 @app.post("/api/v1/llm/embed", response_model=LlmEmbedResponse)

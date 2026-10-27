@@ -13,11 +13,21 @@ from services.admin_service.models import AITeamExecutionTask, AITeamRun, AITeam
 # step_key, role_label, task_title
 DEFAULT_PIPELINE: list[tuple[str, str, str]] = [
     ("intake", "Маршрутизация", "Режим full/direct и JSON orchestration_route"),
-    ("pm", "PM", "Функциональные и нефункциональные требования; описание продукта"),
+    (
+        "sa",
+        "Системный аналитик",
+        "ТЗ, глоссарий, traceability; эпики и задачи в трекере для агентов",
+    ),
+    ("pm", "PM", "Продуктовые приоритеты, scope релиза, KPI — без детальной техспеки"),
     ("architect", "Архитектор", "Архитектура, стек, этапы; задачи для DevOps, Backend, Frontend"),
     ("devops_plan", "DevOps", "План работ: инфраструктура, CI/CD, деплой — кто что и когда"),
     ("backend_plan", "Backend", "План API и сервисов — кто что и когда"),
     ("frontend_plan", "Frontend", "План UI/клиента — кто что и когда"),
+    (
+        "execution_plan",
+        "Планирование исполнения",
+        "Структурированные задачи: GitLab, SSH, воркеры",
+    ),
     ("implementation", "Реализация", "Итоги и пояснения после фактического исполнения задач"),
     ("deploy", "Деплой", "Развёртывание на сервере (из контекста проекта)"),
     (

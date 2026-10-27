@@ -8,3 +8,7 @@ KAFKA_TOPIC_AGENT_TASKS = os.getenv("KAFKA_TOPIC_AGENT_TASKS", "platform.agent.t
 KAFKA_TOPIC_AGENT_RESULTS = os.getenv("KAFKA_TOPIC_AGENT_RESULTS", "platform.agent.results")
 KAFKA_GROUP_AGENT_WORKER = os.getenv("KAFKA_GROUP_AGENT_WORKER", "agent-worker-service")
 KAFKA_GROUP_AGENT_BOOTSTRAP = os.getenv("KAFKA_GROUP_AGENT_BOOTSTRAP", "agent-bootstrap-service")
+KAFKA_GROUP_GITLAB_SERVICE = os.getenv("KAFKA_GROUP_GITLAB_SERVICE", "gitlab-service")
+KAFKA_GROUP_CODE_INDEX = os.getenv("KAFKA_GROUP_CODE_INDEX", "code-index-service")
+KAFKA_TOPIC_KNOWLEDGE_INGEST = os.getenv("KAFKA_TOPIC_KNOWLEDGE_INGEST", "platform.knowledge.ingest")
+KAFKA_GROUP_KNOWLEDGE = os.getenv("KAFKA_GROUP_KNOWLEDGE", "knowledge-service")

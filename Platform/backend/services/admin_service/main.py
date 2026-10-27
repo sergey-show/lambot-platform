@@ -113,6 +113,10 @@ class LlmSettingsPublicResponse(BaseModel):
         default=None,
         description="Модель для эмбеддингов; пусто = использовать env/дефолт на стороне adapter",
     )
+    reranking_model: str | None = Field(
+        default=None,
+        description="Модель для LLM-reranking в knowledge search; пусто = default_model",
+    )
     has_api_key: bool
     api_key_hint: str | None = Field(
         default=None, description="Последние символы ключа, если задан"
@@ -130,6 +134,10 @@ class LlmSettingsUpdateBody(BaseModel):
         default=None,
         description="Пустая строка — сбросить",
     )
+    reranking_model: str | None = Field(
+        default=None,
+        description="Пустая строка — сбросить (будет default_model)",
+    )
     api_key: str | None = Field(
         default=None,
         description="Новый ключ; пустая строка = не менять",
@@ -141,6 +149,7 @@ class LlmSettingsInternalResponse(BaseModel):
     default_model: str
     coding_model: str | None = None
     embedding_model: str | None = None
+    reranking_model: str | None = None
     api_key: str | None = None
 
 
@@ -158,7 +167,7 @@ class AgentSettingsInternalResponse(BaseModel):
 
 class AgentDevelopmentPromptsPublicResponse(BaseModel):
     prompts: dict[str, str] = Field(
-        description="Ключ — роль: devops, backend, frontend, qa, architect, pm; значение — системный промпт"
+        description="Ключ — роль: sa, devops, backend, frontend, qa, architect, pm; значение — системный промпт"
     )
 
 
@@ -243,12 +252,14 @@ def _get_llm_row(db: Session) -> LlmAdapterSettings:
     if row is None:
         cm = os.getenv("DEFAULT_OPENAI_CODING_MODEL", "").strip() or None
         em = os.getenv("DEFAULT_OPENAI_EMBEDDING_MODEL", "").strip() or None
+        rm = os.getenv("DEFAULT_OPENAI_RERANKING_MODEL", "").strip() or None
         row = LlmAdapterSettings(
             id=LLM_SETTINGS_SINGLETON_ID,
             openai_base_url=os.getenv("DEFAULT_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             default_model=os.getenv("DEFAULT_OPENAI_MODEL", "gpt-4o-mini"),
             coding_model=cm,
             embedding_model=em,
+            reranking_model=rm,
             api_key_encrypted=None,
             updated_at=datetime.utcnow(),
         )
@@ -578,6 +589,7 @@ def admin_get_llm_settings(
         default_model=row.default_model,
         coding_model=row.coding_model,
         embedding_model=row.embedding_model,
+        reranking_model=row.reranking_model,
         has_api_key=bool(plain_key),
         api_key_hint=_mask_key_hint(plain_key),
     )
@@ -598,6 +610,8 @@ def admin_put_llm_settings(
         row.coding_model = body.coding_model.strip() or None
     if body.embedding_model is not None:
         row.embedding_model = body.embedding_model.strip() or None
+    if body.reranking_model is not None:
+        row.reranking_model = body.reranking_model.strip() or None
     if body.api_key is not None and body.api_key.strip() != "":
         row.api_key_encrypted = settings_crypto.encrypt_secret(body.api_key.strip())
     row.updated_at = datetime.utcnow()
@@ -623,6 +637,7 @@ def internal_get_llm_settings(
         default_model=row.default_model,
         coding_model=row.coding_model,
         embedding_model=row.embedding_model,
+        reranking_model=row.reranking_model,
         api_key=api_key,
     )
 
@@ -689,7 +704,7 @@ def admin_put_agent_development_prompts(
     _: None = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    allowed = {"devops", "backend", "frontend", "qa", "architect", "pm"}
+    allowed = {"sa", "devops", "backend", "frontend", "qa", "architect", "pm"}
     for role, text in body.prompts.items():
         if role not in allowed:
             raise HTTPException(status_code=400, detail=f"Unknown role: {role}")
@@ -737,6 +752,17 @@ KNOWN_AGENT_GRAPH_BUILTIN_KEYS = frozenset(
         "get_project_docs_context",
         "upsert_project_document",
         "list_project_documents",
+        "gitlab_provision_status",
+        "gitlab_create_repository",
+        "list_project_repos",
+        "repo_clone_or_sync",
+        "repo_read_file",
+        "repo_write_commit_push",
+        "search_codebase",
+        "tracker_list_items",
+        "tracker_create_epic",
+        "tracker_create_task",
+        "search_knowledge",
     }
 )
 
@@ -1088,6 +1114,7 @@ class TrackerItemCreateBody(BaseModel):
     assignee_role: str | None = None
     status: str | None = None
     seq: int = 0
+    meta: dict | None = None
 
 
 class TrackerItemPatchBody(BaseModel):
@@ -1137,6 +1164,7 @@ def internal_tracker_create(
             assignee_role=body.assignee_role,
             status=st,
             seq=body.seq,
+            meta=body.meta,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

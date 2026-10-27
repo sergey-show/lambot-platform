@@ -6,6 +6,7 @@ const ALLOWED = new Set([
   "home",
   "team",
   "docs",
+  "knowledge",
   "tracker",
   "servers",
   "k8s-install",
