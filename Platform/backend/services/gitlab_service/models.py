@@ -9,7 +9,7 @@ from services.gitlab_service.db import Base
 
 
 class GitlabProvision(Base):
-    """Журнал провижининга GitLab-группы для проекта платформы."""
+    """GitLab group provisioning log for a platform project."""
 
     __tablename__ = "gitlab_provisions"
     __table_args__ = (UniqueConstraint("project_id", name="uq_gitlab_provision_project"),)

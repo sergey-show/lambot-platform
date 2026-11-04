@@ -1,4 +1,4 @@
-"""Синхронная публикация TaskEnvelope в Kafka (admin-service, sync FastAPI routes)."""
+"""Synchronous TaskEnvelope publish to Kafka (admin-service, sync FastAPI routes)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _get_producer() -> KafkaProducer:
 
 
 def publish_agent_task_envelope(envelope: dict[str, Any]) -> None:
-    """Публикует JSON задачи в topic platform.agent.tasks."""
+    """Publishes task JSON to topic platform.agent.tasks."""
     p = _get_producer()
     topic = os.getenv("KAFKA_TOPIC_AGENT_TASKS", KAFKA_TOPIC_AGENT_TASKS)
     future = p.send(topic, value=envelope)

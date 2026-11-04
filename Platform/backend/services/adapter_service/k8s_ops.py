@@ -1,4 +1,4 @@
-"""Проверка kubeconfig и безопасные операции kubectl (без произвольной оболочки)."""
+"""Validate kubeconfig and safe kubectl operations (no arbitrary shell)."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def _sanitize_name(s: str | None, *, max_len: int = 253) -> str | None:
 def _truncate(s: str) -> str:
     if len(s) <= MAX_KUBECTL_OUTPUT_CHARS:
         return s
-    return s[: MAX_KUBECTL_OUTPUT_CHARS - 80] + "\n… [вывод обрезан]"
+    return s[: MAX_KUBECTL_OUTPUT_CHARS - 80] + "\n… [output truncated]"
 
 
 def _run_kubectl(
@@ -138,7 +138,7 @@ def test_kubeconfig(kubeconfig_text: str, context: str | None) -> tuple[bool, st
     rc, out, err = _run_kubectl(kubeconfig_text, context, ["get", "nodes", "-o", "name"], timeout=45)
     if rc != 0:
         return False, (err or out or f"exit {rc}")[:2000]
-    return True, f"OK, узлы: {out[:800]}"
+    return True, f"OK, nodes: {out[:800]}"
 
 
 def _ns_flags(

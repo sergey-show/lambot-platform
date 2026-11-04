@@ -1,4 +1,4 @@
-"""Definition of Done (DoD) gates: deploy / implementation / pm_summary без подтверждённых артефактов."""
+"""Definition of Done (DoD) gates: deploy / implementation / pm_summary without confirmed artifacts."""
 
 from __future__ import annotations
 

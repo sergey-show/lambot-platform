@@ -1,260 +1,280 @@
-Отличная идея. Ниже собрал черновик **ТЗ v1** в формате, который уже можно использовать для декомпозиции в эпики и задачи.
+# Product Requirements — Lambot Platform (v1)
 
-## 1) Продуктовая цель
+Draft requirements suitable for decomposition into epics and user stories.
 
-Создать платформу “Development-as-a-Team”, которая заменяет ключевые функции IT-команды:
-- сбор и формализация требований;
-- проектирование и генерация инфраструктуры;
-- генерация кода по выбранному стеку;
-- CI/CD и деплой;
-- сопровождение через мультиагентный контур.
+## 1) Product goal
 
-## 2) Целевая аудитория
+Build a **Development-as-a-Team** platform that replaces core IT-team functions:
 
-- **Стартапы без техкоманды** (MVP “под ключ”).
-- **Предприниматели/продакты** (быстрый запуск идеи).
-- **SMB-компании** (автоматизация рутинной разработки и DevOps).
+- capture and formalize requirements;
+- design and generate infrastructure;
+- generate code for a chosen stack;
+- CI/CD and deployment;
+- ongoing support via a multi-agent control plane.
 
-## 3) Пользовательский сценарий (E2E)
+## 2) Target audience
 
-1. Пользователь регистрируется/логинится через SSO.
-2. Создаёт проект.
-3. Описывает идею, загружает скриншоты/референсы.
-4. Нажимает “Продумать”:
-   - ИИ формирует концепцию, архитектурный план, backlog, roadmap.
-5. Выбирает вариант инфраструктуры:
-   - `own server` или `cloud`.
-6. Платформа генерирует IaC:
-   - Terraform/Ansible в зависимости от выбранного варианта.
-7. Разворачивается базовая инфраструктура:
+- **Startups without a tech team** (turnkey MVP).
+- **Founders / product managers** (fast idea-to-launch).
+- **SMB companies** (automating routine development and DevOps).
+
+## 3) End-to-end user journey
+
+1. User signs up / signs in via SSO.
+2. Creates a project.
+3. Describes the idea; uploads screenshots / references.
+4. Clicks **Think it through**:
+   - AI produces concept, architecture plan, backlog, roadmap.
+5. Chooses infrastructure target:
+   - `own server` or `cloud`.
+6. Platform generates IaC:
+   - Terraform / Ansible depending on the target.
+7. Base infrastructure is provisioned:
    - GitLab, Kubernetes, Vault.
-8. Пользователь выбирает стек приложения (из готовых паттернов).
-9. Агенты генерируют сервисы, CI/CD, деплои.
-10. Платформа выполняет развертывание и даёт доступ к результату.
+8. User selects an application stack (from ready-made patterns).
+9. Agents generate services, CI/CD, and deploys.
+10. Platform deploys and provides access to the result.
 
-## 4) Границы MVP
+## 4) MVP scope
 
-**В MVP включить:**
-- 1 облако (например AWS **или** Yandex Cloud) + 1 “own server” профиль.
-- 2-3 шаблонных стека приложения.
-- Базовые роли агентов.
-- Генерация и запуск инфраструктуры с валидацией.
-- Генерация backend/frontend + базовый CI/CD.
-- Публичный сайт (`Site`) как отдельный модуль.
+**In MVP:**
 
-**Не включать в MVP:**
-- Полностью автономный self-healing SRE.
-- Сложный FinOps и multi-cloud оркестрация.
-- Авто-рефакторинг legacy/монолитов клиента.
+- 1 cloud (e.g. AWS **or** Yandex Cloud) + 1 `own server` profile.
+- 2–3 application stack templates.
+- Base agent roles.
+- Infrastructure generation and apply with validation.
+- Backend / frontend generation + basic CI/CD.
+- Public marketing site (`Site`) as a separate module.
 
-## 5) Функциональные требования
+**Out of MVP:**
 
-### 5.1 Управление пользователями и доступом
-- Регистрация, логин, SSO (OIDC/SAML).
-- Роли: `Owner`, `Admin`, `Viewer`.
-- Мультипроектность, разграничение доступа по проектам.
+- Fully autonomous self-healing SRE.
+- Advanced FinOps and multi-cloud orchestration.
+- Auto-refactoring of customer legacy / monoliths.
 
-### 5.2 Работа с проектом
-- Создание/редактирование проекта.
-- Хранение описания идеи, вложений (скриншоты, документы).
-- Версионность требований (история “продумать” итераций).
+## 5) Functional requirements
 
-### 5.3 AI-планирование
-- Генерация:
-  - продуктовой концепции,
-  - техархитектуры,
-  - backlog (epics/features/tasks),
-  - рисков и оценок.
-- Редактирование плана человеком + повторная генерация.
+### 5.1 Users and access
 
-### 5.4 Инфраструктура и IaC
-- Выбор target: `own server` / `cloud`.
-- Генерация Terraform/Ansible.
-- Поддержка обязательных компонентов: GitLab, K8s, Vault.
-- Применение IaC с логированием и rollback-стратегией.
+- Registration, login, SSO (OIDC / SAML).
+- Roles: `Owner`, `Admin`, `Viewer`.
+- Multi-project tenancy; access scoped by project.
 
-### 5.5 Генерация кода и деплой
-- Выбор стека из шаблонов/паттернов.
-- Генерация каркаса сервисов и конфигов CI/CD.
-- Сборка, тесты, деплой в созданный кластер.
-- Отображение статуса пайплайна и окружений.
+### 5.2 Project workspace
 
-### 5.6 Публичный сайт (`Site`)
-- Отдельная директория/сервис для маркетингового сайта.
-- Контент о платформе, кейсы, CTA, документация/демо.
+- Create / edit projects.
+- Store idea description and attachments (screenshots, documents).
+- Requirements versioning (history of “Think it through” iterations).
 
-## 6) Нефункциональные требования
+### 5.3 AI planning
 
-- **Архитектура:** микросервисы на Python, DDD-подход.
-- **Надежность:** retry, idempotency, DLQ для задач.
-- **Безопасность:** Vault для секретов, RBAC, аудит действий.
-- **Наблюдаемость:** централизованные логи, метрики, трассировка.
-- **Масштабируемость:** горизонтальное масштабирование воркеров/агентов.
-- **Производительность:** очередь задач через Kafka, кэш через Redis.
-- **Данные:** PostgreSQL как источник истины.
+- Generate:
+  - product concept,
+  - technical architecture,
+  - backlog (epics / features / tasks),
+  - risks and estimates.
+- Human edits + re-plan.
 
-## 7) Технологический стек платформы
+### 5.4 Infrastructure and IaC
 
-- `Python` — backend/microservices.
-- `TypeScript` — frontend платформы.
+- Target selection: `own server` / `cloud`.
+- Terraform / Ansible generation.
+- Required components: GitLab, K8s, Vault.
+- Apply with logging and a rollback strategy.
+
+### 5.5 Codegen and delivery
+
+- Stack selection from templates / patterns.
+- Generate service skeletons and CI/CD configs.
+- Build, test, deploy into the provisioned cluster.
+- Show pipeline and environment status.
+
+### 5.6 Public site (`Site`)
+
+- Separate directory / service for the marketing site.
+- Platform content, case studies, CTAs, docs / demo.
+
+## 6) Non-functional requirements
+
+- **Architecture:** Python microservices, DDD.
+- **Reliability:** retry, idempotency, DLQ for tasks.
+- **Security:** Vault for secrets, RBAC, action audit.
+- **Observability:** centralized logs, metrics, tracing.
+- **Scalability:** horizontal scale of workers / agents.
+- **Performance:** Kafka task queues, Redis cache.
+- **Data:** PostgreSQL as source of truth.
+
+## 7) Platform tech stack
+
+- `Python` — backend / microservices.
+- `TypeScript` — platform frontend.
 - `PostgreSQL` — OLTP.
-- `Redis` — кеш, быстрые состояния.
-- `Kafka` — асинхронные задачи/события.
-- `LLM Adapter` — единый шлюз к OpenAI API/совместимым.
-- `SSO` — через OIDC/SAML провайдер.
-- `Kubernetes` — рантайм платформы.
+- `Redis` — cache, fast state.
+- `Kafka` — async tasks / events.
+- `LLM Adapter` — unified gateway to OpenAI-compatible APIs.
+- `SSO` — OIDC / SAML provider.
+- `Kubernetes` — platform runtime.
 
-## 8) Микросервисная модель (DDD, high-level bounded contexts)
+## 8) Microservice model (DDD bounded contexts)
 
-- `Identity & Access BC` — пользователи, SSO, роли, политики.
-- `Project BC` — проекты, артефакты, вложения, версии требований.
-- `Planning BC` — генерация концепции и backlog.
-- `Agent Orchestration BC` — роли агентов, маршрутизация задач, state machine.
-- `Infra BC` — IaC генерация/валидация/применение.
-- `Codegen BC` — генерация кода по стеку и паттернам.
-- `Delivery BC` — CI/CD orchestration, деплои, статус релизов.
-- `Catalog BC` — библиотека стеков и архитектурных паттернов.
+- `Identity & Access BC` — users, SSO, roles, policies.
+- `Project BC` — projects, artifacts, attachments, requirement versions.
+- `Planning BC` — concept and backlog generation.
+- `Agent Orchestration BC` — agent roles, task routing, state machine.
+- `Infra BC` — IaC generate / validate / apply.
+- `Codegen BC` — stack- and pattern-based code generation.
+- `Delivery BC` — CI/CD orchestration, deploys, release status.
+- `Catalog BC` — library of stacks and architecture patterns.
 
-## 9) Роли агентов (обязательная модель)
+## 9) Agent roles (required model)
 
-- `Product Analyst Agent` — формализация идеи в требования.
-- `Solution Architect Agent` — техархитектура и план реализации.
-- `Infra Architect Agent` — выбор схемы infra под target.
-- `IaC Agent` — Terraform/Ansible генерация и проверки.
-- `Backend Agent` — сервисы, API, бизнес-логика.
-- `Frontend Agent` — UI на TypeScript.
-- `DevOps Agent` — CI/CD, GitLab pipelines, деплой.
-- `QA Agent` — автотесты, smoke/e2e, quality gates.
-- `Security Agent` — секреты, политики, базовые security checks.
+- `Product Analyst Agent` — turn idea into requirements.
+- `Solution Architect Agent` — tech architecture and delivery plan.
+- `Infra Architect Agent` — infra layout for the chosen target.
+- `IaC Agent` — Terraform / Ansible generation and checks.
+- `Backend Agent` — services, APIs, business logic.
+- `Frontend Agent` — TypeScript UI.
+- `DevOps Agent` — CI/CD, GitLab pipelines, deploy.
+- `QA Agent` — automated tests, smoke / e2e, quality gates.
+- `Security Agent` — secrets, policies, baseline security checks.
 
-## 10) Паттерны и наборы стеков
+## 10) Patterns and stack packs
 
-Нужен каталог “Blueprints”:
+Catalog of **Blueprints**:
+
 - `SaaS Web App`
 - `Marketplace`
 - `Internal Tool`
 - `API-first backend`
 
-У каждого blueprint:
-- архитектурная схема;
-- поддерживаемые языки/фреймворки;
-- infra-профиль;
-- чеклист готовности к продакшену.
+Each blueprint includes:
 
-## 11) Очереди и оркестрация
+- architecture diagram;
+- supported languages / frameworks;
+- infra profile;
+- production-readiness checklist.
 
-- Kafka-топики по этапам пайплайна:
+## 11) Queues and orchestration
+
+- Kafka topics by pipeline stage:
   - `project.planning.requested`
   - `infra.provision.requested`
   - `codegen.requested`
   - `deploy.requested`
-- Оркестратор хранит state machine проекта:
+- Orchestrator keeps project state machine:
   - `IDEA -> PLAN_READY -> INFRA_READY -> CODE_READY -> DEPLOYED`.
 
-## 12) Метрики успеха
+## 12) Success metrics
 
-- Time-to-first-deploy (цель: часы, не недели).
-- Доля проектов, дошедших до `DEPLOYED`.
-- Среднее число ручных правок после генерации.
-- Успешность IaC apply с первого раза.
-- NPS/удовлетворённость пользователей.
+- Time-to-first-deploy (goal: hours, not weeks).
+- Share of projects reaching `DEPLOYED`.
+- Average number of manual edits after generation.
+- First-try success rate of IaC apply.
+- NPS / user satisfaction.
 
-## 13) Основные риски
+## 13) Key risks
 
-- Переоценка “полной замены команды” на ранних этапах.
-- Ошибки IaC в разных средах.
-- Качество кода без строгих quality gates.
-- Безопасность и доступы при self-hosted варианте.
+- Over-promising “full team replacement” too early.
+- IaC failures across environments.
+- Code quality without strict quality gates.
+- Security and access in the self-hosted path.
 
-## 14) Предложение по этапам запуска
+## 14) Rollout phases
 
-- **Phase 1 (MVP):** планирование + 1 infra target + 1 стек + базовый деплой.
-- **Phase 2:** расширение стеков/паттернов, улучшение QA/Sec.
-- **Phase 3:** полуавтономное сопровождение, оптимизация стоимости/надежности.
+- **Phase 1 (MVP):** planning + 1 infra target + 1 stack + basic deploy.
+- **Phase 2:** more stacks / patterns; stronger QA / Sec.
+- **Phase 3:** semi-autonomous ops; cost / reliability optimization.
 
 ---
 
-## 15) Эпики и user stories (MVP)
+## 15) Epics and user stories (MVP)
 
 ### Epic A. Identity & Access
-**Цель:** обеспечить безопасный вход, SSO и ролевой доступ.
 
-- **US-A1:** как пользователь, я хочу войти через SSO, чтобы не создавать отдельные пароли.
+**Goal:** secure login, SSO, and role-based access.
+
+- **US-A1:** As a user, I want to sign in via SSO so I do not create separate passwords.
   - **Acceptance Criteria:**
-    - поддержан OIDC-провайдер;
-    - после логина создается/обновляется профиль пользователя;
-    - сессия валидна и привязана к tenant/project context.
-- **US-A2:** как Owner проекта, я хочу назначать роли `Admin` и `Viewer`.
+    - OIDC provider supported;
+    - after login, user profile is created / updated;
+    - session is valid and bound to tenant / project context.
+- **US-A2:** As a project Owner, I want to assign `Admin` and `Viewer` roles.
   - **Acceptance Criteria:**
-    - роль меняется через API/UI;
-    - изменения аудируются;
-    - неавторизованный пользователь получает `403`.
+    - role changes via API / UI;
+    - changes are audited;
+    - unauthorized users get `403`.
 
 ### Epic B. Project Workspace
-**Цель:** дать пользователю пространство для работы с идеей.
 
-- **US-B1:** как пользователь, я хочу создать проект с названием и описанием.
+**Goal:** give the user a workspace for the idea.
+
+- **US-B1:** As a user, I want to create a project with name and description.
   - **Acceptance Criteria:**
-    - проект создается в статусе `IDEA`;
-    - владелец проекта назначается автоматически.
-- **US-B2:** как пользователь, я хочу прикреплять скриншоты/файлы.
+    - project is created in `IDEA` status;
+    - project owner is assigned automatically.
+- **US-B2:** As a user, I want to attach screenshots / files.
   - **Acceptance Criteria:**
-    - поддержаны jpg/png/pdf;
-    - ограничения по размеру файла валидируются;
-    - файлы связаны с версией требований.
+    - jpg / png / pdf supported;
+    - file size limits validated;
+    - files linked to a requirements version.
 
 ### Epic C. AI Planning
-**Цель:** получить формализованный план реализации из идеи.
 
-- **US-C1:** как пользователь, я нажимаю `Продумать` и получаю концепцию + roadmap.
+**Goal:** get a formal delivery plan from an idea.
+
+- **US-C1:** As a user, I click **Think it through** and receive concept + roadmap.
   - **Acceptance Criteria:**
-    - создается артефакт `plan_version`;
-    - в плане есть разделы: scope, architecture, backlog, risks;
-    - статус проекта меняется в `PLAN_READY`.
-- **US-C2:** как пользователь, я редактирую план и запускаю re-plan.
+    - `plan_version` artifact is created;
+    - plan has sections: scope, architecture, backlog, risks;
+    - project status becomes `PLAN_READY`.
+- **US-C2:** As a user, I edit the plan and re-run planning.
   - **Acceptance Criteria:**
-    - предыдущая версия не теряется;
-    - виден diff между версиями плана.
+    - previous version is retained;
+    - diff between plan versions is visible.
 
 ### Epic D. Infrastructure Provisioning (IaC)
-**Цель:** развернуть инфраструктуру через шаблоны.
 
-- **US-D1:** как пользователь, я выбираю target `own server` или `cloud`.
+**Goal:** provision infrastructure from templates.
+
+- **US-D1:** As a user, I choose target `own server` or `cloud`.
   - **Acceptance Criteria:**
-    - выбор сохраняется в проекте;
-    - валидация обязательных полей окружения проходит до запуска.
-- **US-D2:** как пользователь, я хочу сгенерировать и применить IaC.
+    - choice is stored on the project;
+    - required environment fields are validated before start.
+- **US-D2:** As a user, I want to generate and apply IaC.
   - **Acceptance Criteria:**
-    - генерируется пакет Terraform/Ansible;
-    - создаются GitLab, Kubernetes, Vault;
-    - логируются шаги apply, ошибки и итоговый статус;
-    - при ошибке выполняется rollback или формируется безопасный fail-state.
+    - Terraform / Ansible package is generated;
+    - GitLab, Kubernetes, Vault are created;
+    - apply steps, errors, and final status are logged;
+    - on failure, rollback runs or a safe fail-state is recorded.
 
 ### Epic E. Codegen & Delivery
-**Цель:** сгенерировать приложение по выбранному стеку и развернуть его.
 
-- **US-E1:** как пользователь, я выбираю blueprint и стек.
+**Goal:** generate the app for the chosen stack and deploy it.
+
+- **US-E1:** As a user, I choose a blueprint and stack.
   - **Acceptance Criteria:**
-    - доступны минимум 2 шаблона стека в MVP;
-    - выбор фиксируется в `Catalog BC` и проекте.
-- **US-E2:** как пользователь, я запускаю генерацию кода и CI/CD.
+    - at least 2 stack templates in MVP;
+    - selection is stored in `Catalog BC` and the project.
+- **US-E2:** As a user, I start codegen and CI/CD.
   - **Acceptance Criteria:**
-    - создан backend и frontend skeleton;
-    - создан pipeline в GitLab;
-    - прогоняются базовые тесты;
-    - успешный деплой меняет статус в `DEPLOYED`.
+    - backend and frontend skeletons created;
+    - GitLab pipeline created;
+    - basic tests run;
+    - successful deploy moves status to `DEPLOYED`.
 
 ### Epic F. Public Site
-**Цель:** промо-сайт платформы как отдельный модуль `Site`.
 
-- **US-F1:** как посетитель, я хочу видеть ценность платформы и CTA.
+**Goal:** platform promo site as a separate `Site` module.
+
+- **US-F1:** As a visitor, I want to see platform value and a CTA.
   - **Acceptance Criteria:**
-    - сайт доступен на отдельном домене/поддомене;
-    - есть разделы: продукт, возможности, кейсы, CTA.
+    - site available on a separate domain / subdomain;
+    - sections: product, capabilities, case studies, CTA.
 
-## 16) Доменные события и Kafka schema (MVP)
+## 16) Domain events and Kafka schema (MVP)
 
-### 16.1 Топики
+### 16.1 Topics
+
 - `project.planning.requested`
 - `project.planning.completed`
 - `infra.provision.requested`
@@ -265,7 +285,8 @@
 - `deploy.completed`
 - `pipeline.failed`
 
-### 16.2 Базовый формат события
+### 16.2 Base event format
+
 ```json
 {
   "event_id": "uuid",
@@ -286,38 +307,42 @@
 }
 ```
 
-### 16.3 Требования к обработке событий
-- consumer должен быть idempotent;
-- сообщения валидируются по JSON schema;
-- ошибки обработки уходят в DLQ;
+### 16.3 Event processing requirements
+
+- consumers must be idempotent;
+- messages validated against JSON schema;
+- processing errors go to DLQ;
 - retry policy: exponential backoff + max attempts.
 
-## 17) Минимальный список микросервисов и API-контракты (MVP)
+## 17) Minimal microservices and API contracts (MVP)
 
-### 17.1 Сервисы
-- `identity-service` (SSO, роли, сессии)
-- `project-service` (проекты, требования, вложения)
-- `planning-service` (LLM-планирование)
-- `agent-orchestrator` (state machine и маршрутизация задач)
-- `infra-service` (IaC generation/apply)
-- `codegen-service` (генерация кода по стеку)
-- `delivery-service` (CI/CD + деплой orchestration)
-- `catalog-service` (blueprints/patterns/stacks)
-- `llm-adapter-service` (унифицированный доступ к LLM API)
-- `site` (публичный маркетинговый фронтенд)
+### 17.1 Services
 
-### 17.2 Примеры API (REST, v1)
-- `POST /api/v1/projects` — создать проект
-- `GET /api/v1/projects/{project_id}` — получить проект
-- `POST /api/v1/projects/{project_id}/attachments` — загрузка вложений
-- `POST /api/v1/projects/{project_id}/planning/run` — запуск `Продумать`
-- `POST /api/v1/projects/{project_id}/infra/plan` — генерация IaC
-- `POST /api/v1/projects/{project_id}/infra/apply` — применение IaC
-- `POST /api/v1/projects/{project_id}/codegen/run` — генерация кода
-- `POST /api/v1/projects/{project_id}/deploy/run` — запуск деплоя
-- `GET /api/v1/projects/{project_id}/status` — состояние state machine
+- `identity-service` (SSO, roles, sessions)
+- `project-service` (projects, requirements, attachments)
+- `planning-service` (LLM planning)
+- `agent-orchestrator` (state machine and task routing)
+- `infra-service` (IaC generation / apply)
+- `codegen-service` (stack-based codegen)
+- `delivery-service` (CI/CD + deploy orchestration)
+- `catalog-service` (blueprints / patterns / stacks)
+- `llm-adapter-service` (unified LLM API access)
+- `site` (public marketing frontend)
 
-### 17.3 Статусы проекта (state machine)
+### 17.2 Sample APIs (REST, v1)
+
+- `POST /api/v1/projects` — create project
+- `GET /api/v1/projects/{project_id}` — get project
+- `POST /api/v1/projects/{project_id}/attachments` — upload attachments
+- `POST /api/v1/projects/{project_id}/planning/run` — run **Think it through**
+- `POST /api/v1/projects/{project_id}/infra/plan` — generate IaC
+- `POST /api/v1/projects/{project_id}/infra/apply` — apply IaC
+- `POST /api/v1/projects/{project_id}/codegen/run` — generate code
+- `POST /api/v1/projects/{project_id}/deploy/run` — start deploy
+- `GET /api/v1/projects/{project_id}/status` — state machine status
+
+### 17.3 Project statuses (state machine)
+
 - `IDEA`
 - `PLAN_READY`
 - `INFRA_IN_PROGRESS`
@@ -328,52 +353,58 @@
 - `DEPLOYED`
 - `FAILED`
 
-## 18) Acceptance criteria уровня системы (MVP)
+## 18) System-level acceptance criteria (MVP)
 
-- Пользователь проходит SSO и создает проект менее чем за 3 минуты.
-- На основе описания идеи создается структурированный план (scope/architecture/backlog/risks).
-- Для выбранного infra target генерируется корректный IaC bundle.
-- Базовая инфраструктура (GitLab + K8s + Vault) поднимается автоматически.
-- По выбранному стеку генерируются backend/frontend и CI/CD pipeline.
-- Минимум один деплой в Kubernetes завершается успешно и виден в UI.
-- Все ключевые шаги пишут audit log и технические логи.
+- User completes SSO and creates a project in under 3 minutes.
+- From an idea description, a structured plan is produced (scope / architecture / backlog / risks).
+- For the chosen infra target, a valid IaC bundle is generated.
+- Base infrastructure (GitLab + K8s + Vault) comes up automatically.
+- For the chosen stack, backend / frontend and a CI/CD pipeline are generated.
+- At least one Kubernetes deploy succeeds and is visible in the UI.
+- All key steps write audit and technical logs.
 
-## 19) Roadmap 8-12 недель
+## 19) Roadmap (8–12 weeks)
 
-### Недели 1-2: Foundation
-- репозитории, базовая архитектура микросервисов, DDD-контуры;
+### Weeks 1–2: Foundation
+
+- repositories, base microservice architecture, DDD boundaries;
 - identity-service + SSO;
-- project-service (CRUD проекта и статусы).
+- project-service (project CRUD and statuses).
 
-### Недели 3-4: Planning
+### Weeks 3–4: Planning
+
 - llm-adapter-service;
 - planning-service v1;
-- UI поток: идея -> `Продумать` -> версия плана.
+- UI flow: idea → **Think it through** → plan version.
 
-### Недели 5-6: Infrastructure
-- infra-service: генерация Terraform/Ansible;
-- интеграция с orchestrator и событиями Kafka;
-- подъем GitLab/K8s/Vault в тестовом окружении.
+### Weeks 5–6: Infrastructure
 
-### Недели 7-8: Codegen & Delivery
-- codegen-service (минимум 2 blueprint);
+- infra-service: Terraform / Ansible generation;
+- orchestrator + Kafka event integration;
+- GitLab / K8s / Vault in a test environment.
+
+### Weeks 7–8: Codegen & Delivery
+
+- codegen-service (at least 2 blueprints);
 - delivery-service (pipeline + deploy);
-- end-to-end: от идеи до деплоя.
+- end-to-end: idea to deploy.
 
-### Недели 9-10: Hardening
-- observability, аудит, retry/DLQ;
-- security baseline и ролевые проверки;
-- стабилизация и bugfix.
+### Weeks 9–10: Hardening
 
-### Недели 11-12: Go-live preparation
+- observability, audit, retry / DLQ;
+- security baseline and role checks;
+- stabilization and bugfix.
+
+### Weeks 11–12: Go-live preparation
+
 - public `Site`;
-- документация, демо-сценарии, онбординг;
-- нагрузочные/приемочные тесты и релиз MVP.
+- documentation, demo scenarios, onboarding;
+- load / acceptance tests and MVP release.
 
-## 20) Открытые решения (требуют фиксации до старта)
+## 20) Open decisions (fix before kickoff)
 
-- Выбор первого cloud-провайдера в MVP.
-- Выбор SSO-провайдера (например Keycloak/Auth0/другой).
-- Базовые blueprints и их стек (2-3 варианта).
-- Политика стоимости использования LLM (лимиты и квоты).
-- SLA/SLO на первый релиз.
+- First cloud provider for MVP.
+- SSO provider (e.g. Keycloak / Auth0 / other).
+- Base blueprints and their stacks (2–3 options).
+- LLM cost policy (limits and quotas).
+- SLA / SLO for the first release.

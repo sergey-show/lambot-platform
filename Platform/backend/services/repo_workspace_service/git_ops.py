@@ -1,4 +1,4 @@
-"""Git-операции в локальном workspace (subprocess)."""
+"""Git operations in the local workspace (subprocess)."""
 
 from __future__ import annotations
 

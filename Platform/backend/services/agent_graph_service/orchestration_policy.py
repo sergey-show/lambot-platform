@@ -1,4 +1,4 @@
-"""Единая политика маршрутизации и DoD: решения из intake/шагов, не из ключевых слов."""
+"""Unified routing and DoD policy: decisions from intake/steps, not keywords."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def execution_outcome_satisfied(
     prev_steps: list[dict[str, Any]],
 ) -> bool:
     """
-    DoD для live_execution: есть артефакт деплоя/кода или успешно завершённые consultative SSH-задачи.
+    DoD for live_execution: a deploy/code artifact or successfully finished consultative SSH tasks.
     """
     evidence = _merge_role_evidence(role_execution_evidence, prev_steps)
     tool_names: set[str] = set()
@@ -132,8 +132,8 @@ def dod_gate_issues_for_run(
     if execution_outcome_satisfied(run_obj, role_execution_evidence, prev_steps):
         return []
     return [
-        "Нет подтверждённого результата исполнения: нужны успешные задачи воркеров "
-        "(изменения на SSH/k8s/ansible или коммит в GitLab), либо завершённая диагностика по SSH."
+        "No confirmed execution result: successful worker tasks are required "
+        "(SSH/k8s/ansible changes or a GitLab commit), or a completed SSH diagnostic."
     ]
 
 
@@ -141,7 +141,7 @@ def dod_gate_user_questions(issues: list[str]) -> list[str]:
     if not issues:
         return []
     return [
-        "Критерии готовности не выполнены. Уточните запрос, повторите шаг с инструментами "
-        "или подтвердите ручное исполнение.",
+        "Readiness criteria were not met. Clarify the request, retry the step with tools, "
+        "or confirm manual execution.",
         issues[0],
     ]

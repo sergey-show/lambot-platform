@@ -1,4 +1,4 @@
-"""HTTP-клиент GitLab API v4 (платформенный admin token)."""
+"""GitLab API v4 HTTP client (platform admin token)."""
 
 from __future__ import annotations
 

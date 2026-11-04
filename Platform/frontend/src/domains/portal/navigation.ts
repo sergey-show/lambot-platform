@@ -1,5 +1,5 @@
 /**
- * Домен портала проекта: маршрутизация видов внутри #/portal/...
+ * Project portal domain: view routing within #/portal/...
  */
 
 const ALLOWED = new Set([

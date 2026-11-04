@@ -1,8 +1,6 @@
-"""
-ИИ/bootstrap агенты платформы: реагируют на события Kafka и запускают цепочку (planning → дальше orchestrator).
+"""Platform AI/bootstrap agents: react to Kafka events and start the chain (planning → then orchestrator).
 
-По умолчанию при `project.created` вызывается planning/run (IDEA → PLAN_READY), чтобы воркфлоу «ожил» без ручного клика.
-"""
+By default on `project.created` planning/run is called (IDEA → PLAN_READY) so the workflow starts without a manual click."""
 
 from __future__ import annotations
 
@@ -140,7 +138,7 @@ def _require_internal(x_internal_token: str | None = Header(default=None, alias=
 
 
 class ManualBootstrapBody(BaseModel):
-    force: bool = Field(default=False, description="Запустить planning даже если проект уже не IDEA (осторожно)")
+    force: bool = Field(default=False, description="Start planning even if the project is no longer IDEA (careful)")
 
 
 @app.post("/api/v1/internal/bootstrap/planning/{project_id}")
@@ -149,7 +147,7 @@ def manual_run_planning(
     body: ManualBootstrapBody = ManualBootstrapBody(),
     _: None = Depends(_require_internal),
 ) -> dict:
-    """Ручной запуск planning (тот же сценарий, что и по событию)."""
+    """Manual planning start (same flow as on the event)."""
     b = body
     try:
         gr = httpx.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}", timeout=10.0)

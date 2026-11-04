@@ -677,7 +677,7 @@ table.lp-table {
   box-shadow: var(--lp-shadow-sm);
 }
 
-/* Групповой чат ИИ Команды: сообщения от ролей */
+/* AI Team group chat: messages from roles */
 .lp-ai-msg-team {
   align-self: flex-start;
   max-width: 94%;
@@ -954,7 +954,7 @@ table.lp-table {
   font-size: 0.92rem;
 }
 
-/* ——— Auth (user login, split-card референс) ——— */
+/* ——— Auth (user login, split-card reference) ——— */
 .lp-auth-page {
   min-height: 100vh;
   display: flex;
@@ -1163,7 +1163,7 @@ table.lp-table {
   }
 }
 
-/* ——— User portal: сайдбар + виды ——— */
+/* ——— User portal: sidebar + views ——— */
 .lp-portal-app {
   display: flex;
   gap: 0;

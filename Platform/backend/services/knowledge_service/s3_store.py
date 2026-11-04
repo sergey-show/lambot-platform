@@ -1,4 +1,4 @@
-"""Файлы баз знаний в отдельном S3-бакете (RustFS / MinIO)."""
+"""Knowledge-base files in a separate S3 bucket (RustFS / MinIO)."""
 
 from __future__ import annotations
 

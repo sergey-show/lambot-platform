@@ -118,7 +118,7 @@ def swarm_render(body: RenderRequest):
 
 @app.post("/api/v1/ansible/swarm/prepare-bundle")
 def prepare_bundle(body: PrepareBundleRequest):
-    """Готовый артефакт для запуска ansible-playbook локально или в CI."""
+    """Ready artifact to run ansible-playbook locally or in CI."""
     try:
         playbook = render_playbook(body.template_id, body.variables)
     except ValueError as e:

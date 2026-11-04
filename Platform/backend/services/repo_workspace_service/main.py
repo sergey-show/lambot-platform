@@ -1,5 +1,5 @@
 """
-repo-workspace-service: локальные git-клоны репозиториев проекта для агентов.
+repo-workspace-service: local git clones of project repositories for agents.
 """
 
 from __future__ import annotations

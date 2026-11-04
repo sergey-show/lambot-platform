@@ -1,6 +1,6 @@
 """
-code-index-service: семантический поиск по клонированному коду (repo-workspace).
-Векторы в Qdrant, полный текст чанков в Postgres.
+code-index-service: semantic search over cloned code (repo-workspace).
+Vectors in Qdrant, full chunk text in Postgres.
 """
 
 from __future__ import annotations

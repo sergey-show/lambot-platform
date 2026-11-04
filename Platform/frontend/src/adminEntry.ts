@@ -1,5 +1,5 @@
 /**
- * Отдельная точка входа для оператора/админа (dashboard + superadmin), без user portal.
+ * Separate entry point for operator/admin (dashboard + superadmin), without user portal.
  */
 import "./setAdminApp";
 import "./main";

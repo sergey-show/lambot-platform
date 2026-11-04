@@ -1,17 +1,15 @@
-"""Разбор решения маршрутизации: полный пайплайн или прямой ответ одного специалиста."""
+"""Parse AI intake routing: full pipeline or a direct single-specialist reply."""
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from services.admin_service.ai_team_service import DEFAULT_PIPELINE
-from services.agent_graph_service.orchestration_intents import formal_spec_intent
 
 VALID_PRIMARY_ROLES = frozenset({"sa", "pm", "architect", "devops", "backend", "frontend", "qa"})
 
-# Роль из JSON → step_key в DEFAULT_PIPELINE
+# Role from JSON → step_key in DEFAULT_PIPELINE
 PRIMARY_ROLE_TO_STEP: dict[str, str] = {
     "sa": "sa",
     "systems_analyst": "sa",
@@ -58,115 +56,10 @@ def _strip_markdown_fences(text: str) -> str:
     return t
 
 
-_ROLE_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "sa",
-        re.compile(
-            r"(тз\b|техническ\w*\s+задани|спецификац\w*|глоссарий|traceability|трассировк|"
-            r"as[- ]?is|to[- ]?be|bpmn|use\s*case|формальн\w*\s+требован)",
-            re.I,
-        ),
-    ),
-    (
-        "pm",
-        re.compile(
-            r"(mvp|продукт|roadmap|приоритет|релиз|стейкхолдер|kpi|метрик\w*\s+продук)",
-            re.I,
-        ),
-    ),
-    (
-        "architect",
-        re.compile(
-            r"(архитектур|стек\s*технолог|микросервис|system\s*design|high[- ]level\s*design)",
-            re.I,
-        ),
-    ),
-    (
-        "devops",
-        re.compile(
-            r"(разверн|деплой|deploy|инфра|ci/?cd|docker|kubernetes|k8s|ansible|"
-            r"сервер|gitlab|репозит|terraform|helm|nginx|pipeline)",
-            re.I,
-        ),
-    ),
-    (
-        "backend",
-        re.compile(
-            r"(\bapi\b|backend|бэкенд|сервис|эндпоинт|rest|graphql|баз[аы]\s*данн|postgres|redis)",
-            re.I,
-        ),
-    ),
-    (
-        "frontend",
-        re.compile(
-            r"(сайт|веб[- ]?страниц|ui\b|ux\b|frontend|фронтенд|график|chart|react|vue|angular|"
-            r"верстк|лендинг|dashboard|дашборд)",
-            re.I,
-        ),
-    ),
-    (
-        "qa",
-        re.compile(
-            r"(тестир|qa\b|smoke|regression|e2e|автотест|проверь\s*работ|баг)",
-            re.I,
-        ),
-    ),
-)
-
-
-def _roles_from_message(user_message: str) -> list[str]:
-    text = (user_message or "").strip()
-    if not text:
-        return []
-    found: list[str] = []
-    seen: set[str] = set()
-    for role, pat in _ROLE_SIGNALS:
-        if pat.search(text) and role not in seen:
-            seen.add(role)
-            found.append(role)
-    return found
-
-
-def heuristic_orchestration_route(user_message: str) -> dict[str, Any] | None:
-    """
-    Быстрая маршрутизация без LLM по ключевым словам.
-    None — эвристика не уверена, нужен intake через модель.
-    """
-    roles = _roles_from_message(user_message)
-    if not roles:
-        return None
-    if formal_spec_intent(user_message):
-        if "sa" not in roles:
-            roles.insert(0, "sa")
-        return {
-            "mode": "full",
-            "primary_role": None,
-            "roles": roles,
-            "live_execution": False,
-            "reason": "heuristic: формальная спецификация — подключаем SA (артефакты + трекер)",
-        }
-    if len(roles) >= 2:
-        return {
-            "mode": "full",
-            "primary_role": None,
-            "roles": roles,
-            "live_execution": False,
-            "reason": "heuristic: в запросе несколько зон (роли: " + ", ".join(roles) + ")",
-        }
-    role = roles[0]
-    return {
-        "mode": "direct",
-        "primary_role": role,
-        "roles": [role],
-        "live_execution": False,
-        "reason": f"heuristic: одна зона — {role}",
-    }
-
-
 def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
     """
-    Ищет в тексте intake JSON с полем orchestration_route.
-    Возвращает mode (full|direct), primary_role, reason.
+    Extract orchestration_route from intake model JSON.
+    Returns mode (full|direct), primary_role, roles, live_execution, reason.
     """
     default: dict[str, Any] = {
         "mode": "full",
@@ -264,10 +157,25 @@ def parse_orchestration_route(intake_output: str) -> dict[str, Any]:
     return _from_flat(inner)
 
 
+def route_is_usable(route: dict[str, Any] | None) -> bool:
+    """True when intake JSON produced a non-empty routing decision."""
+    if not isinstance(route, dict):
+        return False
+    mode = str(route.get("mode") or "").lower()
+    roles = route.get("roles") or []
+    primary = route.get("primary_role")
+    if mode == "direct" and primary:
+        return True
+    if mode == "full" and (roles or primary):
+        return True
+    # Explicit empty full with reason still counts if roles listed
+    return bool(roles)
+
+
 def pipeline_for_direct(primary_role: str) -> tuple[list[tuple[str, str, str]], str | None]:
     """
-    Только шаг выбранного специалиста (без PM-итога и без остальных ролей).
-    Возвращает ([spec], specialist_step_key) или ([], None).
+    Only the selected specialist step (no PM summary and no other roles).
+    Returns ([spec], specialist_step_key) or ([], None).
     """
     step_key = PRIMARY_ROLE_TO_STEP.get(primary_role or "")
     if not step_key:
@@ -279,7 +187,7 @@ def pipeline_for_direct(primary_role: str) -> tuple[list[tuple[str, str, str]], 
 
 
 def step_keys_to_skip_when_direct(specialist_step_key: str) -> list[str]:
-    """Все шаги кроме уже выполненного intake и выбранного специалиста (включая pm_summary)."""
+    """All steps except completed intake and the selected specialist (including pm_summary)."""
     keep = {specialist_step_key, "intake"}
     return [k for k in ALL_STEP_KEYS if k not in keep]
 
@@ -290,12 +198,12 @@ def route_includes_sa(route: dict[str, Any] | None) -> bool:
 
 
 def enrich_route_with_sa_if_needed(route: dict[str, Any], user_message: str) -> dict[str, Any]:
-    """Маршрут задаёт intake (LLM); без повторной эвристики по ключевым словам."""
+    """Route is set by intake LLM only — no keyword override."""
     _ = user_message
     return dict(route or {})
 
 
-# Слои DAG после intake (sa опционален по orchestration_route.roles).
+# DAG layers after intake (sa optional per orchestration_route.roles).
 FULL_DAG_LAYERS: tuple[tuple[str, ...], ...] = (
     ("sa",),
     ("pm",),

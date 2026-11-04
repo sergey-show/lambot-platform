@@ -1,5 +1,5 @@
 /**
- * Редактор шаблонов Ansible swarm (Superadmin): Monaco (как в VS Code), YAML, тёмная тема.
+ * Ansible swarm template editor (Superadmin): Monaco (VS Code-like), YAML, dark theme.
  */
 import "./monacoEnv";
 import * as monaco from "monaco-editor";

@@ -1,4 +1,4 @@
-"""Чтение GitLab credentials проекта (только internal)."""
+"""Read project GitLab credentials (internal only)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from services.adapter_service.crypto import decrypt_secret
 from services.adapter_service.models import ProjectInfraResource
 from shared.gitlab_constants import GITLAB_PLATFORM_CATEGORY, GITLAB_PLATFORM_RESOURCE_LABEL
 
-LEGACY_GITLAB_LABEL = "GitLab агент (группа и токен)"
+LEGACY_GITLAB_LABEL = "GitLab agent (group and token)"
 
 
 def load_gitlab_credentials(db: Session, project_id: UUID) -> dict[str, Any] | None:

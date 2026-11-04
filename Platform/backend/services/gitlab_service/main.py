@@ -1,6 +1,6 @@
 """
-gitlab-service: при project.created создаёт приватную GitLab-группу и group access token;
-секреты сохраняются в adapter (ProjectInfraResource).
+gitlab-service: on project.created creates a private GitLab group and group access token;
+secrets are stored in adapter (ProjectInfraResource).
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def internal_provision_index(
     db: Session = Depends(get_db),
     _: None = Depends(_require_internal),
 ) -> dict:
-    """Сводка для Superadmin: project_id → статус GitLab-группы."""
+    """Superadmin summary: project_id → GitLab group status."""
     rows = list(db.execute(select(GitlabProvision)).scalars().all())
     items = [_provision_public(r, UUID(str(r.project_id))) for r in rows]
     by_id = {str(x["project_id"]): x for x in items}
@@ -219,7 +219,7 @@ def provision_public(
     db: Session = Depends(get_db),
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> dict:
-    """Ручной запуск из UI (gateway проксирует с internal token)."""
+    """Manual start from UI (gateway proxies with internal token)."""
     if (x_internal_token or "").strip() != INTERNAL_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
     payload = body or ProvisionPublicBody()
@@ -245,7 +245,7 @@ def create_gitlab_repo(
     db: Session = Depends(get_db),
     _: None = Depends(_require_internal),
 ) -> dict:
-    """Создать пустой репозиторий в группе проекта (агенты вызывают при необходимости)."""
+    """Create an empty repository in the project group (agents call when needed)."""
     row = db.execute(select(GitlabProvision).where(GitlabProvision.project_id == project_id)).scalar_one_or_none()
     if row is None or row.status != "ready":
         raise HTTPException(status_code=409, detail="GitLab group not ready for project")

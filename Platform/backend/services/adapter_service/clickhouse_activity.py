@@ -1,4 +1,4 @@
-"""Журнал действий по проектам в ClickHouse (опционально, если задан CLICKHOUSE_HOST)."""
+"""Per-project activity log in ClickHouse (optional if CLICKHOUSE_HOST is set)."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def _get_client():
         import clickhouse_connect
     except ImportError:
         return None
-    # Подключаемся к default: БД из CLICKHOUSE_DATABASE создаётся в ensure_table(); иначе при первом старте
-    # клиент падает с UNKNOWN_DATABASE, пока таблица не создана.
+    # Connect to default: DB from CLICKHOUSE_DATABASE is created in ensure_table(); otherwise on first start
+    # the client fails with UNKNOWN_DATABASE until the table exists.
     _client = clickhouse_connect.get_client(
         host=os.getenv("CLICKHOUSE_HOST", "localhost").strip(),
         port=int(os.getenv("CLICKHOUSE_HTTP_PORT", "8123")),
@@ -66,8 +66,7 @@ def ensure_table() -> None:
         ENGINE = MergeTree()
         PARTITION BY toYYYYMM(toDate(ts))
         ORDER BY (project_id, ts)
-        """
-    )
+        """)
     _table_ready = True
 
 
@@ -120,7 +119,7 @@ def log_activity(
             ],
         )
     except Exception:
-        # журнал не должен ломать основной сценарий
+        # activity log must not break the main flow
         pass
 
 

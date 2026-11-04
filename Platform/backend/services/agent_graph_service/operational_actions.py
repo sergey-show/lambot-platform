@@ -1,4 +1,4 @@
-"""Детерминированное исполнение ops-запросов (fallback, если ReAct не вызвал tools)."""
+"""Deterministic execution of ops requests (fallback if ReAct did not call tools)."""
 
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ OPS_PROBE_COMMAND = "uptime && free -m && df -h"
 
 
 def command_for_operational_query(message: str) -> str:
-    """Команда SSH под типовой ops-вопрос пользователя."""
+    """SSH command for a typical user ops question (English keywords)."""
     t = (message or "").lower()
-    if re.search(r"мест[оа]|диск|disk|df\b|свободн|занят", t):
+    if re.search(r"\bdisk\b|\bdf\b|free\s+space|disk\s+space|filesystem", t):
         return "df -h"
-    if re.search(r"памят|ram\b|memory|swap", t):
+    if re.search(r"\bram\b|memory|swap", t):
         return "free -m"
-    if re.search(r"uptime|нагрузк|load average", t):
+    if re.search(r"uptime|load\s*average|cpu\s+load", t):
         return "uptime"
     return OPS_PROBE_COMMAND
 
@@ -84,23 +84,23 @@ def _ssh_exec(project_id: str, target_id: str, command: str) -> dict[str, Any]:
 
 def execute_operational_ssh_probe(project_id: UUID, *, command: str = OPS_PROBE_COMMAND) -> tuple[bool, str]:
     """
-  get_development_context + ssh_run_command без LLM.
-  Возвращает (ok, markdown для шага devops_plan).
+  get_development_context + ssh_run_command without an LLM.
+  Returns (ok, markdown for the devops_plan step).
     """
     pid = str(project_id)
     ctx = _parse_context(pid)
     if ctx is None:
         return (
             False,
-            "Не удалось получить development-context (JSON). "
-            "Проверьте adapter-service и SSH target в проекте.",
+            "Failed to get development-context (JSON). "
+            "Check adapter-service and the project SSH target.",
         )
     target_id = _pick_ssh_target_id(ctx)
     if not target_id:
         return (
             False,
-            "В проекте нет доступного SSH target (`ssh_run_command_available=false` или пустой список). "
-            "Добавьте сервер в настройках проекта и повторите запрос.",
+            "No available SSH target in the project (`ssh_run_command_available=false` or empty list). "
+            "Add a server in project settings and retry.",
         )
     result = _ssh_exec(pid, target_id, command.strip() or OPS_PROBE_COMMAND)
     stdout = ""
@@ -111,15 +111,15 @@ def execute_operational_ssh_probe(project_id: UUID, *, command: str = OPS_PROBE_
     else:
         stdout = str(result)
     lines = [
-        "### Операционная проверка (платформенный fallback)",
+        "### Operational check (platform fallback)",
         "",
         f"- **target_id:** `{target_id}`",
-        f"- **команда:** `{command}`",
+        f"- **command:** `{command}`",
         "",
         "```",
         stdout[:12000],
         "```",
     ]
     if len(stdout) > 12000:
-        lines.append("\n… вывод обрезан")
+        lines.append("\n… output truncated")
     return True, "\n".join(lines)

@@ -70,9 +70,9 @@ ANSIBLE_ORCHESTRATOR_URL = os.getenv(
 
 
 SERVICE_INFRA_ROLES = ("gitlab", "nexus")
-# Шаблоны по умолчанию: Ansible Galaxy (без Docker на хосте).
+# Default templates: Ansible Galaxy (no Docker on the host).
 ROLE_TO_TEMPLATE = {"gitlab": "provision-gitlab-omnibus", "nexus": "provision-nexus-ck"}
-# Старые provision-gitlab / provision-nexus (Docker Compose) остаются в каталоге оркестратора.
+# Legacy provision-gitlab / provision-nexus (Docker Compose) remain in the orchestrator catalog.
 TEMPLATE_REQUIRES_DOCKER = {
     "provision-gitlab": True,
     "provision-nexus": True,
@@ -122,7 +122,7 @@ def _fetch_agent_settings_from_admin() -> dict | None:
 
 
 def get_ingest_public_url() -> str:
-    """URL ingest для remote-агентов: admin DB (если доступен), иначе AGENT_INGEST_PUBLIC_URL."""
+    """Ingest URL for remote agents: admin DB (if available), else AGENT_INGEST_PUBLIC_URL."""
     env_fallback = os.getenv(
         "AGENT_INGEST_PUBLIC_URL",
         "http://localhost:8000/api/v1/agent/ingest",
@@ -131,7 +131,7 @@ def get_ingest_public_url() -> str:
     if cfg and isinstance(cfg.get("ingest_public_url"), str) and cfg["ingest_public_url"].strip():
         return cfg["ingest_public_url"].strip()
     return env_fallback
-# Пороги статуса агента по последней метрике (интервал агента по умолчанию 60 с)
+# Agent status thresholds from the latest metric (default agent interval 60 s)
 AGENT_STATUS_ONLINE_SEC = int(os.getenv("AGENT_STATUS_ONLINE_SEC", "180"))
 AGENT_STATUS_STALE_MAX_SEC = int(os.getenv("AGENT_STATUS_STALE_MAX_SEC", "900"))
 
@@ -158,7 +158,7 @@ class AgentDemoRunBody(BaseModel):
     repo_slug: str | None = Field(
         default=None,
         max_length=80,
-        description="Имя репозитория в группе GitLab; по умолчанию lambot-demo-<slug>-<shortid>",
+        description="Repository name in the GitLab group; default lambot-demo-<slug>-<shortid>",
     )
 
 
@@ -263,7 +263,7 @@ def _derive_service_password(project_id: UUID) -> str:
 
 
 def _pull_and_store_infra_credentials(db: Session, project_id: UUID, tgt: ServerTarget, role: str) -> None:
-    """Подтягивает JSON с целевого хоста (после Ansible) в ресурсы проекта."""
+    """Pulls JSON from the target host (after Ansible) into project resources."""
     sec = decrypt_secret(tgt.credential_encrypted)
     pid = str(project_id)
     base = f"/opt/lambot-infra/lambot/{pid}"
@@ -275,7 +275,7 @@ def _pull_and_store_infra_credentials(db: Session, project_id: UUID, tgt: Server
             data = json.loads(raw)
         except json.JSONDecodeError:
             return
-        label = "GitLab агент (группа и токен)"
+        label = "GitLab agent (group and token)"
         cat = "gitlab"
         token = (data.get("token") or "").strip()
         password = (data.get("password") or "").strip()
@@ -349,20 +349,20 @@ def _upsert_infra_credential_row(
 class TargetCreateRequest(BaseModel):
     target_kind: str = Field(
         default="ssh",
-        description="ssh — сервер по SSH; kubernetes — кластер по kubeconfig (без установки агента на ноды)",
+        description="ssh — server over SSH; kubernetes — cluster via kubeconfig (no agent install on nodes)",
     )
-    host: str = Field(description="IP или FQDN; для Kubernetes — отображаемое имя кластера")
+    host: str = Field(description="IP or FQDN; for Kubernetes — display cluster name")
     ssh_port: int = 22
     ssh_user: str = "ubuntu"
     auth_type: str
     ssh_private_key: str | None = None
     ssh_password: str | None = None
-    kubeconfig: str | None = Field(default=None, description="Для target_kind=kubernetes: полный текст kubeconfig")
-    kube_context: str | None = Field(default=None, description="Имя контекста в kubeconfig (если пусто — текущий по умолчанию)")
+    kubeconfig: str | None = Field(default=None, description="For target_kind=kubernetes: full kubeconfig text")
+    kube_context: str | None = Field(default=None, description="Context name in kubeconfig (if empty — current default)")
     label: str = "default"
     auto_provision: bool = Field(
         default=True,
-        description="После сохранения установить агента по SSH (systemd), нужен sudo без пароля; для Kubernetes игнорируется",
+        description="After save, install the agent over SSH (systemd); passwordless sudo required; ignored for Kubernetes",
     )
 
 
@@ -380,30 +380,30 @@ class TargetPublic(BaseModel):
     setup_confirmed_at: str | None = None
     agent_status: str = Field(
         default="no_data",
-        description="ok — недавняя метрика; stale — давно; offline — очень давно; no_data — метрик не было",
+        description="ok — recent metric; stale — old; offline — very old; no_data — no metrics yet",
     )
     agent_last_seen_at: str | None = None
     agent_metrics_total: int = 0
     last_provision_ok: bool | None = Field(
         default=None,
-        description="None — автоустановка не запускалась; иначе успех/ошибка последней попытки",
+        description="None — auto-install never ran; otherwise success/error of the last attempt",
     )
     last_provision_at: str | None = None
     last_provision_log: str | None = Field(
         default=None,
-        description="Вывод удалённой установки агента (обрезан при сохранении)",
+        description="Remote agent install output (truncated on save)",
     )
 
 
 class TargetCreatedResponse(BaseModel):
     target: TargetPublic
     agent_token: str = Field(
-        description="Однократно: сохраните, нужен для агента и prepare-bundle"
+        description="Once: save it; needed for the agent and prepare-bundle"
     )
     ingest_url: str
     provision: dict | None = Field(
         default=None,
-        description="Результат авто-установки агента (ok, detail)",
+        description="Agent auto-install result (ok, detail)",
     )
 
 
@@ -476,7 +476,7 @@ def test_target_ssh(
         if not kubectl_available():
             raise HTTPException(
                 status_code=503,
-                detail="kubectl недоступен в adapter (проверьте образ: установлен ли kubectl)",
+                detail="kubectl unavailable in adapter (check image: is kubectl installed)",
             )
         ok, detail = test_kubeconfig(body.kubeconfig, body.kube_context)
         return {"ok": ok, "detail": detail, "target_kind": "kubernetes"}
@@ -537,7 +537,7 @@ def create_target(
         provision: dict | None = None
         if kubectl_available():
             ok, detail = test_kubeconfig(body.kubeconfig, kctx)
-            provision = {"ok": ok, "detail": detail, "note": "Проверка kubectl после сохранения"}
+            provision = {"ok": ok, "detail": detail, "note": "kubectl check after save"}
             if ok:
                 row.setup_confirmed_at = datetime.utcnow()
                 row.last_provision_ok = True
@@ -550,7 +550,7 @@ def create_target(
             db.commit()
             db.refresh(row)
         else:
-            provision = {"ok": None, "detail": "kubectl недоступен в adapter, проверьте подключение вручную"}
+            provision = {"ok": None, "detail": "kubectl unavailable in adapter; check connectivity manually"}
         tp = _target_public(row, 0, None)
         _emit_activity(
             project_id,
@@ -676,7 +676,7 @@ def delete_target(
         act,
         "target.delete",
         "ok",
-        f"Удалён сервер {host} ({target_id})",
+        f"Deleted server {host} ({target_id})",
         {"deleted_target_id": str(target_id)},
     )
     return {"status": "ok", "deleted_target_id": str(target_id)}
@@ -696,26 +696,24 @@ def ssh_exec_on_target(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict[str, Any]:
-    """
-    Выполнение одной команды на SSH-таргете. Опасные команды — только после
-    подтверждения (повтор с confirmed=true и confirmation_token).
-    """
+    """Run one command on an SSH target. Dangerous commands only after
+    confirmation (retry with confirmed=true and confirmation_token)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     row = db.get(ServerTarget, target_id)
     if not row or str(row.project_id) != str(project_id):
         raise HTTPException(status_code=404, detail="Target not found")
     if getattr(row, "target_kind", "ssh") != "ssh":
-        raise HTTPException(status_code=400, detail="SSH exec доступен только для таргета с типом SSH")
+        raise HTTPException(status_code=400, detail="SSH exec is available only for SSH-type targets")
     cmd = (body.command or "").strip()
     if not cmd:
-        raise HTTPException(status_code=400, detail="Пустая команда")
+        raise HTTPException(status_code=400, detail="Empty command")
 
     cls, reason = classify_ssh_command(cmd)
     if cls == "blocked":
         raise HTTPException(status_code=400, detail=reason)
 
-    # SSH_SKIP_USER_CONFIRMATION=1 — выполнять «опасные» команды без двухшагового подтверждения пользователем (политика площадки).
+    # SSH_SKIP_USER_CONFIRMATION=1 — run "dangerous" commands without two-step user confirmation (site policy).
     if cls == "needs_confirmation" and os.getenv("SSH_SKIP_USER_CONFIRMATION", "").strip().lower() in (
         "1",
         "true",
@@ -730,11 +728,11 @@ def ssh_exec_on_target(
                 "needs_confirmation": True,
                 "reason": reason,
                 "confirmation_token": tok,
-                "hint": "Повторите запрос с confirmed=true и тем же confirmation_token после согласия пользователя.",
+                "hint": "Retry with confirmed=true and the same confirmation_token after the user agrees.",
             }
         tok = (body.confirmation_token or "").strip()
         if not tok:
-            raise HTTPException(status_code=400, detail="Нужен confirmation_token для подтверждённой команды")
+            raise HTTPException(status_code=400, detail="confirmation_token required for a confirmed command")
         ok_t, verr = verify_confirmation_token(tok, str(project_id), str(target_id), cmd)
         if not ok_t:
             raise HTTPException(status_code=400, detail=verr)
@@ -768,7 +766,7 @@ def ssh_exec_on_target(
         act,
         "target.ssh_exec",
         "ok" if ok_run else "error",
-        f"SSH exec на {row.host}",
+        f"SSH exec on {row.host}",
         {"exit_code": rc, "command_preview": cmd[:200], "target_id": str(target_id)},
     )
     return {
@@ -828,7 +826,7 @@ def prepare_bundle(
     if getattr(row, "target_kind", "ssh") == "kubernetes":
         raise HTTPException(
             status_code=400,
-            detail="Для таргета Kubernetes (kubeconfig) скачивание Ansible bundle не поддерживается — используйте SSH-сервер.",
+            detail="For a Kubernetes target (kubeconfig) Ansible bundle download is not supported — use an SSH server.",
         )
 
     agent_token = decrypt_secret(row.agent_token_encrypted)
@@ -844,12 +842,12 @@ def prepare_bundle(
         act,
         "target.prepare_bundle",
         "ok",
-        f"Bundle {body.template_id} для {row.host}",
+        f"Bundle {body.template_id} for {row.host}",
         {"template_id": body.template_id, "target_id": str(target_id)},
     )
     return {
         **data,
-        "note": "Запустите ansible-playbook с вашей машины, имея SSH-доступ; секрет не логируем.",
+        "note": "Run ansible-playbook from your machine with SSH access; the secret is not logged.",
     }
 
 
@@ -870,7 +868,7 @@ def confirm_target_setup(
         act,
         "target.confirm_setup",
         "ok",
-        f"Подтверждение настройки {row.host}",
+        f"Setup confirmation {row.host}",
         {"target_id": str(target_id)},
     )
     return {"status": "ok"}
@@ -955,7 +953,7 @@ def list_metrics(
 class ServiceAssignmentsPutBody(BaseModel):
     assignments: dict[str, str | None] = Field(
         default_factory=dict,
-        description="gitlab / nexus → target_id или null (снять назначение)",
+        description="gitlab / nexus → target_id or null (clear assignment)",
     )
 
 
@@ -1013,7 +1011,7 @@ def put_service_assignments(
         if getattr(tgt, "target_kind", "ssh") != "ssh":
             raise HTTPException(
                 status_code=400,
-                detail=f"Роль {role} требует сервер с подключением по SSH, не Kubernetes (kubeconfig).",
+                detail=f"Role {role} requires an SSH-connected server, not Kubernetes (kubeconfig).",
             )
         if existing:
             existing.target_id = tid
@@ -1031,7 +1029,7 @@ def put_service_assignments(
         act,
         "infra.service_assignments",
         "ok",
-        "Назначения GitLab/Nexus на серверы обновлены",
+        "GitLab/Nexus server assignments updated",
         {"assignments": body.assignments},
     )
     return {"status": "ok"}
@@ -1119,7 +1117,7 @@ def create_infra_resource(
         act,
         "infra.resource_create",
         "ok",
-        f"Ресурс {body.category}/{body.label}",
+        f"Resource {body.category}/{body.label}",
         {"resource_id": str(row.id), "category": body.category, "label": body.label},
     )
     return _resource_public(row)
@@ -1156,7 +1154,7 @@ def patch_infra_resource(
         act,
         "infra.resource_patch",
         "ok",
-        f"Обновлён ресурс {row.label}",
+        f"Updated resource {row.label}",
         {"resource_id": str(resource_id)},
     )
     return _resource_public(row)
@@ -1182,7 +1180,7 @@ def delete_infra_resource(
         act,
         "infra.resource_delete",
         "ok",
-        f"Удалён ресурс {lab}",
+        f"Deleted resource {lab}",
         {"resource_id": str(resource_id)},
     )
     return {"status": "ok"}
@@ -1196,7 +1194,7 @@ class K8sInstall3Body(BaseModel):
 
 
 class K8sQueryBody(BaseModel):
-    """Безопасные операции kubectl по сохранённому kubeconfig (см. ALLOWED_OPERATIONS)."""
+    """Safe kubectl operations via a saved kubeconfig (see ALLOWED_OPERATIONS)."""
 
     target_id: UUID
     operation: str = Field(
@@ -1204,12 +1202,12 @@ class K8sQueryBody(BaseModel):
     )
     namespace: str | None = None
     name: str | None = None
-    resource: str | None = Field(default=None, description="Для describe: pod, deployment, service, …")
-    container: str | None = Field(default=None, description="Для logs: контейнер в pod")
+    resource: str | None = Field(default=None, description="For describe: pod, deployment, service, …")
+    container: str | None = Field(default=None, description="For logs: container in the pod")
     tail_lines: int = Field(default=200, ge=1, le=5000)
     all_namespaces: bool = False
     wide: bool = False
-    replicas: int | None = Field(default=None, ge=0, le=5000, description="Только для scale (deployment)")
+    replicas: int | None = Field(default=None, ge=0, le=5000, description="Only for scale (deployment)")
 
 
 def _iter_k8s_install_3node(
@@ -1222,9 +1220,9 @@ def _iter_k8s_install_3node(
     if len(ids) != 3:
         yield {
             "type": "done",
-            "payload": {"ok": False, "error": "Укажите три разных SSH-таргета (control plane и два worker)."},
+            "payload": {"ok": False, "error": "Specify three different SSH targets (control plane and two workers)."},
             "status": "error",
-            "summary": "Дубликаты target_id",
+            "summary": "Duplicate target_id values",
         }
         return
     master = db.get(ServerTarget, body.master_target_id)
@@ -1234,17 +1232,17 @@ def _iter_k8s_install_3node(
         if not t or str(t.project_id) != str(project_id):
             yield {
                 "type": "done",
-                "payload": {"ok": False, "error": f"Таргет {label} не найден в проекте."},
+                "payload": {"ok": False, "error": f"Target {label} was not found in the project."},
                 "status": "error",
-                "summary": "Таргет не найден",
+                "summary": "Target not found",
             }
             return
         if getattr(t, "target_kind", "ssh") != "ssh":
             yield {
                 "type": "done",
-                "payload": {"ok": False, "error": f"Таргет {label}: нужен тип SSH (не kubeconfig)."},
+                "payload": {"ok": False, "error": f"Target {label}: SSH type required (not kubeconfig)."},
                 "status": "error",
-                "summary": "Неверный тип таргета",
+                "summary": "Invalid target type",
             }
             return
     assert master is not None and w1 is not None and w2 is not None
@@ -1253,10 +1251,10 @@ def _iter_k8s_install_3node(
             "type": "done",
             "payload": {
                 "ok": False,
-                "error": "На всех трёх нодах должны совпадать SSH-пользователь и тот же ключ или пароль.",
+                "error": "All three nodes must share the same SSH user and the same key or password.",
             },
             "status": "error",
-            "summary": "Разные учётные данные SSH",
+            "summary": "Mismatched SSH credentials",
         }
         return
 
@@ -1276,7 +1274,7 @@ def _iter_k8s_install_3node(
             "type": "done",
             "payload": {"ok": False, "error": str(exc)},
             "status": "error",
-            "summary": "Ошибка рендера шаблона",
+            "summary": "Template render error",
         }
         return
 
@@ -1309,10 +1307,10 @@ def _iter_k8s_install_3node(
             if val:
                 rc, out, err = val
             else:
-                rc, out, err = 127, "", "ansible: нет результата"
+                rc, out, err = 127, "", "ansible: no result"
 
     ok = rc == 0
-    summary = "Kubernetes (kubeadm): плейбук завершён" if ok else f"Kubernetes: ошибка ansible (код {rc})"
+    summary = "Kubernetes (kubeadm): playbook finished" if ok else f"Kubernetes: ansible error (code {rc})"
     payload: dict[str, Any] = {
         "ok": ok,
         "ansible_rc": rc,
@@ -1322,7 +1320,7 @@ def _iter_k8s_install_3node(
         "master_host": master.host,
         "worker_hosts": [w1.host, w2.host],
         "pod_network_cidr": pod,
-        "note": "Проверьте узлы: kubectl get nodes. При необходимости сохраните kubeconfig отдельным таргетом «Kubernetes».",
+        "note": 'Check nodes: kubectl get nodes. If needed, save kubeconfig as a separate "Kubernetes" target.',
     }
     st = "ok" if ok else "error"
     _emit_activity(
@@ -1339,7 +1337,7 @@ def _iter_k8s_install_3node(
 class PrepareStackBody(BaseModel):
     gitlab_http_port: int = 8081
     nexus_http_port: int = 8082
-    nexus_docker_port: int = Field(default=5050, ge=1, le=65535, description="Порт на хосте для Docker Registry в Nexus")
+    nexus_docker_port: int = Field(default=5050, ge=1, le=65535, description="Host port for Docker Registry in Nexus")
 
 
 class InfraRunTemplateBody(BaseModel):
@@ -1534,7 +1532,7 @@ def prepare_infra_stack(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict:
-    """Один запрос: bundle для GitLab и Nexus по назначенным target (ansible-playbook с локальной машины)."""
+    """One request: bundle for GitLab and Nexus on assigned targets (ansible-playbook from the local machine)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     assignments = db.execute(
@@ -1542,7 +1540,7 @@ def prepare_infra_stack(
     ).scalars().all()
     by_role = {a.service_role: a for a in assignments}
     results: list[dict] = []
-    # Сначала bundle prepare-docker-host на каждый уникальный target (GitLab/Nexus), затем роли.
+    # First prepare-docker-host bundle on each unique target (GitLab/Nexus), then roles.
     prep_targets: dict[UUID, ServerTarget] = {}
     for role in SERVICE_INFRA_ROLES:
         ass = by_role.get(role)
@@ -1612,14 +1610,14 @@ def prepare_infra_stack(
     out = {
         "project_id": str(project_id),
         "results": results,
-        "note": "Сначала выполните prepare-docker-host на хосте, затем GitLab/Nexus. Bundle — playbook и inventory.",
+        "note": "First run prepare-docker-host on the host, then GitLab/Nexus. Bundle — playbook and inventory.",
     }
     _emit_activity(
         project_id,
         act,
         "infra.prepare_stack",
         "ok",
-        f"Подготовлено шагов: {len([r for r in results if not r.get('skipped')])}",
+        f"Steps prepared: {len([r for r in results if not r.get('skipped')])}",
         {"results": _sanitize_prepare_results(results)},
     )
     return out
@@ -1631,10 +1629,8 @@ def _iter_infra_run_stack(
     body: PrepareStackBody,
     act: ActivityContext,
 ) -> Generator[dict[str, Any], None, None]:
-    """
-    Одна логика run-stack: события NDJSON для стрима и для UI.
-    События: phase, line, skip, bundle_error, done.
-    """
+    """Shared run-stack logic: NDJSON events for the stream and UI.
+    Events: phase, line, skip, bundle_error, done."""
     assignments = db.execute(
         select(TargetServiceAssignment).where(TargetServiceAssignment.project_id == project_id)
     ).scalars().all()
@@ -1723,7 +1719,7 @@ def _iter_infra_run_stack(
             except StopIteration as ex:
                 val = ex.value
                 if not val:
-                    rc_p, out_p, err_p = 127, "", "ansible: нет результата"
+                    rc_p, out_p, err_p = 127, "", "ansible: no result"
                 else:
                     rc_p, out_p, err_p = val
             prep_ok = rc_p == 0
@@ -1789,7 +1785,7 @@ def _iter_infra_run_stack(
         except StopIteration as ex:
             val = ex.value
             if not val:
-                rc, out, err = 127, "", "ansible: нет результата"
+                rc, out, err = 127, "", "ansible: no result"
             else:
                 rc, out, err = val
         if rc == -1:
@@ -1848,7 +1844,7 @@ def _iter_infra_run_stack(
         st = "partial"
     else:
         st = "error"
-    summary = f"Ansible: успех {ok_n}, ошибок {err_n}, пропусков {skip_n}"
+    summary = f"Ansible: success {ok_n}, errors {err_n}, skipped {skip_n}"
     resources_rows = (
         db.execute(
             select(ProjectInfraResource)
@@ -1862,7 +1858,7 @@ def _iter_infra_run_stack(
         "project_id": str(project_id),
         "results": results,
         "infra_resources": [_resource_public(r) for r in resources_rows],
-        "note": "Плейбуки выполнены на стороне adapter; первый старт GitLab может занимать много минут.",
+        "note": "Playbooks ran on the adapter side; the first GitLab start may take many minutes.",
     }
     _emit_activity(
         project_id,
@@ -1887,16 +1883,16 @@ def run_infra_template(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict[str, Any]:
-    """Универсальный запуск Ansible-шаблона из каталога на выбранном SSH-таргете."""
+    """Universal Ansible template run from the catalog on the selected SSH target."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not ansible_playbook_available():
-        raise HTTPException(status_code=503, detail="ansible-playbook недоступен")
+        raise HTTPException(status_code=503, detail="ansible-playbook unavailable")
     row = db.get(ServerTarget, body.target_id)
     if not row or str(row.project_id) != str(project_id):
         raise HTTPException(status_code=404, detail="Target not found")
     if getattr(row, "target_kind", "ssh") != "ssh":
-        raise HTTPException(status_code=400, detail="Template run доступен только для SSH target")
+        raise HTTPException(status_code=400, detail="Template run is available only for SSH targets")
 
     template_id = body.template_id.strip()
     defaults = _default_template_variables(
@@ -2013,7 +2009,7 @@ def run_infra_template(
         act,
         "infra.run_template",
         "ok" if ok else "error",
-        f"Template {template_id} на {row.host}",
+        f"Template {template_id} on {row.host}",
         {"template_id": template_id, "target_id": str(row.id), "ansible_rc": rc},
     )
     return result
@@ -2026,20 +2022,20 @@ def run_infra_stack(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict:
-    """GitLab/Nexus: рендер шаблона оркестратором и реальный запуск ansible-playbook из adapter (SSH из БД)."""
+    """GitLab/Nexus: orchestrator renders the template; adapter runs ansible-playbook for real (SSH from DB)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not ansible_playbook_available():
         raise HTTPException(
             status_code=503,
-            detail="ansible-playbook недоступен (нет ansible-core в образе или PATH)",
+            detail="ansible-playbook unavailable (no ansible-core in image or PATH)",
         )
     out: dict[str, Any] | None = None
     for ev in _iter_infra_run_stack(db, project_id, body, act):
         if ev.get("type") == "done":
             out = ev.get("payload")
     if out is None:
-        raise HTTPException(status_code=500, detail="run-stack: нет результата")
+        raise HTTPException(status_code=500, detail="run-stack: no result")
     return out
 
 
@@ -2050,13 +2046,13 @@ def run_infra_stack_stream(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ):
-    """Тот же run-stack, но поток NDJSON: phase / line / phase_done / done для live-логов в UI."""
+    """Same run-stack, but NDJSON stream: phase / line / phase_done / done for live UI logs."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not ansible_playbook_available():
         raise HTTPException(
             status_code=503,
-            detail="ansible-playbook недоступен (нет ansible-core в образе или PATH)",
+            detail="ansible-playbook unavailable (no ansible-core in image or PATH)",
         )
 
     def generate():
@@ -2073,20 +2069,20 @@ def k8s_install_3node(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict[str, Any]:
-    """Kubeadm-кластер на три SSH-таргета (1 control plane + 2 worker), одинаковый ключ/пароль."""
+    """Kubeadm cluster on three SSH targets (1 control plane + 2 workers), same key/password."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not ansible_playbook_available():
         raise HTTPException(
             status_code=503,
-            detail="ansible-playbook недоступен (нет ansible-core в образе или PATH)",
+            detail="ansible-playbook unavailable (no ansible-core in image or PATH)",
         )
     out: dict[str, Any] | None = None
     for ev in _iter_k8s_install_3node(db, project_id, body, act):
         if ev.get("type") == "done":
             out = ev.get("payload") if isinstance(ev.get("payload"), dict) else None
     if out is None:
-        raise HTTPException(status_code=500, detail="k8s-install-3node: нет результата")
+        raise HTTPException(status_code=500, detail="k8s-install-3node: no result")
     return out
 
 
@@ -2097,13 +2093,13 @@ def k8s_install_3node_stream(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ):
-    """Тот же k8s-install, поток NDJSON (phase / line / done)."""
+    """Same k8s-install, NDJSON stream (phase / line / done)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not ansible_playbook_available():
         raise HTTPException(
             status_code=503,
-            detail="ansible-playbook недоступен (нет ansible-core в образе или PATH)",
+            detail="ansible-playbook unavailable (no ansible-core in image or PATH)",
         )
 
     def generate():
@@ -2115,7 +2111,7 @@ def k8s_install_3node_stream(
 
 @app.get("/api/v1/projects/{project_id}/k8s/clusters")
 def list_k8s_clusters(project_id: UUID, db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    """Таргеты проекта с kubeconfig (для UI и агентов)."""
+    """Project targets with kubeconfig (for UI and agents)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     rows = db.execute(
@@ -2143,16 +2139,16 @@ def list_k8s_operations(project_id: UUID) -> dict[str, Any]:
 
 @app.post("/api/v1/projects/{project_id}/k8s/query")
 def k8s_query_endpoint(project_id: UUID, body: K8sQueryBody, db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Безопасное управление/наблюдение за кластером через kubectl в adapter."""
+    """Safe cluster manage/observe via kubectl in adapter."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not kubectl_available():
-        raise HTTPException(status_code=503, detail="kubectl недоступен в образе adapter")
+        raise HTTPException(status_code=503, detail="kubectl unavailable in the adapter image")
     row = db.get(ServerTarget, body.target_id)
     if not row or str(row.project_id) != str(project_id):
         raise HTTPException(status_code=404, detail="Target not found")
     if getattr(row, "target_kind", "ssh") != "kubernetes":
-        raise HTTPException(status_code=400, detail="Операция только для таргета Kubernetes (kubeconfig)")
+        raise HTTPException(status_code=400, detail="Operation only for a Kubernetes target (kubeconfig)")
     kube = decrypt_secret(row.credential_encrypted)
     kctx = getattr(row, "kube_context", None)
     return execute_k8s_operation(
@@ -2188,7 +2184,7 @@ def get_activity_logs(
 
 @app.get("/api/v1/projects/{project_id}/development-context")
 def get_development_context(project_id: UUID, db: Session = Depends(get_db)) -> dict:
-    """Сводка для агентов: таргеты, назначения сервисов, ресурсы, системные промпты (без секретов)."""
+    """Summary for agents: targets, service assignments, resources, system prompts (no secrets)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     targets = (
@@ -2228,21 +2224,21 @@ def get_development_context(project_id: UUID, db: Session = Depends(get_db)) -> 
         ],
         "kubernetes_clusters": k8s_clusters,
         "kubernetes_operations_hint": sorted(ALLOWED_OPERATIONS),
-        # Явная подсказка для LLM: не путать «нет SSH target в проекте» с «у ассистента нет доступа к SSH».
+        # Explicit LLM hint: do not confuse "no SSH target in the project" with "assistant has no SSH access".
         "ssh_tools": {
             "ssh_run_command_available": bool(ssh_targets_for_tools),
             "ssh_targets_for_tools": ssh_targets_for_tools,
-            "instruction_ru": (
-                "Если ssh_run_command_available=true — инструмент ssh_run_command доступен; передавай target_id из "
-                "ssh_targets_for_tools или из targets (где target_kind=ssh). Платформа выполняет команду по "
-                "сохранённым учётным данным проекта. Не утверждай, что «нет доступа к SSH у ассистента», если "
-                "ssh_run_command_available=true. Если false — попроси пользователя добавить SSH-сервер в проект."
+            "instruction": (
+                "If ssh_run_command_available=true — the ssh_run_command tool is available; pass target_id from "
+                "ssh_targets_for_tools or from targets (where target_kind=ssh). The platform runs the command with "
+                "saved project credentials. Do not claim the assistant has no SSH access if "
+                "ssh_run_command_available=true. If false — ask the user to add an SSH server to the project."
             ),
         },
         "ssh_remote_exec": {
             "enabled": True,
             "endpoint": "POST /api/v1/projects/{project_id}/targets/{target_id}/ssh-exec",
-            "policy": "Классификация команды: read-only без подтверждения; остальное — needs_confirmation с HMAC-токеном; отдельные шаблоны блокируются.",
+            "policy": "Command classification: read-only without confirmation; others — needs_confirmation with an HMAC token; some patterns are blocked.",
         },
         "service_assignments": [
             {
@@ -2279,8 +2275,8 @@ def _gitlab_platform_summary(db: Session, project_id: UUID, resources: list) -> 
         "provisioning": (gl or {}).get("provisioning"),
         "resource": prov,
         "workflow_hint": (
-            "При создании проекта создаётся только GitLab-группа и токен. Репозитории: gitlab_create_repository → "
-            "repo_clone_or_sync (feature_branch для работы) → search_codebase → repo_write_commit_push."
+            "On project create only a GitLab group and token are created. Repositories: gitlab_create_repository →"
+            "repo_clone_or_sync (feature_branch for work) → search_codebase → repo_write_commit_push."
         ),
     }
 
@@ -2292,10 +2288,8 @@ def post_agent_demo_run(
     db: Session = Depends(get_db),
     act: ActivityContext = Depends(get_activity_context),
 ) -> dict[str, Any]:
-    """
-    Демо: PM / архитектор / backend / DevOps (через LLM-нарратив) + реальный GitLab: репозиторий, файлы, `.gitlab-ci.yml`.
-    Нужен ресурс GitLab с PAT (после успешного provision GitLab для проекта).
-    """
+    """Demo: PM / architect / backend / DevOps (via LLM narrative) + real GitLab: repository, files, `.gitlab-ci.yml`.
+    Requires a GitLab resource with a PAT (after successful GitLab provision for the project)."""
     if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     payload = body or AgentDemoRunBody()
@@ -2307,9 +2301,9 @@ def post_agent_demo_run(
     )
     st = "ok" if out.get("ok") else "error"
     summ = (
-        "Мультиагентное демо: репозиторий и CI в GitLab"
+        "Multi-agent demo: repository and CI in GitLab"
         if out.get("ok")
-        else "Демо агентов: ошибка (см. steps)"
+        else "Agent demo: error (see steps)"
     )
     _emit_activity(project_id, act, "agent_demo.run", st, summ, out)
     return out
@@ -2327,7 +2321,7 @@ def internal_gitlab_platform_binding(
     db: Session = Depends(get_db),
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> dict:
-    """Вызывается gitlab-service после создания группы и group access token."""
+    """Called by gitlab-service after creating the group and group access token."""
     if (x_internal_token or "") != INTERNAL_SETTINGS_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
     if not _project_exists(project_id):
@@ -2352,7 +2346,7 @@ def internal_gitlab_credentials(
     db: Session = Depends(get_db),
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> dict:
-    """Только для repo-workspace / code-index (токен не отдаётся агентам напрямую)."""
+    """Only for repo-workspace / code-index (token is not given to agents directly)."""
     if (x_internal_token or "") != INTERNAL_SETTINGS_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
     creds = load_gitlab_credentials(db, project_id)
@@ -2368,7 +2362,7 @@ def internal_agent_demo_run(
     body: AgentDemoRunBody | None = None,
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> dict[str, Any]:
-    """Вызов из ai-team-worker / воркеров Kafka без JWT пользователя."""
+    """Call from ai-team-worker / Kafka workers without user JWT."""
     if (x_internal_token or "") != INTERNAL_SETTINGS_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
     if not _project_exists(project_id):
@@ -2387,7 +2381,7 @@ def internal_agent_demo_run(
         act,
         "agent_demo.run",
         st,
-        "ИИ Команда: внутренний запуск agent-demo",
+        "AI Team: internal agent-demo run",
         out,
     )
     return out

@@ -1,4 +1,4 @@
-"""Публикация структурированных задач ИИ Команды в Kafka (`platform.agent.tasks`)."""
+"""Publish structured AI Team tasks to Kafka (`platform.agent.tasks`)."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def publish_ai_team_execution_tasks(
     run_id: str,
     tasks: list[dict],
 ) -> None:
-    """Одна Kafka-запись на задачу; воркер сопоставляет по `task_id` == id строки в admin DB."""
+    """One Kafka record per task; worker matches on `task_id` == admin DB row id."""
 
     async def _pub() -> None:
         producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS)

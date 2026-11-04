@@ -1,4 +1,4 @@
-"""Оркестрация AI-команды: шаги в Postgres (admin), LLM по ролям, итог и архитектура."""
+"""AI Team orchestration: steps in Postgres (admin), LLM per role, summary and architecture."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from services.agent_graph_service.orchestration_route import (
     PRIMARY_ROLE_TO_STEP,
     active_dag_layers,
     enrich_route_with_sa_if_needed,
-    heuristic_orchestration_route,
     parse_orchestration_route,
+    route_is_usable,
     pipeline_for_direct,
     route_includes_sa,
 )
@@ -74,7 +74,7 @@ from services.agent_graph_service.team_client import (
     team_replace_execution_tasks,
 )
 
-# Какой промпт роли из admin подставить для шага
+# Which admin role prompt to use for the step
 STEP_PROMPT_ROLE: dict[str, str] = {
     "intake": "pm",
     "sa": "sa",
@@ -92,118 +92,118 @@ STEP_PROMPT_ROLE: dict[str, str] = {
 
 STEP_EXTRA: dict[str, str] = {
     "intake": (
-        "Сделай только маршрутизацию: кто нужен для решения задачи.\n"
-        "Верни СТРОГО один JSON-объект, без преамбулы и без markdown.\n"
-        "Формат:\n"
+        "You are the orchestration intake router. Decide ONLY who must work next.\n"
+        "Return STRICTLY one JSON object, no preamble, no markdown fences.\n"
+        "Format:\n"
         '{"orchestration_route":{"mode":"full|direct","roles":["sa|pm|architect|devops|backend|frontend|qa"],'
         '"primary_role":"sa|pm|architect|devops|backend|frontend|qa|null",'
-        '"live_execution":false,"reason":"кратко"}}\n'
-        "rules:\n"
-        "- roles: список реально нужных ролей для задачи (без лишних).\n"
-        "- live_execution=true только если нужны реальные изменения (деплой, код в GitLab, правки на сервере); "
-        "для вопросов о фактах (место на диске, uptime, статус) — live_execution=false.\n"
-        "- если нужны ТЗ/глоссарий/traceability/эпики и задачи в трекере — включи sa и mode=full.\n"
-        "- простой MVP/сайт без формальной спеки — sa не включай.\n"
-        "- если нужна ровно одна роль (без sa) -> mode=direct и primary_role=<эта роль>.\n"
-        "- если нужно 2+ роли или sa -> mode=full.\n"
-        "- Никакого плана/анализа/архитектуры на intake."
+        '"live_execution":false,"reason":"brief English rationale"}}\n'
+        "Decision rules (apply in order):\n"
+        "1) roles = minimal set actually required; never invent unused roles.\n"
+        "2) live_execution=true ONLY for real side effects (deploy, GitLab writes, SSH/Ansible/K8s changes). "
+        "Factual questions (disk, uptime, status, versions) => live_execution=false.\n"
+        "3) Formal requirements / glossary / traceability / epics+tracker tasks => include sa and mode=full.\n"
+        "4) Simple MVP/site without a formal spec => do NOT include sa.\n"
+        "5) Exactly one specialist role and no sa => mode=direct and primary_role=<that role>, roles=[that role].\n"
+        "6) Two or more roles OR sa present => mode=full and primary_role=null.\n"
+        "7) Do not write plans, architecture, or analysis at intake — routing JSON only."
     ),
     "sa": (
-        "Ты системный аналитик. Обязательные артефакты:\n"
-        "1) wiki: upsert_project_document — doc_type=spec (ТЗ), glossary, traceability; в ТЗ — mermaid (контекст, процессы).\n"
-        "2) трекер: tracker_create_epic (1+ эпиков), tracker_create_task (задачи с assignee_role devops|backend|frontend|qa|architect).\n"
-        "3) в meta_json/run_id карточек укажи run_id оркестрации; в задачах — requirement_id (REQ-001…).\n"
-        "4) tracker_list_items — проверь созданные карточки.\n"
-        "PM и архитектор работают после тебя — не дублируй их зоны (приоритеты релиза, стек). "
-        "В тексте шага дай краткое резюме + ссылки (slug документов, id эпиков/задач)."
+        "You are a systems analyst. Required artifacts:\n"
+        "1) wiki: upsert_project_document — doc_type=spec (formal requirements), glossary, traceability; in the spec — mermaid (context, processes).\n"
+        "2) tracker: tracker_create_epic (1+ epics), tracker_create_task (tasks with assignee_role devops|backend|frontend|qa|architect).\n"
+        "3) in card meta_json/run_id set the orchestration run_id; in tasks — requirement_id (REQ-001…).\n"
+        "4) tracker_list_items — verify created cards.\n"
+        "PM and architect work after you — do not duplicate their areas (release priorities, stack). "
+        "In the step text give a short summary + links (document slugs, epic/task ids)."
     ),
     "pm": (
-        "Ты PM: продуктовый scope релиза, приоритеты, KPI, риски для стейкхолдеров, согласование сроков. "
-        "Опирайся на артефакты SA (ТЗ, трекер) если они есть в накопленных шагах. "
-        "Не пиши детальную техспеку, диаграммы AS-IS/TO-BE и матрицу traceability — это зона SA."
+        "You are a PM: product release scope, priorities, KPI, stakeholder risks, schedule alignment. "
+        "Build on SA artifacts (spec, tracker) if they exist in accumulated steps. "
+        "Do not write a detailed tech spec, AS-IS/TO-BE diagrams, or a traceability matrix — that is SA's area."
     ),
     "architect": (
-        "Опиши целевую архитектуру, стек технологий, границы сервисов, данные и интеграции. "
-        "Разбей работу на этапы. Явно сформулируй задачи для DevOps, Backend, Frontend и QA (списком). "
-        "Этот текст пойдёт в раздел «Архитектура» для пользователя.\n"
-        "Добавь полную структуру проекта: ключевые директории/сервисы, назначение модулей, контракты между ними, "
-        "основные API/таблицы/очереди и где выполняется деплой."
+        "Describe the target architecture, technology stack, service boundaries, data, and integrations. "
+        "Break work into stages. Explicitly state tasks for DevOps, Backend, Frontend, and QA (as a list). "
+        "This text goes into the \"Architecture\" section for the user.\n"
+        "Add the full project structure: key directories/services, module purpose, contracts between them, "
+        "main APIs/tables/queues, and where deployment runs."
     ),
     "devops_plan": (
-        "Составь план работ DevOps: CI/CD, инфраструктура, секреты, окружения, деплой. "
-        "Кто что делает и в каком порядке (можно таблицей или списком). Согласуй с архитектурой выше.\n"
-        "Для задач по изменению существующего проекта сначала сделай анализ текущего состояния на основе фактов "
-        "опирайся только на (контекст/доки/инструменты), затем давай план. В ответе обязательно разделы: "
-        "«Анализ текущего состояния (факты)» и «План изменений»."
+        "Make a DevOps work plan: CI/CD, infrastructure, secrets, environments, deploy. "
+        "Who does what and in what order (table or list is fine). Align with the architecture above.\n"
+        "For changes to an existing project, first analyze the current state from facts "
+        "and rely only on (context/docs/tools), then give a plan. The reply must include sections: "
+        "\"Current state analysis (facts)\" and \"Change plan\"."
     ),
     "backend_plan": (
-        "Составь план работ backend: API, БД, интеграции. Кто что делает и когда. Согласуй с архитектурой.\n"
-        "Для задач по изменению существующего проекта сначала сделай анализ текущего кода/контрактов на основе фактов "
-        "(контекст/документация/инструменты), затем давай план. В ответе обязательно разделы: "
-        "«Анализ текущего кода (факты)» и «План изменений»."
+        "Make a backend work plan: APIs, DB, integrations. Who does what and when. Align with the architecture.\n"
+        "For changes to an existing project, first analyze current code/contracts from facts "
+        "(context/documentation/tools), then give a plan. The reply must include sections: "
+        "\"Current code analysis (facts)\" and \"Change plan\"."
     ),
     "frontend_plan": (
-        "Составь план работ frontend: экраны, состояние, вызовы API. Кто что делает и когда.\n"
-        "Для задач по изменению существующего проекта сначала сделай анализ текущего UI-кода на основе фактов "
-        "(контекст/документация/инструменты), затем давай план. В ответе обязательно разделы: "
-        "«Анализ текущего кода (факты)» и «План изменений»."
+        "Make a frontend work plan: screens, state, API calls. Who does what and when.\n"
+        "For changes to an existing project, first analyze current UI code from facts "
+        "(context/documentation/tools), then give a plan. The reply must include sections: "
+        "\"Current code analysis (facts)\" and \"Change plan\"."
     ),
     "qa_validation": (
-        "Проведи QA-валидацию после фактического деплоя на основе результатов шагов и фактов исполнения. "
-        "Сформируй минимальный test plan (smoke/regression), риски и вердикт релиза. "
-        "В summary_md обязательно укажи строку: release_recommendation: go|no_go. "
-        "Если no_go — выставь pipeline_continue=false и добавь минимум 1 вопрос/блокер в questions_for_user."
+        "Run QA validation after the actual deploy based on step results and execution facts. "
+        "Produce a minimal test plan (smoke/regression), risks, and a release verdict. "
+        "In summary_md you must include the line: release_recommendation: go|no_go. "
+        "If no_go — set pipeline_continue=false and add at least 1 question/blocker in questions_for_user."
     ),
     "execution_plan": (
-        "Это шаг ТОЛЬКО для машинного плана исполнения БАТЧАМИ (отдельно от нарратива). "
-        "Ответь строго одним JSON-объектом без markdown и без пояснений вокруг. Формат:\n"
-        '{"tasks":[{"title":"кратко","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|noop","payload":{}}],"continue_planning":false,"goal_done":false,"done_reason":""}\n'
-        "Смысл action_kind:\n"
-        "- ssh_run_command: реальный запуск команд на SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
-        "или {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
-        "- kubernetes_query: реальный kubectl через adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
-        "- ansible_run_template: запуск роли из внутреннего Ansible marketplace. payload: "
+        "This step is ONLY for a machine execution plan in BATCHES (separate from narrative). "
+        "Reply with strictly one JSON object, no markdown and no surrounding explanation. Format:\n"
+        '{"tasks":[{"title":"brief","action_kind":"ssh_run_command|kubernetes_query|ansible_run_template|noop","payload":{}}],"continue_planning":false,"goal_done":false,"done_reason":""}\n'
+        "action_kind meaning:\n"
+        "- ssh_run_command: real commands on an SSH target. payload: {\"target_id\":\"<uuid>\",\"command\":\"...\"} "
+        "or {\"target_id\":\"<uuid>\",\"commands\":[\"...\",\"...\"]}.\n"
+        "- kubernetes_query: real kubectl via adapter. payload: {\"target_id\":\"<uuid>\",\"operation\":\"...\", ...}.\n"
+        "- ansible_run_template: run a role from the internal Ansible marketplace. payload: "
         "{\"target_id\":\"<uuid>\",\"template_id\":\"<template-id>\",\"variables\":{...},"
         "\"allow_fallback\":true,\"fallback_service\":\"<service-id>\"}.\n"
-        "- noop: ничего не делать (только если реально нет доступных действий).\n"
-        "- adapter_agent_demo / gitlab_pipeline: legacy-режимы, только по явному запросу.\n"
-        "ЗАПРЕЩЕНО в action_kind: gitlab_create_repository, repo_clone_or_sync, search_codebase, repo_write_commit_push — "
-        "это инструменты LangGraph на шагах devops/backend/frontend_plan, воркеры их не выполняют. "
-        "Для GitLab/кода на этом шаге используй adapter_agent_demo (если уместно) или ssh_run_command.\n"
-        "kubernetes_query — только если в контексте есть kubernetes_clusters (не пустой список).\n"
-        "ansible_run_template — только с реальным template_id из каталога marketplace, не выдумывай *_template.\n"
-        "Верни только один исполнимый батч с ограниченным числом задач за итерацию (не монолитный план).\n"
-        "Если пользователь просит реальный деплой/действия на сервере и в контексте есть ssh_targets_for_tools — используй ssh_run_command "
-        "с конкретными командами, а не noop. Для k8s-кластера используй kubernetes_query. "
-        "Если запрос про установку типовых сервисов — предпочитай ansible_run_template, "
-        "но только для сервисов, которые реально есть в контексте/каталоге или явно запрошены пользователем.\n"
-        "Если запрос — правка уже существующего приложения на сервере, сформируй ssh_run_command с конкретными шагами "
-        "правки файлов/конфигов, проверкой результата и перезапуском нужного сервиса."
+        "- noop: do nothing (only if there are truly no available actions).\n"
+        "- adapter_agent_demo / gitlab_pipeline: legacy modes, only on explicit request.\n"
+        "FORBIDDEN in action_kind: gitlab_create_repository, repo_clone_or_sync, search_codebase, repo_write_commit_push — "
+        "these are LangGraph tools on devops/backend/frontend_plan steps; workers do not run them. "
+        "For GitLab/code on this step use adapter_agent_demo (if appropriate) or ssh_run_command.\n"
+        "kubernetes_query — only if context has kubernetes_clusters (non-empty list).\n"
+        "ansible_run_template — only with a real template_id from the marketplace catalog; do not invent *_template.\n"
+        "Return only one executable batch with a limited number of tasks per iteration (not a monolithic plan).\n"
+        "If the user asks for a real deploy/server actions and context has ssh_targets_for_tools — use ssh_run_command "
+        "with concrete commands, not noop. For a k8s cluster use kubernetes_query. "
+        "If the request is about installing common services — prefer ansible_run_template, "
+        "but only for services that actually exist in context/catalog or were explicitly requested.\n"
+        "If the request is to patch an existing app on a server, build ssh_run_command with concrete steps "
+        "to edit files/configs, verify the result, and restart the needed service."
     ),
     "implementation": (
-        "Опирайся на блок «Факты исполнения» (структурированные задачи, воркеры) — что реально запускалось и с каким результатом. "
-        "Дополни человекочитаемым планом: репозитории, пайплайны, Ansible. Если воркеры не запускались или упали — честно укажи. "
-        "Никогда не пиши, что сервис/деплой успешен, если в фактах исполнения есть ошибки или незавершённые задачи."
+        "Build on the \"Execution facts\" block (structured tasks, workers) — what actually ran and with what result. "
+        "Add a human-readable plan: repositories, pipelines, Ansible. If workers did not run or failed — say so honestly. "
+        "Never claim a service/deploy succeeded if execution facts have errors or unfinished tasks."
     ),
     "deploy": (
-        "Опиши, как развернуть результат на сервере проекта, опираясь на контекст (targets, URL). "
-        "Если серверов нет — напиши, что сначала нужно зарегистрировать SSH target. "
-        "Запрещено утверждать «успешно развернули», если в execution facts есть ошибки или нет подтверждённого успешного исполнения."
+        "Describe how to deploy the result on the project server using context (targets, URL). "
+        "If there are no servers — say an SSH target must be registered first. "
+        "Do not claim \"successfully deployed\" if execution facts have errors or no confirmed successful run."
     ),
     "pm_summary": (
-        "Финальный отчёт для заказчика без технического бэкграунда: что получилось, как попробовать продукт. "
-        "URL, логины и пароли указывай ТОЛЬКО если они явно есть в контексте проекта ниже; иначе — честно напиши, "
-        "что учётные данные нужно получить у администратора или завести в используемом репозитории/на сервере. "
-        "Не добавляй фиктивные фразы «успешно развернули», если предыдущие шаги содержат ошибки.\n\n"
-        "Блок «Накопленные результаты шагов» содержит только итоги ролей (PM, архитектор, планы ролей, QA) — без сырого "
-        "JSON планов исполнения и без длинных отчётов implementation/deploy; при большом объёме текст обрезан. "
-        "Блок «Факты исполнения» — краткий список задач воркеров (название, вид действия, статус, краткая ошибка), без полных логов."
+        "Final report for a non-technical customer: what was delivered, how to try the product. "
+        "Give URLs, logins, and passwords ONLY if they are explicitly in the project context below; otherwise say honestly "
+        "that credentials must be obtained from an admin or set up in the repo/on the server. "
+        "Do not add fake \"successfully deployed\" phrases if previous steps have errors.\n\n"
+        "The \"Accumulated step results\" block has only role outcomes (PM, architect, role plans, QA) — without raw "
+        "execution-plan JSON and without long implementation/deploy reports; large text may be truncated. "
+        "The \"Execution facts\" block is a short worker task list (name, action kind, status, short error), without full logs."
     ),
 }
 
 STEP_META: dict[str, tuple[str, str]] = {k: (lbl, task) for k, lbl, task in DEFAULT_PIPELINE}
 STEP_ORDER: dict[str, int] = {k: i for i, (k, _lbl, _task) in enumerate(DEFAULT_PIPELINE)}
-# Только narrative-шаги ролей для финального отчёта (без execution_plan / implementation / deploy).
+# Only narrative role steps for the final report (without execution_plan / implementation / deploy).
 PM_SUMMARY_SOURCE_STEP_KEYS = frozenset(
     {"sa", "pm", "architect", "devops_plan", "backend_plan", "frontend_plan", "qa_validation"}
 )
@@ -229,7 +229,7 @@ PLANNING_PLATFORM_TOOLS = frozenset(
         "http_request",
     }
 )
-# Модель «для кода» из настроек платформы (coding_model) — только для инженерных шагов.
+# "Coding" model from platform settings (coding_model) — engineering steps only.
 CODING_MODEL_STEPS = frozenset(
     {
         "devops_plan",
@@ -253,32 +253,28 @@ PLAN_MAX_TASKS_PER_ITER = int(os.getenv("AGENT_PLAN_MAX_TASKS_PER_ITER", "5"))
 PLAN_MAX_ITERATIONS = int(os.getenv("AGENT_PLAN_MAX_ITERATIONS", "20"))
 PLAN_BATCH_WAIT_SECONDS = int(os.getenv("AGENT_PLAN_BATCH_WAIT_SECONDS", "900"))
 MAX_PEER_QUERIES = 5
-INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "120"))
-# Маршрутизация intake: не отправляем в LLM весь user_message (длинные вопросы = долгий prompt / дорого).
+# Intake is always LLM-based (no keyword heuristics). Slightly higher token budget for reliable JSON.
+INTAKE_MAX_TOKENS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS", "256"))
+# Intake routing: do not send the full user_message to the LLM (long questions = long/expensive prompt).
 INTAKE_USER_MSG_MAX_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_MAX_CHARS", "14000"))
 INTAKE_USER_MSG_TAIL_CHARS = int(os.getenv("AGENT_ORCHESTRATION_INTAKE_USER_MSG_TAIL_CHARS", "4000"))
 INTAKE_LLM_TIMEOUT_SEC = float(os.getenv("AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC", "90"))
-INTAKE_HEURISTIC_ENABLED = os.getenv("AGENT_ORCHESTRATION_INTAKE_HEURISTIC", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
-# Подмешивать RAG-сводку wiki в каждый шаг (тяжёлый prompt, риск устаревших «✅ готово»). По умолчанию выкл — агенты ищут сами через get_project_docs_context.
+# Inject wiki RAG summary into every step (heavy prompt, risk of stale "✅ done"). Off by default — agents search via get_project_docs_context.
 INLINE_RAG_IN_PROMPT = os.getenv("AGENT_ORCHESTRATION_INLINE_RAG", "0").strip().lower() in (
     "1",
     "true",
     "yes",
 )
 WIKI_ON_DEMAND_HINT = (
-    "Документация проекта (wiki/RAG) в этот промпт намеренно не подгружается целиком. "
-    "Если нужны факты из прошлых итераций — сформулируй узкий поисковый запрос (что именно: деплой, репо, URL, архитектура). "
-    "В режиме с инструментами (LangGraph): get_project_docs_context (wiki) или search_knowledge (базы знаний PDF/сканы, top_k 3–8). "
-    "Не утверждай «уже развёрнуто/готово» по wiki или догадкам — только «Факты исполнения» текущего run и development-context."
+    "Project documentation (wiki/RAG) is intentionally not fully loaded into this prompt. "
+    "If you need facts from past iterations — craft a narrow search query (what exactly: deploy, repo, URL, architecture). "
+    "In tool mode (LangGraph): get_project_docs_context (wiki) or search_knowledge (PDF/scan knowledge bases, top_k 3–8). "
+    'Do not claim "already deployed/done" from wiki or guesses — only "Execution facts" of the current run and development-context.'
 )
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
-# Шаги с единым JSON-конвертом (summary + вопросы/peer_queries); execution_plan и intake — отдельно.
+# Steps with a unified JSON envelope (summary + questions/peer_queries); execution_plan and intake are separate.
 STRUCTURED_STEP_KEYS = frozenset(
     {
         "pm",
@@ -294,27 +290,27 @@ STRUCTURED_STEP_KEYS = frozenset(
 )
 
 STEP_OUTPUT_JSON_INSTRUCTIONS = """
---- ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА ДЛЯ ЭТОГО ШАГА ---
-Сначала выведи РОВНО ОДИН JSON-объект (без markdown-ограждений), затем можно пустую строку и дополнительный текст.
-Схема JSON:
+--- REQUIRED RESPONSE FORMAT FOR THIS STEP ---
+First output EXACTLY ONE JSON object (no markdown fences), then you may add a blank line and extra text.
+JSON schema:
 {
   "schema_version": 1,
   "step_status": "complete | need_user_clarification | need_peer_sync",
-  "summary_md": "основной результат шага для коллег и отчёта (markdown)",
+  "summary_md": "main step result for teammates and the report (markdown)",
   "questions_for_user": [],
   "peer_queries": [],
   "pipeline_continue": true,
   "live_execution": false
 }
-Правила:
-- summary_md — главный передаваемый дальше контент; пиши сюда всё важное для команды.
-- live_execution (опционально, по умолчанию false): true — дальше по пайплайну нужны реальные операции на инфраструктуре
-  (SSH/kubectl/ansible, правки на уже развёрнутом, деплой), а не только текстовые планы; false — достаточно проектирования/кода без живого исполнения.
-  Для шагов pm и architect оцени по запросу пользователя и выставь явно.
-- Если нужен ответ пользователя до продолжения — step_status=need_user_clarification, заполни questions_for_user, pipeline_continue=false.
-- Если вопрос к другой роли команды (backend/frontend/devops/architect/pm/qa) — добавь в peer_queries: [{"role":"backend","question":"..."}]. Оркестратор запросит коллегу автоматически; не жди пользователя.
-- Не задавай вопросы пользователю, если их можно закрыть через peer_queries.
-- При pipeline_continue=false пайплайн остановится до следующего сообщения пользователя.
+Rules:
+- summary_md — the main content passed forward; put everything important for the team here.
+- live_execution (optional, default false): true — later pipeline steps need real infrastructure operations
+  (SSH/kubectl/ansible, edits on an already deployed system, deploy), not only text plans; false — design/code without live execution is enough.
+  For pm and architect steps, judge from the user request and set explicitly.
+- If a user reply is needed before continuing — step_status=need_user_clarification, fill questions_for_user, pipeline_continue=false.
+- If the question is for another team role (backend/frontend/devops/architect/pm/qa) — add to peer_queries: [{"role":"backend","question":"..."}]. The orchestrator will query the colleague automatically; do not wait for the user.
+- Do not ask the user questions that can be resolved via peer_queries.
+- When pipeline_continue=false the pipeline stops until the next user message.
 """
 
 
@@ -324,7 +320,7 @@ def _text_fingerprint(text: str) -> str:
 
 
 def _sanitize_model_text(text: str) -> str:
-    """Убирает служебные токены провайдера из ответа модели."""
+    """Strips provider control tokens from the model reply."""
     t = (text or "").strip()
     if not t:
         return ""
@@ -437,7 +433,7 @@ def _publish_llm_prompt_meta(run_id: str, step_key: str, prompt_preview: str, mo
 
 
 def _truncate_user_message_for_intake(user_message: str) -> str:
-    """Начало + конец длинного запроса: для маршрутизации ролей достаточно оценочного взгляда."""
+    """Start + end of a long request: enough for role routing at a glance."""
     m = (user_message or "").strip()
     if len(m) <= INTAKE_USER_MSG_MAX_CHARS:
         return m
@@ -447,7 +443,7 @@ def _truncate_user_message_for_intake(user_message: str) -> str:
     if head_n < 2000:
         head_n = INTAKE_USER_MSG_MAX_CHARS - tail_n - 120
     marker = (
-        f"\n\n---\n[фрагмент опущен: всего символов {len(m)}; для маршрутизации учтены начало и конец запроса]\n---\n\n"
+        f"\n\n---\n[fragment omitted: {len(m)} chars total; routing uses the start and end of the request]\n---\n\n"
     )
     return m[:head_n] + marker + m[-tail_n:]
 
@@ -461,7 +457,7 @@ def _stream_chat_then_sanitize(
     step_key: str,
     stream: bool = True,
 ) -> str:
-    """Стримит ответ в output_md шага (троттлинг) для live UI; fallback — invoke."""
+    """Streams the reply into step output_md (throttled) for live UI; fallback — invoke."""
     try:
         prompt_preview = _messages_prompt_preview(messages)
         model_label = _lc_model_label(model)
@@ -521,7 +517,7 @@ def _utc_iso() -> str:
 
 
 def _llm_purpose_for_step(step_key: str) -> str:
-    """coding — использовать coding_model из LLM-настроек, если задана; иначе default_model."""
+    """coding — use coding_model from LLM settings if set; otherwise default_model."""
     return "coding" if step_key in CODING_MODEL_STEPS else "default"
 
 
@@ -529,17 +525,17 @@ def _ctx_trim(ctx: str, max_chars: int) -> str:
     c = (ctx or "").strip()
     if len(c) <= max_chars:
         return c
-    return c[:max_chars] + "\n… [обрезано по лимиту символов]"
+    return c[:max_chars] + "\n… [truncated by character limit]"
 
 
 def _compact_execution_tasks_summary(run_obj: dict[str, Any] | None) -> str:
-    """Краткая сводка execution_tasks для pm_summary — без полных payload и логов."""
+    """Short execution_tasks summary for pm_summary — without full payloads and logs."""
     if not run_obj or not isinstance(run_obj, dict):
-        return "(нет данных execution_tasks)"
+        return "(no execution_tasks data)"
     tasks_raw = run_obj.get("execution_tasks")
     tasks = tasks_raw if isinstance(tasks_raw, list) else []
     if not tasks:
-        return "(исполняемых задач нет)"
+        return "(no executable tasks)"
     lines: list[str] = []
     for t in tasks:
         if not isinstance(t, dict):
@@ -554,7 +550,7 @@ def _compact_execution_tasks_summary(run_obj: dict[str, Any] | None) -> str:
         lines.append(line)
     out = "\n".join(lines)
     if len(out) > PM_SUMMARY_EXEC_COMPACT_MAX:
-        out = out[:PM_SUMMARY_EXEC_COMPACT_MAX] + "\n… [список задач обрезан]"
+        out = out[:PM_SUMMARY_EXEC_COMPACT_MAX] + "\n… [task list truncated]"
     return out
 
 
@@ -568,7 +564,7 @@ def _has_executable_execution_tasks(tasks: list[dict[str, Any]]) -> bool:
 
 
 def _infer_infra_restrictions(ctx: str) -> str:
-    """Явно запрещает LLM придумывать GitLab/Nexus, если их нет в project context."""
+    """Explicitly forbids the LLM inventing GitLab/Nexus if they are not in project context."""
     try:
         obj = json.loads(ctx) if ctx else {}
     except Exception:
@@ -598,9 +594,9 @@ def _infer_infra_restrictions(ctx: str) -> str:
     if not missing:
         return ""
     return (
-        "Ограничение по фактам контекста: "
+        "Context fact constraint: "
         + ", ".join(missing)
-        + " отсутствуют в проектных ресурсах. Не упоминай их как существующие."
+        + " are absent from project resources. Do not mention them as existing."
     )
 
 
@@ -657,7 +653,7 @@ def _collect_graph_execution_evidence(graph_result: dict[str, Any]) -> dict[str,
 
 
 def _merge_tool_evidence_from_text(ev: dict[str, Any], text: str) -> dict[str, Any]:
-    """Дополнить evidence именами tools из текста (Ollama JSON в content, markdown-инструкции)."""
+    """Enrich evidence with tool names from text (Ollama JSON in content, markdown instructions)."""
     out = dict(ev) if isinstance(ev, dict) else {}
     names = list(out.get("tool_names") or [])
     for nm in extract_tool_names_from_assistant_content(text):
@@ -754,14 +750,14 @@ def _build_system(
         extra = STEP_EXTRA.get("intake", "")
         um = _truncate_user_message_for_intake(user_message)
         return (
-            "Ты маршрутизатор запроса к AI-команде. Нужно только определить: полный пайплайн (full) или "
-            "ответ одного специалиста (direct) и при direct — какая роль. Не расписывай этапы работ, "
-            "не собирай требования к продукту — это следующие шаги.\n\n"
+            "You are a router for AI Team requests. Only decide: full pipeline (full) or "
+            "a single-specialist reply (direct) and for direct — which role. Do not spell out work stages, "
+            "do not gather product requirements — that is later steps.\n\n"
             f"{extra}\n\n---\n"
-            "Для intake запрещено опираться на контекст проекта/документацию — только формулировка запроса пользователя.\n\n"
-            "Ответь только JSON orchestration_route. "
-            "Не выдумывай факты — опирайся только на формулировку запроса.\n\n"
-            f"Запрос пользователя:\n{um}"
+            "For intake you must not rely on project context/docs — only the user request wording.\n\n"
+            "Reply with orchestration_route JSON only. "
+            "Do not invent facts — rely only on the request wording.\n\n"
+            f"User request:\n{um}"
         )
 
     extra = STEP_EXTRA.get(step_key, "")
@@ -774,27 +770,27 @@ def _build_system(
         "qa_validation",
     ):
         extra += (
-            "\n\nРежим прямого ответа: пользователь задал узкий вопрос. Дай конкретный ответ по сути, "
-            "без развёрнутого многоэтапного плана всего продукта. Не выдумывай факты из контекста."
+            "\n\nDirect-answer mode: the user asked a narrow question. Give a concrete answer on point, "
+            "without a long multi-stage plan for the whole product. Do not invent facts from context."
         )
-    acc = accumulated_md.strip() or "(предыдущие шаги ещё не дали выводов)"
-    ex = execution_ctx.strip() or "(ещё нет — шаг execution_plan и воркеры не завершены)"
+    acc = accumulated_md.strip() or "(previous steps have not produced conclusions yet)"
+    ex = execution_ctx.strip() or "(none yet — execution_plan step and workers not finished)"
     restrictions = f"{infra_restrictions}\n\n---\n" if infra_restrictions else ""
     docs_block = (
-        f"Документация проекта (wiki / RAG):\n{docs_ctx}\n\n---\n"
+        f"Project documentation (wiki / RAG):\n{docs_ctx}\n\n---\n"
         if (docs_ctx or "").strip()
         else f"{WIKI_ON_DEMAND_HINT}\n\n---\n"
     )
     tail = (
         f"{role_prompt}\n\n---\n{extra}\n\n---\n"
         f"{restrictions}"
-        f"Контекст проекта (development-context):\n{ctx}\n\n---\n"
+        f"Project context (development-context):\n{ctx}\n\n---\n"
         f"{docs_block}"
-        f"Накопленные результаты шагов:\n{acc}\n\n---\n"
-        f"Факты исполнения (структурированные задачи, воркеры):\n{ex}\n\n---\n"
-        "Ответь по-русски, кроме шага execution_plan — там только JSON по инструкции. "
-        "Не выдумывай секреты и URL — используй только контекст."
-        f"\n\nЗапрос пользователя:\n{user_message}"
+        f"Accumulated step results:\n{acc}\n\n---\n"
+        f"Execution facts (structured tasks, workers):\n{ex}\n\n---\n"
+        "Reply in English, except the execution_plan step — JSON only per instructions. "
+        "Do not invent secrets or URLs — use context only."
+        f"\n\nUser request:\n{user_message}"
     )
     if step_key in STRUCTURED_STEP_KEYS:
         tail += STEP_OUTPUT_JSON_INSTRUCTIONS
@@ -824,10 +820,10 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         continue_existing_run = existing_status in ("done", "error")
         if resume_from_paused:
             base = original_user_message or incoming_message
-            user_message = f"{base}\n\nУточнение пользователя к приостановленному шагу:\n{incoming_message}"
+            user_message = f"{base}\n\nUser clarification for the paused step:\n{incoming_message}"
         elif continue_existing_run:
             base = original_user_message or incoming_message
-            user_message = f"{base}\n\nНовое сообщение пользователя в рамках того же run:\n{incoming_message}"
+            user_message = f"{base}\n\nNew user message within the same run:\n{incoming_message}"
         else:
             user_message = incoming_message
         if resume_from_paused:
@@ -884,7 +880,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         if inner0:
             orchestration_route = inner0
         dag_layers = active_dag_layers(orchestration_route)
-        # Режим «живого» исполнения: intake orchestration_route.live_execution и envelope live_execution на шагах.
+        # Live execution mode: intake orchestration_route.live_execution and live_execution envelope on steps.
         role_execution_mode = live_execution_from_route(orchestration_route)
         skip_role_execution_tool_gate = resume_from_paused and user_requests_tool_execution_approval(
             incoming_message
@@ -896,7 +892,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     run_id,
                     paused_step_key,
                     status="running",
-                    output_md="⏳ Продолжаем с реальными действиями (инструменты платформы)…",
+                    output_md="⏳ Continuing with real actions (platform tools)…",
                     structured={"live_execution_approved": True},
                 )
                 team_patch_run(run_id, status="running", phase="resume_live_execution", error="")
@@ -928,7 +924,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             return "\n\n".join(chunks)
 
         def _accumulated_md_agent_steps_only(extra: dict[str, str] | None = None) -> str:
-            """Для pm_summary: только выводы ролевых шагов, без execution_plan/implementation/deploy и без раздувания."""
+            """For pm_summary: only role-step outputs, without execution_plan/implementation/deploy and without bloat."""
             merged = {k: v for k, v in accumulated.items() if k in PM_SUMMARY_SOURCE_STEP_KEYS}
             if extra:
                 for ek, ev in extra.items():
@@ -945,7 +941,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if len(body) > cap:
                     body = (
                         body[:cap]
-                        + "\n\n… [вывод шага обрезан для финального отчёта; полный текст в панели оркестрации]"
+                        + "\n\n… [step output truncated for the final report; full text is in the orchestration panel]"
                     )
                 chunks.append(f"### {label}\n{body}")
             return "\n\n".join(chunks)
@@ -955,29 +951,29 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             peer_step = PRIMARY_ROLE_TO_STEP.get(role_l)
             if not peer_step:
                 return (
-                    f"[роль {role!r} не поддерживается для peer-синхронизации — "
-                    "используй: pm, architect, devops, backend, frontend]"
+                    f"[role {role!r} is not supported for peer sync — "
+                    "use: pm, architect, devops, backend, frontend]"
                 )
             lbl, _tsk = STEP_META.get(peer_step, (peer_step, ""))
             pr_key = STEP_PROMPT_ROLE.get(peer_step, "pm")
-            peer_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
+            peer_prompt = prompts.get(pr_key, "You are a development team assistant.")
             peer_ctx = _ctx_trim(ctx, 6000)
             acc_now = _accumulated_md()
             system_peer = (
                 f"{peer_prompt}\n\n---\n"
-                "Внутренний запрос от коллеги по AI-команде. Ответь кратко и по делу, чтобы коллега мог "
-                f"продолжить шаг «{requester_step}». Не обращайся к конечному пользователю — только ответ коллеге.\n"
-                "Запрещено придумывать успешно выполненные действия, URL или результаты тестов без фактов из контекста.\n\n"
-                f"Контекст проекта:\n{peer_ctx}\n\n---\n"
-                f"Накопленные результаты шагов:\n{acc_now}\n\n---\n"
-                f"Вопрос от коллеги (шаг пайплайна: {requester_step}; консультант: {lbl}):\n{question.strip()}"
+                "Internal request from an AI Team colleague. Reply briefly and on point so the colleague can "
+                f"continue the \"{requester_step}\" step. Do not address the end user — reply to the colleague only.\n"
+                "Do not invent successful actions, URLs, or test results without facts from context.\n\n"
+                f"Project context:\n{peer_ctx}\n\n---\n"
+                f"Accumulated step results:\n{acc_now}\n\n---\n"
+                f"Question from colleague (pipeline step: {requester_step}; consultant: {lbl}):\n{question.strip()}"
             )
             model = build_chat_model(purpose=_llm_purpose_for_step(peer_step))
             text = _stream_chat_then_sanitize(
                 model,
                 [
                     SystemMessage(content=system_peer),
-                    HumanMessage(content="Дай ответ коллеге для продолжения пайплайна."),
+                    HumanMessage(content="Give a reply to the colleague so the pipeline can continue."),
                 ],
                 _lf_cfg(obs_step_key=f"peer:{peer_step}"),
                 run_id=run_id,
@@ -1103,8 +1099,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         }
                     )
                     continue
-                # Доп. защита от "ложного ok": старые/нестандартные результаты могли быть done,
-                # но с ошибкой во вложенном payload.
+                # Extra guard against "false ok": old/nonstandard results may have been done,
+                # but with an error in the nested payload.
                 if kind == "ssh_run_command" and isinstance(res, dict):
                     rows = res.get("results") if isinstance(res.get("results"), list) else []
                     nested_bad = False
@@ -1157,14 +1153,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 roles = ("devops_plan", "backend_plan", "frontend_plan")
                 done_roles = [r for r in roles if str((next((x for x in prev_steps if str(x.get("step_key") or "") == r), {}) or {}).get("status") or "") == "done"]
                 if not done_roles and not any(k in role_execution_evidence for k in roles):
-                    return ["Нет execution_tasks и нет подтверждённых evidence от профильных ролей."]
+                    return ["No execution_tasks and no confirmed evidence from specialist roles."]
                 ev_rows = [role_execution_evidence.get(r, {}) for r in roles]
                 has_exec = any(isinstance(ev, dict) and ev.get("has_execution_tool_call") is True for ev in ev_rows)
                 has_tool_results = any(int(ev.get("tool_results_count") or 0) > 0 for ev in ev_rows if isinstance(ev, dict))
                 if not has_exec:
-                    return ["Профильные роли не выполнили реальных инструментальных действий (ssh/k8s/ansible)."]
+                    return ["Specialist roles did not perform real tool actions (ssh/k8s/ansible)."]
                 if not has_tool_results:
-                    return ["У профильных ролей нет результатов tool-вызовов; фактическое выполнение не подтверждено."]
+                    return ["Specialist roles have no tool-call results; actual execution is not confirmed."]
                 return []
             executable = [
                 t
@@ -1173,15 +1169,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 and str(t.get("action_kind") or "").strip().lower() in EXECUTABLE_ACTION_KINDS
             ]
             if not executable:
-                return ["В execution_tasks нет исполнимых действий (ssh/k8s/ansible)."]
+                return ["execution_tasks has no executable actions (ssh/k8s/ansible)."]
             done_exec = [t for t in executable if str(t.get("status") or "") == "done"]
             if not done_exec:
-                return ["Исполнимые действия есть, но ни одно не завершилось со статусом done."]
+                return ["Executable actions exist, but none finished with status done."]
             if all(_task_is_diagnostic_only(t) for t in done_exec):
-                return ["Выполнены только диагностические проверки, а не шаги развёртывания/изменений."]
+                return ["Only diagnostic checks ran, not deploy/change steps."]
             evidence_text = _extract_text_blobs(done_exec).lower()
             if "docker_not_found" in evidence_text:
-                return ["На целевом хосте отсутствует Docker (docker_not_found), деплой не мог быть выполнен."]
+                return ["Docker is missing on the target host (docker_not_found); deploy could not run."]
             return []
 
         def _pause_run_with_question(step_key: str, questions: list[str] | None = None, fallback: str = "") -> None:
@@ -1194,7 +1190,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         q0 = s
                         break
             if not q0:
-                q0 = (fallback or "Нужно уточнение от пользователя для продолжения шага.").strip()
+                q0 = (fallback or "User clarification is required to continue the step.").strip()
             team_patch_run(
                 run_id,
                 status="paused",
@@ -1212,7 +1208,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             nonlocal ctx, docs_ctx, infra_restrictions, role_execution_evidence, skip_role_execution_tool_gate
             label, _task = STEP_META.get(step_key, (step_key, ""))
             pr_key = STEP_PROMPT_ROLE.get(step_key, "pm")
-            role_prompt = prompts.get(pr_key, "Ты помощник команды разработки.")
+            role_prompt = prompts.get(pr_key, "You are a development team assistant.")
             if step_key != "intake" and not ctx:
                 ctx = fetch_development_context_summary(pid)
             if step_key != "intake" and not docs_ctx and INLINE_RAG_IN_PROMPT:
@@ -1244,27 +1240,27 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 infra_restrictions=infra_for_system,
             )
             if debug_hint:
-                system_full += f"\n\n---\nСовместная отладка между ролями:\n{debug_hint}"
+                system_full += f"\n\n---\nCross-role collaborative debugging:\n{debug_hint}"
             human_content = (
-                "Маршрутизация: только JSON по инструкции system."
+                "Routing: JSON only per the system instruction."
                 if step_key == "intake"
-                else f"Выполни шаг «{label}» ({step_key})."
+                else f'Execute step "{label}" ({step_key}).'
             )
             if _should_force_tool_analysis(step_key, role_execution_mode):
                 analysis_prompt = (
                     f"{user_message}\n\n"
-                    "Это задача изменения существующего проекта. "
-                    "Шаг 1 (обязательный): собери факты через доступные инструменты. "
-                    "Шаг 2: сделай анализ текущего состояния по фактам. "
-                    "Не придумывай факты, пути файлов и результаты."
+                    "This is a change task for an existing project. "
+                    "Step 1 (required): gather facts via available tools. "
+                    "Step 2: analyze the current state from the facts. "
+                    "Do not invent facts, file paths, or results."
                 )
-                graph_pv = f"### LangGraph ReAct (инструменты)\n\n{analysis_prompt}"
+                graph_pv = f"### LangGraph ReAct (tools)\n\n{analysis_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
                 team_patch_step(
                     run_id,
                     step_key,
                     status="running",
-                    output_md="⏳ LangGraph ReAct: сбор фактов через инструменты (может занять несколько минут)…",
+                    output_md="⏳ LangGraph ReAct: gathering facts via tools (may take several minutes)…",
                 )
                 graph_result = invoke_graph(project_id, analysis_prompt, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
@@ -1276,20 +1272,20 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     )
                 if not analysis_text:
                     return (
-                        "Инструментальный анализ выполнен, но не вернулся итоговый текст ответа. "
-                        "Повторите запрос, чтобы агент сформировал вывод по фактам."
+                        "Tool analysis finished, but no final reply text was returned. "
+                        "Repeat the request so the agent can form an output from the facts."
                     )
                 model = build_chat_model(purpose=_llm_purpose_for_step(step_key))
                 final_messages = [
                     SystemMessage(content=system_full),
                     HumanMessage(
                         content=(
-                            f"Выполни шаг «{label}» ({step_key}) на основе фактов ниже.\n\n"
-                            "Обязательный формат ответа:\n"
-                            "1) Анализ текущего состояния (факты)\n"
-                            "2) План изменений\n"
-                            "3) Проверка себя (что может быть неверно/что проверить дополнительно)\n\n"
-                            f"Факты инструментального анализа:\n{analysis_text}"
+                            f"Execute step \"{label}\" ({step_key}) based on the facts below.\n\n"
+                            "Required response format:\n"
+                            "1) Current state analysis (facts)\n"
+                            "2) Change plan\n"
+                            "3) Self-check (what may be wrong / what else to verify)\n\n"
+                            f"Tool-analysis facts:\n{analysis_text}"
                         )
                     ),
                 ]
@@ -1303,7 +1299,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         run_id,
                         step_key,
                         status="running",
-                        output_md=f"⏳ GitLab: создание репозитория `{slug}`…",
+                        output_md=f"⏳ GitLab: creating repository `{slug}`…",
                     )
                     ok_gl, gl_text = execute_gitlab_create_repository(project_id, slug)
                     role_execution_evidence[step_key] = {
@@ -1319,33 +1315,33 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 if gitlab_repo_create_intent(user_message):
                     graph_prompt = (
                         f"{user_message}\n\n"
-                        "ОБЯЗАТЕЛЬНО вызови инструменты через function calling (не пиши JSON в текст): "
+                        "MUST call tools via function calling (do not write JSON in the text): "
                         "gitlab_provision_status → gitlab_create_repository. "
-                        f"repo_slug для создания: {parse_repo_slug_from_message(user_message) or 'app'}."
+                        f"repo_slug for create: {parse_repo_slug_from_message(user_message) or 'app'}."
                     )
                 else:
                     graph_prompt = (
                         f"{user_message}\n\n"
-                        "ОБЯЗАТЕЛЬНО через function calling (не JSON и не markdown-блок с name/arguments). "
+                        "MUST use function calling (not JSON and not a markdown block with name/arguments). "
                     )
                     if role_execution_mode:
                         graph_prompt += (
-                            "Нужны реальные изменения: GitLab (provision/repos/commit), SSH/ansible при деплое. "
-                            "Не вызывай run_product_planning для правок существующего проекта."
+                            "Real changes are needed: GitLab (provision/repos/commit), SSH/ansible on deploy. "
+                            "Do not call run_product_planning for edits to an existing project."
                         )
                     else:
                         graph_prompt += (
-                            "Сначала get_development_context, затем ssh_run_command на target_id из "
-                            "ssh_tools.ssh_targets_for_tools (не плейсхолдер). "
-                            "Ответ — только по фактам из результатов инструментов."
+                            "First get_development_context, then ssh_run_command on target_id from "
+                            "ssh_tools.ssh_targets_for_tools (not a placeholder). "
+                            "Reply only from tool result facts."
                         )
-                graph_pv = f"### LangGraph ReAct (прямой ответ)\n\n{graph_prompt}"
+                graph_pv = f"### LangGraph ReAct (direct answer)\n\n{graph_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
                 team_patch_step(
                     run_id,
                     step_key,
                     status="running",
-                    output_md="⏳ LangGraph ReAct: инструменты и формирование ответа…",
+                    output_md="⏳ LangGraph ReAct: tools and forming the reply…",
                 )
                 graph_result = invoke_graph(project_id, graph_prompt, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
@@ -1366,13 +1362,13 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 text = _extract_graph_text(graph_result)
                 if not text:
                     return (
-                        "Инструментальный прогон выполнен, но не вернулся итоговый текст ответа. "
-                        "Повторите запрос, чтобы агент сформировал финальный вывод из результатов инструментов."
+                        "Tool run finished, but no final reply text was returned. "
+                        "Repeat the request so the agent can form a final output from tool results."
                     )
                 if gitlab_repo_create_intent(user_message) and int(ev.get("tool_calls_count") or 0) == 0:
                     return (
-                        "Модель описала вызов инструмента текстом, но не выполнила его. "
-                        "Проверьте GitLab (группа проекта, GITLAB_PROVISION_MOCK=0, токен) и повторите запрос.\n\n"
+                        "The model described a tool call in text but did not execute it. "
+                        "Check GitLab (project group, GITLAB_PROVISION_MOCK=0, token) and retry.\n\n"
                         + _sanitize_model_text(text)
                     )
                 if int(ev.get("tool_calls_count") or 0) == 0:
@@ -1390,38 +1386,38 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             return _sanitize_model_text(ops_text)
                         if looks_like_fake_tool_call_text(text):
                             return (
-                                "Модель вернула JSON вызова инструмента текстом, но не выполнила function calling. "
-                                "Повторите запрос или включите модель с native tool calling.\n\n"
+                                "The model returned a tool-call JSON as text but did not perform function calling. "
+                                "Retry or enable a model with native tool calling.\n\n"
                                 + _sanitize_model_text(text)
                                 + "\n\n---\n"
                                 + ops_text
                             )
                         return (
-                            "ReAct не вызвал инструменты, платформенный SSH fallback не смог выполниться.\n\n"
+                            "ReAct did not call tools; the platform SSH fallback could not run.\n\n"
                             + ops_text
                             + ("\n\n" + _sanitize_model_text(text) if text else "")
                         )
                     if looks_like_fake_tool_call_text(text):
                         return (
-                            "Модель описала вызов инструмента текстом, но не выполнила function calling. "
-                            "Повторите запрос или пересоберите llm-adapter-service (coerce Ollama tool_calls).\n\n"
+                            "The model described a tool call in text but did not perform function calling. "
+                            "Retry or rebuild llm-adapter-service (Ollama tool_calls coerce).\n\n"
                             + _sanitize_model_text(text)
                         )
                     return (
-                        "Запрос с live_execution не выполнен: не было вызовов инструментов. "
-                        "Повторите с подтверждением «да, выполняй» или моделью с tool calling.\n\n"
+                        "live_execution request was not completed: no tool calls. "
+                        "Retry with confirmation \"yes, execute\" or a model with tool calling.\n\n"
                         + (_sanitize_model_text(text) if text else "")
                     )
                 return _sanitize_model_text(text)
             if step_key == "sa":
                 graph_prompt = (
                     f"{user_message}\n\n"
-                    f"ID прогона оркестрации (run_id для wiki и meta трекера): {run_id}\n\n"
-                    "Выполни шаг системного аналитика через function calling (не JSON в тексте):\n"
-                    "- upsert_project_document: spec, glossary, traceability (mermaid в content_md где нужно).\n"
-                    "- tracker_create_epic / tracker_create_task с assignee_role и meta run_id, requirement_id.\n"
-                    "- tracker_list_items в конце для проверки.\n"
-                    "Краткий итог в ответе: что создано (slug, id карточек)."
+                    f"Orchestration run id (run_id for wiki and tracker meta): {run_id}\n\n"
+                    "Run the systems-analyst step via function calling (not JSON in text):\n"
+                    "- upsert_project_document: spec, glossary, traceability (mermaid in content_md where needed).\n"
+                    "- tracker_create_epic / tracker_create_task with assignee_role and meta run_id, requirement_id.\n"
+                    "- tracker_list_items at the end for verification.\n"
+                    "Brief summary in the reply: what was created (slug, card ids)."
                 )
                 graph_pv = f"### LangGraph ReAct (SA)\n\n{graph_prompt}"
                 _publish_llm_prompt_meta(run_id, step_key, graph_pv, "langgraph-react")
@@ -1429,20 +1425,20 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     run_id,
                     step_key,
                     status="running",
-                    output_md="⏳ SA: wiki-артефакты и карточки трекера…",
+                    output_md="⏳ SA: wiki artifacts and tracker cards…",
                 )
                 graph_result = invoke_graph(project_id, graph_prompt, orchestration_run_id=run_id)
                 role_execution_evidence[step_key] = _collect_graph_execution_evidence(graph_result)
                 text = _extract_graph_text(graph_result)
                 if not text:
                     return (
-                        "Шаг SA выполнен через инструменты, но финальный текст не сформирован. "
-                        "Проверьте wiki и трекер в UI."
+                        "SA step ran via tools, but final text was not formed. "
+                        "Check wiki and tracker in the UI."
                     )
                 ev = role_execution_evidence.get(step_key) or {}
                 if int(ev.get("tool_calls_count") or 0) == 0:
                     return (
-                        "SA не вызвал инструменты (wiki/трекер). Повторите прогон или включите модель с tool calling.\n\n"
+                        "SA did not call tools (wiki/tracker). Retry the run or enable a model with tool calling.\n\n"
                         + _sanitize_model_text(text)
                     )
                 return _sanitize_model_text(text)
@@ -1480,7 +1476,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
             acc_override: str | None = None,
             debug_hint: str = "",
         ) -> tuple[bool, str | None, str | None, bool]:
-            """Последний bool: halt_pipeline — остановить прогон (ожидание ответа пользователя)."""
+            """Last bool: halt_pipeline — stop the run (waiting for user reply)."""
             nonlocal execution_ctx, role_execution_mode, dag_layers, orchestration_route
             label, _task = STEP_META.get(step_key, (step_key, ""))
             if step_key == "sa" and not route_includes_sa(orchestration_route):
@@ -1488,14 +1484,14 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     run_id,
                     step_key,
                     status="skipped",
-                    output_md="Пропущено: intake не подключил системного аналитика (sa).",
+                    output_md="Skipped: intake did not include the systems analyst (sa).",
                     finished_at=_utc_iso(),
                 )
-                return True, "Пропущено: SA не в orchestration_route.roles.", None, False
+                return True, "Skipped: SA not in orchestration_route.roles.", None, False
             step_invocations[step_key] = step_invocations.get(step_key, 0) + 1
             if step_invocations[step_key] > MAX_STEP_INVOCATIONS_PER_RUN:
                 err = (
-                    f"loop_detected: шаг {step_key} запускался слишком много раз "
+                    f"loop_detected: step {step_key} ran too many times "
                     f"({step_invocations[step_key]} > {MAX_STEP_INVOCATIONS_PER_RUN})"
                 )
                 team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
@@ -1504,7 +1500,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                 return False, None, err, False
             if monotonic() - run_started > MAX_ORCHESTRATION_SECONDS:
                 err = (
-                    "loop_detected: превышен лимит времени оркестрации "
+                    "loop_detected: orchestration time limit exceeded "
                     f"({MAX_ORCHESTRATION_SECONDS}s)"
                 )
                 team_patch_step(run_id, step_key, status="error", error=err, finished_at=_utc_iso())
@@ -1530,7 +1526,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         er = f" · {b['error']}" if b.get("error") else ""
                         lines.append(f"- {b['title']} (`{b['action_kind']}`): {b['status']}{er}")
                     msg = (
-                        "Блокировка шага: в execution tasks есть ошибки/незавершённые задачи.\n"
+                        "Step blocked: execution tasks have errors/unfinished work.\n"
                         + "\n".join(lines)
                     )
                     team_patch_step(
@@ -1542,7 +1538,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             "paused_for_user": True,
                             "execution_blockers": blockers_now,
                             "questions_for_user": [
-                                "Для продолжения деплоя/итога сначала закройте блокеры исполнения: исправить окружение, повторить задачи или подтвердить ручной обход."
+                                "To continue deploy/summary, first clear execution blockers: fix the environment, retry tasks, or confirm a manual bypass."
                             ],
                         },
                         finished_at=_utc_iso(),
@@ -1550,21 +1546,21 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     accumulated[step_key] = msg
                     _pause_run_with_question(
                         step_key,
-                        ["Для продолжения деплоя/итога сначала закройте блокеры исполнения: исправить окружение, повторить задачи или подтвердить ручной обход."],
-                        "Есть блокеры исполнения.",
+                        ["To continue deploy/summary, first clear execution blockers: fix the environment, retry tasks, or confirm a manual bypass."],
+                        "There are execution blockers.",
                     )
                     return True, msg, None, True
                 if real_work_issues:
                     dod_only = bool(dod_issues) and not role_execution_mode
                     title = (
-                        "DoD не выполнен — нельзя считать шаг успешным."
+                        "DoD not met — the step cannot be marked successful."
                         if dod_only or dod_issues
-                        else "Блокировка шага: нет подтверждения фактического выполнения изменений."
+                        else "Step blocked: no confirmation of actual change execution."
                     )
                     msg = title + "\n" + "\n".join(f"- {x}" for x in real_work_issues)
                     questions = dod_gate_user_questions(dod_issues) if dod_issues else [
-                        "Нужно выполнить реальные шаги деплоя/изменений (не только диагностику). "
-                        "Разрешить повтор профильных шагов с обязательным tool-calling?"
+                        "Real deploy/change steps are required (not only diagnostics). "
+                        "Allow retry of specialist steps with mandatory tool-calling?"
                     ]
                     team_patch_step(
                         run_id,
@@ -1584,31 +1580,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     _pause_run_with_question(
                         step_key,
                         questions,
-                        "DoD / исполнение не подтверждено." if dod_issues else "Нет подтверждения фактического выполнения изменений.",
+                        "DoD / execution not confirmed." if dod_issues else "No confirmation of actual change execution.",
                     )
                     return True, msg, None, True
 
             team_patch_step(run_id, step_key, status="running", started_at=_utc_iso())
-            if step_key == "intake" and INTAKE_HEURISTIC_ENABLED:
-                hr = heuristic_orchestration_route(user_message)
-                if hr is not None:
-                    route_json = json.dumps({"orchestration_route": hr}, ensure_ascii=False)
-                    structured_payload: dict[str, Any] = {
-                        "attempt": 1,
-                        "max_attempts": 1,
-                        "intake_heuristic": True,
-                        "orchestration_route": hr,
-                    }
-                    team_patch_step(
-                        run_id,
-                        step_key,
-                        status="done",
-                        output_md=route_json,
-                        structured=structured_payload,
-                        finished_at=_utc_iso(),
-                    )
-                    accumulated[step_key] = route_json
-                    return True, route_json, None, False
             last_err = "unknown error"
             max_retries = MAX_INTAKE_RETRIES if step_key == "intake" else MAX_STEP_RETRIES
             for attempt in range(1, max_retries + 1):
@@ -1619,6 +1595,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         acc_override=acc_override,
                         debug_hint=debug_hint,
                     )
+                    if step_key == "intake":
+                        parsed_route = parse_orchestration_route(text or "")
+                        if not route_is_usable(parsed_route):
+                            raise RuntimeError(
+                                "intake_route_invalid: model did not return a usable orchestration_route JSON; retrying"
+                            )
                     sig_out = _text_fingerprint(text)
                     prev_out = step_output_signatures.get(step_key, "")
                     if sig_out and sig_out == prev_out:
@@ -1628,7 +1610,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         step_output_repeats[step_key] = 1
                     if step_output_repeats.get(step_key, 1) >= MAX_IDENTICAL_OUTPUT_REPEATS and attempt < max_retries:
                         raise RuntimeError(
-                            "loop_detected: модель повторяет одинаковый вывод, пробую переформулировать шаг"
+                            "loop_detected: model repeats the same output; trying to rephrase the step"
                         )
 
                     structured_payload: dict[str, Any] = {
@@ -1639,7 +1621,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         ev = role_execution_evidence.get(step_key)
                         if isinstance(ev, dict):
                             structured_payload["role_execution_evidence"] = ev
-                        # Direct frontend/backend: без tool calls шаг не считаем успешным (кроме явной паузы выше).
+                        # Direct frontend/backend: without tool calls the step is not successful (except explicit pause above).
                         if step_key in ("frontend_plan", "backend_plan"):
                             calls = int((ev or {}).get("tool_calls_count") or 0)
                             has_planning = bool((ev or {}).get("has_planning_tool_call"))
@@ -1654,16 +1636,16 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 )
                             ):
                                 raise RuntimeError(
-                                    "direct_step_no_tools: модель не вызвала инструменты платформы "
-                                    f"(tool_calls={calls}); для создания сайта/кода нужен function calling, "
-                                    "пересборка llm-adapter (Ollama coerce) или full pipeline"
+                                    "direct_step_no_tools: model did not call platform tools "
+                                    f"(tool_calls={calls}); creating a site/code needs function calling, "
+                                    "rebuild llm-adapter (Ollama coerce) or full pipeline"
                                 )
                         if role_execution_mode and not skip_role_execution_tool_gate:
                             calls = int((ev or {}).get("tool_calls_count") or 0)
                             results = int((ev or {}).get("tool_results_count") or 0)
                             has_exec = bool((ev or {}).get("has_execution_tool_call"))
                             has_planning = bool((ev or {}).get("has_planning_tool_call"))
-                            # На этапе *_plan достаточно контекста/GitLab; SSH — на execution_plan/deploy.
+                            # At *_plan stage, context/GitLab is enough; SSH is for execution_plan/deploy.
                             if step_key in PLAN_ROLE_STEPS:
                                 needs_pause = calls <= 0 and not has_planning and not has_exec
                             else:
@@ -1672,19 +1654,19 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 )
                             if needs_pause:
                                 msg = (
-                                    "Пайплайн приостановлен: агент описал план текстом, но не вызвал инструменты "
-                                    "платформы (GitLab, контекст проекта, SSH).\n"
+                                    "Pipeline paused: the agent described a plan in text but did not call platform tools "
+                                    "(GitLab, project context, SSH).\n"
                                     f"- tool_calls: {calls}\n"
                                     f"- tool_results: {results}\n"
                                     f"- planning_tools (gitlab/context): {'yes' if has_planning else 'no'}\n"
                                     f"- ssh/k8s/ansible: {'yes' if has_exec else 'no'}\n\n"
-                                    "Чтобы продолжить, отправьте в чат: «да, выполняй реальные действия» — "
-                                    "или пересоберите llm-adapter-service (coerce Ollama tool_calls)."
+                                    'To continue, send in chat: "yes, execute real actions" — '
+                                    "or rebuild llm-adapter-service (Ollama tool_calls coerce)."
                                 )
                                 structured_payload["paused_for_user"] = True
                                 structured_payload["questions_for_user"] = [
-                                    "Подтвердите продолжение с вызовом инструментов: ответьте «да, выполняй» "
-                                    "или «продолжай с инструментами»."
+                                    'Confirm continuation with tool calls: reply "yes, execute" '
+                                    'or "continue with tools".'
                                 ]
                                 team_patch_step(
                                     run_id,
@@ -1697,8 +1679,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 accumulated[step_key] = msg
                                 _pause_run_with_question(
                                     step_key,
-                                    [f"Разрешить повторить шаг {step_key} с обязательным tool-calling и фактическими результатами?"],
-                                    "Профильная роль не подтвердила фактическое выполнение.",
+                                    [f"Allow retry of step {step_key} with mandatory tool-calling and factual results?"],
+                                    "The specialist role did not confirm actual execution.",
                                 )
                                 return True, msg, None, True
                     halt_pipeline = False
@@ -1712,9 +1694,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 env.summary_md, user_message
                             ):
                                 raise RuntimeError(
-                                    "architect_invalid_output: модель вернула шаблонный/meta-текст "
-                                    "вместо архитектуры по запросу (сайт/акции). "
-                                    "Повторите шаг или смените модель архитектора (не qwen с утечкой chat-template)."
+                                    "architect_invalid_output: model returned template/meta text "
+                                    "instead of architecture for the request (site/promotions). "
+                                    "Retry the step or switch the architect model (not qwen with chat-template leak)."
                                 )
                             role_execution_mode = merge_live_execution_flag(
                                 role_execution_mode,
@@ -1729,11 +1711,11 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     peer_responses.append(
                                         {"role": pq.role, "question": pq.question, "answer": ans}
                                     )
-                                    peer_parts.append(f"#### Ответ ({pq.role})\n{ans}")
+                                    peer_parts.append(f"#### Reply ({pq.role})\n{ans}")
                                 if peer_parts:
                                     env.summary_md = (
                                         env.summary_md
-                                        + "\n\n---\n### Синхронизация с командой (авто)\n\n"
+                                        + "\n\n---\n### Team sync (auto)\n\n"
                                         + "\n\n".join(peer_parts)
                                     )
                                     structured_payload["peer_responses"] = peer_responses
@@ -1751,7 +1733,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     structured_payload["qa_gate"] = "no_go"
                                     if not env.questions_for_user:
                                         env.questions_for_user = [
-                                            "QA дал вердикт NO_GO. Укажите, какие дефекты блокируют релиз и как планируем исправление."
+                                            "QA returned NO_GO. Specify which defects block the release and how we plan to fix them."
                                         ]
                                         structured_payload["questions_for_user"] = env.questions_for_user
                             if env.questions_for_user:
@@ -1773,7 +1755,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         _pause_run_with_question(
                             step_key,
                             structured_payload.get("questions_for_user") if isinstance(structured_payload.get("questions_for_user"), list) else None,
-                            "Шаг ожидает уточнения от пользователя.",
+                            "The step is waiting for user clarification.",
                         )
                         return True, text, None, True
 
@@ -1799,9 +1781,9 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 parsed = parsed[:PLAN_MAX_TASKS_PER_ITER]
                             if role_execution_mode and parsed and not _has_executable_execution_tasks(parsed):
                                 recheck_hint = (
-                                    "Self-check: в батче нет исполнимых задач "
-                                    "(ssh_run_command|kubernetes_query|ansible_run_template) для запроса на правку. "
-                                    "Пересобери ближайший батч так, чтобы он содержал реальные шаги исполнения."
+                                    "Self-check: the batch has no executable tasks "
+                                    "(ssh_run_command|kubernetes_query|ansible_run_template) for a change request. "
+                                    "Rebuild the next batch so it contains real execution steps."
                                 )
                                 retry_text = _run_single_step_text(
                                     step_key,
@@ -1824,8 +1806,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     }
                                 else:
                                     msg = (
-                                        "Execution plan не содержит исполнимых задач для запроса на правку.\n\n"
-                                        "Нужно: добавить SSH/K8s target проекта или уточнить, где выполнять изменения."
+                                        "Execution plan has no executable tasks for the change request.\n\n"
+                                        "Needed: add a project SSH/K8s target or clarify where to apply changes."
                                     )
                                     structured_payload["execution_plan_self_check"] = {
                                         "triggered": True,
@@ -1835,7 +1817,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     }
                                     structured_payload["paused_for_user"] = True
                                     structured_payload["questions_for_user"] = [
-                                        "Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."
+                                        "Specify a target (SSH/K8s) for the change or add a server to the project so I can form executable steps."
                                     ]
                                     team_patch_step(
                                         run_id,
@@ -1848,8 +1830,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                     accumulated[step_key] = msg
                                     _pause_run_with_question(
                                         step_key,
-                                        ["Укажите target (SSH/K8s) для правки или добавьте сервер в проект, чтобы я сформировал исполнимые шаги."],
-                                        "Не удалось сформировать исполнимый план.",
+                                        ["Specify a target (SSH/K8s) for the change or add a server to the project so I can form executable steps."],
+                                        "Failed to form an executable plan.",
                                     )
                                     return True, msg, None, True
                             if not parsed:
@@ -1885,7 +1867,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             )
                             if not wait_done:
                                 raise RuntimeError(
-                                    "execution_timeout: batch-задачи воркеров не завершились за "
+                                    "execution_timeout: worker batch tasks did not finish within "
                                     f"{min(EXECUTION_TASKS_WAIT_SECONDS, PLAN_BATCH_WAIT_SECONDS)}s"
                                 )
                             run_done = team_get_run(run_id)
@@ -1900,12 +1882,12 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 structured_payload["execution_blockers"] = blockers
                                 structured_payload["paused_for_user"] = True
                                 structured_payload["questions_for_user"] = [
-                                    "Исполнение батча завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."
+                                    "Batch execution finished with errors. Allow a recovery plan (retry tasks/fix environment) or specify manual actions."
                                 ]
                                 text = (
-                                    f"Итеративное исполнение остановлено на батче {iteration}.\n\n### Блокеры исполнения\n"
+                                    f"Iterative execution stopped at batch {iteration}.\n\n### Execution blockers\n"
                                     + "\n".join(blocker_lines)
-                                    + "\n\nПайплайн приостановлен до решения блокеров."
+                                    + "\n\nPipeline paused until blockers are resolved."
                                 )
                                 team_patch_step(
                                     run_id,
@@ -1918,15 +1900,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 accumulated[step_key] = text
                                 _pause_run_with_question(
                                     step_key,
-                                    ["Исполнение батча завершилось с ошибками. Разрешите план восстановления (повторные задачи/исправление окружения) или укажите ручные действия."],
-                                    "Исполнение батча завершилось с ошибками.",
+                                    ["Batch execution finished with errors. Allow a recovery plan (retry tasks/fix environment) or specify manual actions."],
+                                    "Batch execution finished with errors.",
                                 )
                                 return True, text, None, True
                             batch_lines: list[str] = [f"### Batch {iteration}", ""]
                             for t in batch_tasks:
                                 st = str(t.get("status") or "pending")
                                 batch_lines.append(
-                                    f"- {t.get('title', 'Задача')} (`{t.get('action_kind', 'noop')}`) — {st}"
+                                    f"- {t.get('title', 'Task')} (`{t.get('action_kind', 'noop')}`) — {st}"
                                 )
                             batch_reports.append("\n".join(batch_lines))
                             if planner_meta.get("goal_done") is True or planner_meta.get("continue_planning") is False:
@@ -1939,15 +1921,15 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                                 direct_answer=direct_answer,
                                 acc_override=acc_override,
                                 debug_hint=(
-                                    "Сформируй следующий батч задач на основе уже выполненных execution tasks. "
-                                    "Не повторяй завершённые задачи. Верни только JSON по формату execution_plan."
+                                    "Form the next task batch based on already completed execution tasks. "
+                                    "Do not repeat completed tasks. Return only JSON in execution_plan format."
                                 ),
                             )
                         run_done = team_get_run(run_id) or {}
                         exec_md = format_execution_tasks_markdown(run_done)
                         execution_ctx = exec_md
                         text = (
-                            "Итеративный план исполнения сформирован и обработан батчами.\n\n"
+                            "Iterative execution plan was formed and processed in batches.\n\n"
                             + "\n\n".join(batch_reports)
                             + "\n\n---\n"
                             + exec_md
@@ -1973,7 +1955,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         if post_dod:
                             questions = dod_gate_user_questions(post_dod)
                             gate_msg = (
-                                "DoD не выполнен — нельзя зафиксировать успех деплоя/реализации/итога.\n"
+                                "DoD not met — cannot mark deploy/implementation/summary as successful.\n"
                                 + "\n".join(f"- {x}" for x in post_dod)
                             )
                             gate_structured = (
@@ -2002,7 +1984,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             _pause_run_with_question(
                                 step_key,
                                 questions,
-                                "DoD не выполнен.",
+                                "DoD not met.",
                             )
                             return True, gate_msg, None, True
 
@@ -2030,7 +2012,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         step_error_signatures[step_key] = sig_err
                         step_error_repeats[step_key] = 1
                     if step_error_repeats.get(step_key, 1) >= MAX_IDENTICAL_ERROR_REPEATS:
-                        last_err = f"loop_detected: повторяющаяся ошибка шага ({last_err})"
+                        last_err = f"loop_detected: repeating step error ({last_err})"
                         break
                     if attempt < max_retries:
                         team_patch_step(
@@ -2038,8 +2020,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             step_key,
                             status="running",
                             output_md=(
-                                f"Попытка {attempt}/{max_retries} завершилась ошибкой: {last_err}\n"
-                                f"Перезапуск шага (попытка {attempt + 1}/{max_retries})…"
+                                f"Attempt {attempt}/{max_retries} failed: {last_err}\n"
+                                f"Restarting step (attempt {attempt + 1}/{max_retries})…"
                             ),
                             structured={"attempt": attempt, "max_attempts": max_retries},
                         )
@@ -2164,8 +2146,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                             lbl, _task = STEP_META.get(k, (k, ""))
                             peer_outputs.append(f"### {lbl}\n{txt_peer}")
                     debug_hint = (
-                        "Коллеги уже выполнили часть параллельных шагов. "
-                        "Учти их вывод и помоги закрыть оставшиеся пробелы.\n\n"
+                        "Colleagues already completed some parallel steps. "
+                        "Use their output and help close the remaining gaps.\n\n"
                         + "\n\n".join(peer_outputs)
                     )[:12000]
                     acc_for_retry = _accumulated_md()
@@ -2197,7 +2179,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
         ok_intake, intake_text, _err, _halt_intake = _execute_step("intake")
         if not ok_intake:
             return
-        # Ранний flush: intake виден в Langfuse без ожидания конца всего пайплайна.
+        # Early flush: intake is visible in Langfuse without waiting for the full pipeline.
         langfuse_tracing.flush()
         route = enrich_route_with_sa_if_needed(parse_orchestration_route(intake_text or ""), user_message)
         orchestration_route = route
@@ -2218,7 +2200,7 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         run_id,
                         skip_k,
                         status="skipped",
-                        output_md="Пропущено: простой запрос — прямой ответ выбранного специалиста.",
+                        output_md="Skipped: simple request — direct answer from the selected specialist.",
                         finished_at=_utc_iso(),
                     )
                 team_patch_run(run_id, phase="routing_direct_execute" if direct_with_execution else "routing_direct")
@@ -2236,8 +2218,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                     if not ok_pm or halt_pm:
                         return
                 elif direct_with_execution:
-                    # В direct-with-execution сначала обязателен execution_plan,
-                    # чтобы появились реальные execution_tasks и подтверждение выполнения.
+                    # In direct-with-execution, execution_plan is required first,
+                    # so real execution_tasks appear and execution is confirmed.
                     tail_steps = ("execution_plan", "implementation", "deploy", "qa_validation", "pm_summary")
                     for k in tail_steps:
                         ok_step, _txt_step, _err_step, halt_step = _execute_step(k)
@@ -2293,8 +2275,8 @@ def run_orchestration_sync(project_id: UUID, run_id: str, user_message: str) -> 
                         lbl, _task = STEP_META.get(k, (k, ""))
                         peer_outputs.append(f"### {lbl}\n{txt_peer}")
                 debug_hint = (
-                    "Коллеги уже выполнили часть параллельных шагов. "
-                    "Учти их вывод и помоги закрыть оставшиеся пробелы.\n\n"
+                    "Colleagues already completed some parallel steps. "
+                    "Use their output and help close the remaining gaps.\n\n"
                     + "\n\n".join(peer_outputs)
                 )[:12000]
                 acc_for_retry = _accumulated_md()

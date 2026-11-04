@@ -1,4 +1,4 @@
-"""Qdrant: векторы чанков кода; полный текст — в Postgres."""
+"""Qdrant: code chunk vectors; full text in Postgres."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def search_vectors(
     branch: str | None,
     limit: int,
 ) -> list[tuple[float, str, dict[str, Any]]]:
-    """Возвращает (score, chunk_id, payload)."""
+    """Returns (score, chunk_id, payload)."""
     ensure_collection(vector_size=len(query_vector))
     client = get_client()
     must = [FieldCondition(key="project_id", match=MatchValue(value=project_id))]

@@ -14,7 +14,7 @@ def get_fernet() -> Fernet:
         return _fernet_singleton
     key = os.getenv("ADAPTER_FERNET_KEY", "").strip()
     if not key:
-        # Детерминированный dev-ключ (в проде задать ADAPTER_FERNET_KEY)
+        # Deterministic dev key (set ADAPTER_FERNET_KEY in production)
         raw = hashlib.sha256(b"lambot-adapter-dev-fernet-v1").digest()
         key = base64.urlsafe_b64encode(raw).decode()
     _fernet_singleton = Fernet(key.encode("ascii"))

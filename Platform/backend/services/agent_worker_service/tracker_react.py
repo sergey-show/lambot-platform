@@ -1,4 +1,4 @@
-"""ReAct для задач трекера: вызов agent-graph /invoke и проверка DoD по инструментам."""
+"""ReAct for tracker tasks: call agent-graph /invoke and check DoD via tools."""
 
 from __future__ import annotations
 
@@ -29,11 +29,11 @@ PLANNING_TOOL_NAMES = frozenset(
 
 TRACKER_REACT_SUFFIX = (
     "\n\n---\n"
-    "Исполни задачу через function calling платформы (LangGraph ReAct), не текстовую инструкцию.\n"
-    "1) get_development_context — узнай SSH targets и доступные инструменты.\n"
-    "2) Для фактов с сервера/кластера — ssh_run_command / kubernetes_query / ansible_run_template.\n"
-    "3) Для GitLab/wiki/трекера — соответствующие инструменты.\n"
-    "Ответ пользователю — только по результатам инструментов; не предлагай «запустите uname вручную»."
+    "Execute the task via platform function calling (LangGraph ReAct), not a text instruction.\n"
+    "1) get_development_context — learn SSH targets and available tools.\n"
+    "2) For server/cluster facts — ssh_run_command / kubernetes_query / ansible_run_template.\n"
+    "3) For GitLab/wiki/tracker — the matching tools.\n"
+    "Reply to the user only from tool results; do not suggest 'run uname manually'."
 )
 
 
@@ -133,7 +133,7 @@ def build_tracker_result(
     require_tools: bool,
 ) -> tuple[dict[str, Any], bool]:
     """
-    Собирает result_inline для admin и флаг успеха (True = SUCCEEDED).
+    Builds result_inline for admin and a success flag (True = SUCCEEDED).
   """
     tools_ok = int(evidence.get("tool_results_count") or 0) > 0 or bool(
         evidence.get("has_execution_tool_call")
@@ -145,29 +145,29 @@ def build_tracker_result(
         dod_status = "failed"
         dod_done = False
         ok = False
-        work_done = ["ReAct завершился без итогового текста"]
+        work_done = ["ReAct finished without a final text"]
     elif require_tools and not tools_ok:
         dod_status = "tools_missing"
         dod_done = False
         ok = False
         work_done = [
-            "ReAct вернул текст без вызова инструментов платформы",
-            "Для задач трекера нужны проверяемые факты (SSH/GitLab/контекст)",
+            "ReAct returned text without calling platform tools",
+            "Tracker tasks need verifiable facts (SSH/GitLab/context)",
         ]
     elif fake_tools:
         dod_status = "fake_tool_text"
         dod_done = False
         ok = False
         work_done = [
-            "Модель описала инструменты текстом (JSON в ответе), но не выполнила function calling",
+            "The model described tools in text (JSON in the reply) but did not perform function calling",
         ]
     else:
         dod_status = "tool_verified" if tools_ok else "text_only"
         dod_done = has_output and (tools_ok or not require_tools)
         ok = dod_done
         work_done = [
-            "Задача выполнена через agent-graph ReAct (/invoke)",
-            f"Инструменты: {', '.join(evidence.get('tool_names') or []) or '—'}",
+            "Task completed via agent-graph ReAct (/invoke)",
+            f"Tools: {', '.join(evidence.get('tool_names') or []) or '—'}",
         ]
 
     result: dict[str, Any] = {
@@ -182,11 +182,11 @@ def build_tracker_result(
             "status": dod_status,
             "done": dod_done,
             "criteria": [
-                "Есть итоговый ответ по задаче",
-                "Есть хотя бы один вызов инструмента платформы с результатом",
+                "There is a final task reply",
+                "There is at least one platform tool call with a result",
             ],
             "notes": (
-                "DoD по факту tool-calling (не self_reported). "
+                "DoD based on actual tool-calling (not self_reported). "
                 f"execution_id={execution_id}"
             ),
         },

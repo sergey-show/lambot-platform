@@ -1,4 +1,4 @@
-"""HMAC-токен подтверждения опасной SSH-команды (stateless)."""
+"""HMAC token for confirming a dangerous SSH command (stateless)."""
 
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ def verify_confirmation_token(token: str, project_id: str, target_id: str, comma
         exp_s, sig = raw.split("|", 1)
         exp = int(exp_s)
         if int(time.time()) > exp:
-            return False, "срок подтверждения истёк (запросите снова)"
+            return False, "confirmation expired (request again)"
         ch = hashlib.sha256(command.encode("utf-8")).hexdigest()
         msg = f"{exp}|{project_id}|{target_id}|{ch}"
         expect = hmac.new(_secret(), msg.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expect, sig):
-            return False, "неверная подпись токена"
+            return False, "invalid token signature"
         return True, "ok"
     except Exception as e:
-        return False, f"токен: {e}"
+        return False, f"token: {e}"

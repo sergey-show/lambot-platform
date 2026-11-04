@@ -1,8 +1,8 @@
 """
-Agent worker: читает Kafka `platform.agent.tasks`.
-- AGENT_WORKER_USE_LLM=0: dry-run (без LLM).
-- AGENT_WORKER_USE_LLM=1: задачи трекера — ReAct через agent-graph-service (/invoke);
-  прочие задачи — llm-adapter /generate (если не tracker).
+Agent worker: reads Kafka `platform.agent.tasks`.
+- AGENT_WORKER_USE_LLM=0: dry-run (no LLM).
+- AGENT_WORKER_USE_LLM=1: tracker tasks — ReAct via agent-graph-service (/invoke);
+  other tasks — llm-adapter /generate (if not tracker).
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ def _result_error_hint(action: str, result: dict[str, Any]) -> str:
 
 
 async def _invoke_tracker_react(project_id: str, message: str) -> dict[str, Any]:
-    """ReAct с инструментами платформы (тот же путь, что чат / agent-graph invoke)."""
+    """ReAct with platform tools (same path as chat / agent-graph invoke)."""
     url = f"{AGENT_GRAPH_SERVICE_URL.rstrip('/')}/api/v1/projects/{project_id}/invoke"
     timeout = tracker_react_timeout_sec()
     payload = {"message": augment_tracker_prompt(message), "history": []}
@@ -252,7 +252,7 @@ async def _patch_tracker_execution(project_id: str, item_id: str, body: dict[str
 
 
 async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict[str, Any]]:
-    """Задача из трекера: ReAct (/invoke) или legacy llm/generate."""
+    """Tracker task: ReAct (/invoke) or legacy llm/generate."""
     inline = envelope.input_inline or {}
     item_id = str(inline.get("tracker_item_id") or "").strip()
     project_id = str(envelope.project_id)
@@ -286,21 +286,21 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
         "mode": "tracker",
         "dry_run": True,
         "commentary": (
-            "Задача принята и обработана воркером в режиме dry-run: "
-            "фактическое выполнение через LLM отключено (AGENT_WORKER_USE_LLM=0)."
+            "Task accepted and processed by the worker in dry-run mode: "
+            "actual LLM execution is disabled (AGENT_WORKER_USE_LLM=0)."
         ),
         "work_done": [
-            "Карточка поставлена в очередь и обработана воркером",
-            "Статус исполнения обновлён в трекере",
+            "Card was enqueued and processed by the worker",
+            "Execution status updated in the tracker",
         ],
         "dod": {
             "status": "not_evaluated",
             "done": False,
             "criteria": [
-                "Сформирован агентный ответ по задаче",
-                "Получен проверяемый результат выполнения",
+                "Agent reply for the task was formed",
+                "A verifiable execution result was received",
             ],
-            "notes": "Для проверки DoD включите AGENT_WORKER_USE_LLM=1.",
+            "notes": "To check DoD enable AGENT_WORKER_USE_LLM=1.",
         },
         "task_context": {"title": title, "assignee_role": role},
     }
@@ -345,13 +345,13 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
                     "provider": body.get("provider", ""),
                     "commentary": output[:1200],
                     "work_done": [
-                        "Задача обработана через llm-adapter (legacy, без инструментов)",
+                        "Task processed via llm-adapter (legacy, no tools)",
                     ],
                     "dod": {
                         "status": "self_reported",
                         "done": bool(output),
-                        "criteria": ["Текстовый результат сформирован"],
-                        "notes": "TRACKER_USE_REACT=0 — инструменты не вызывались.",
+                        "criteria": ["Text result formed"],
+                        "notes": "TRACKER_USE_REACT=0 — tools were not called.",
                     },
                     "task_context": {"title": title, "assignee_role": role},
                 }
@@ -394,7 +394,7 @@ async def _handle_tracker_task(envelope: TaskEnvelope) -> tuple[TaskStatus, dict
 
 
 async def _handle_ai_team_execution(envelope: TaskEnvelope) -> tuple[TaskStatus, dict[str, Any]]:
-    """ИИ Команда: реальные вызовы adapter/admin (отделено от LLM dry-run)."""
+    """AI Team: real adapter/admin calls (separate from LLM dry-run)."""
     inline = envelope.input_inline or {}
     task_id = str(inline.get("ai_team_task_id") or "").strip()
     if not task_id:
@@ -412,7 +412,7 @@ async def _handle_ai_team_execution(envelope: TaskEnvelope) -> tuple[TaskStatus,
             result = {
                 "ok": True,
                 "mode": "stub",
-                "message": "Зарезервировано: подключите API pipeline или используйте adapter_agent_demo.",
+                "message": "Reserved: connect the pipeline API or use adapter_agent_demo.",
             }
         elif action == "adapter_agent_demo":
             body: dict[str, Any] = {}
@@ -462,7 +462,7 @@ def _prompt_from_task(envelope: TaskEnvelope) -> str:
         base = inline["prompt"]
         role = inline.get("agent_role")
         if isinstance(role, str) and role.strip():
-            return f"[Агент: {role.strip()}]\n{base}"
+            return f"[Agent: {role.strip()}]\n{base}"
         return base
     return (
         f"Step: {envelope.step_name or 'unknown'}\n"

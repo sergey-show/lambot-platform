@@ -1,4 +1,4 @@
-"""Извлечение текста: PDF, изображения (общая LLM), plain text."""
+"""Text extraction: PDF, images (shared LLM), plain text."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def _truncate(text: str) -> str:
     t = (text or "").strip()
     if len(t) <= MAX_EXTRACT_CHARS:
         return t
-    return t[:MAX_EXTRACT_CHARS] + "\n\n[… обрезано …]"
+    return t[:MAX_EXTRACT_CHARS] + "\n\n[… truncated …]"
 
 
 def extract_pdf(data: bytes) -> str:
@@ -46,7 +46,7 @@ def extract_plain(data: bytes, mime: str) -> str:
 
 
 def extract_image_with_llm(data: bytes, mime: str) -> tuple[str, str]:
-    """Распознавание через общую (default) chat-модель."""
+    """Recognition via the shared (default) chat model."""
     b64 = base64.standard_b64encode(data).decode("ascii")
     data_url = f"data:{mime};base64,{b64}"
     payload = {
@@ -57,9 +57,9 @@ def extract_image_with_llm(data: bytes, mime: str) -> tuple[str, str]:
                     {
                         "type": "text",
                         "text": (
-                            "Это страница/скан для корпоративной базы знаний. "
-                            "Верни весь читаемый текст и краткое описание схем/таблиц на изображении. "
-                            "Формат: markdown, только факты, без воды."
+                            "This is a page/scan for the corporate knowledge base. "
+                            "Return all readable text and a short description of diagrams/tables in the image. "
+                            "Format: markdown, facts only, no fluff."
                         ),
                     },
                     {"type": "image_url", "image_url": {"url": data_url}},
@@ -90,7 +90,7 @@ def extract_image_with_llm(data: bytes, mime: str) -> tuple[str, str]:
 
 
 def extract_document(*, data: bytes, mime: str, filename: str) -> tuple[str, str | None]:
-    """Возвращает (text, recognition_model)."""
+    """Returns (text, recognition_model)."""
     mime_l = (mime or "").lower().strip()
     name_l = (filename or "").lower()
     if mime_l == "application/pdf" or name_l.endswith(".pdf"):

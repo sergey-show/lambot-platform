@@ -43,8 +43,8 @@ Frontend setup:
 From `Platform` folder:
 
 1. `docker compose up -d --build`
-2. **Демо-сценарий (UI):** Superadmin → создать пользователя (Portal users) и настроить LLM → `#/login` → User portal: проект → SSH → bundle ansible → после метрик агента или «Подтвердить настройку» открывается LLM-чат (planning).
-3. Run E2E flow (старый dev-token):
+2. **Demo flow (UI):** Superadmin → create a user (Portal users) and configure LLM → `#/login` → User portal: project → SSH → Ansible bundle → after agent metrics or “Confirm setup”, the LLM chat (planning) opens.
+3. Run E2E flow (legacy dev-token):
    - `bash backend/scripts/e2e_flow.sh`
 
 Optional env:

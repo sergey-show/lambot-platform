@@ -1,4 +1,4 @@
-"""Разбор JSON плана исполнения (шаг execution_plan) и запасной набор задач."""
+"""Parse execution plan JSON (execution_plan step) and a fallback task set."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from services.agent_graph_service.team_client import team_get_run
 
 MAX_TASKS_PER_BATCH = int(os.getenv("AGENT_PLAN_MAX_TASKS_PER_ITER", "5"))
 
-# action_kind, которые реально выполняет agent-worker-service.
+# action_kind values that agent-worker-service actually runs.
 WORKER_ACTION_KINDS = frozenset(
     {
         "ssh_run_command",
@@ -24,7 +24,7 @@ WORKER_ACTION_KINDS = frozenset(
     }
 )
 
-# Только LangGraph tools на шагах *_plan — воркеры не умеют.
+# Only LangGraph tools on *_plan steps — workers cannot run them.
 LANGGRAPH_ONLY_ACTION_KINDS = frozenset(
     {
         "gitlab_create_repository",
@@ -66,9 +66,7 @@ def normalize_worker_execution_tasks(
     tasks: list[dict[str, Any]],
     dev_context_summary: str = "",
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """
-    Отбрасывает задачи, которые воркер не может выполнить (GitLang tools, k8s без кластера, фейковые ansible).
-    """
+    """Drops tasks the worker cannot run (GitLab tools, k8s without a cluster, fake ansible)."""
     has_ssh, has_k8s = _dev_context_flags(dev_context_summary)
     notes: list[str] = []
     out: list[dict[str, Any]] = []
@@ -76,34 +74,34 @@ def normalize_worker_execution_tasks(
         if not isinstance(t, dict):
             continue
         action = str(t.get("action_kind") or "noop").strip().lower()
-        title = str(t.get("title") or "Задача")[:80]
+        title = str(t.get("title") or "Task")[:80]
         if action in LANGGRAPH_ONLY_ACTION_KINDS:
-            notes.append(f"пропущено `{action}` ({title}): только инструменты LangGraph, не воркер")
+            notes.append(f"skipped `{action}` ({title}): LangGraph tools only, not the worker")
             continue
         if action not in WORKER_ACTION_KINDS:
-            notes.append(f"пропущено неизвестное `{action}` ({title})")
+            notes.append(f"skipped unknown `{action}` ({title})")
             continue
         if action == "kubernetes_query" and not has_k8s:
-            notes.append(f"пропущено kubernetes_query ({title}): в проекте нет Kubernetes")
+            notes.append(f"skipped kubernetes_query ({title}): no Kubernetes in the project")
             continue
         if action == "ansible_run_template":
             payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
             tid = str(payload.get("template_id") or "").strip()
             if tid and _FAKE_ANSIBLE_TEMPLATE.match(tid):
-                notes.append(f"пропущено ansible_run_template ({title}): выдуманный template_id={tid!r}")
+                notes.append(f"skipped ansible_run_template ({title}): invented template_id={tid!r}")
                 continue
         if action == "ssh_run_command" and not has_ssh:
-            notes.append(f"пропущено ssh_run_command ({title}): нет SSH target")
+            notes.append(f"skipped ssh_run_command ({title}): no SSH target")
             continue
         out.append(t)
     if not out and has_ssh:
-        notes.append("батч пуст после фильтрации — подставлен SSH smoke из контекста")
+        notes.append("batch empty after filtering — inserted SSH smoke from context")
         out = default_execution_tasks_if_empty(dev_context_summary)
     return out, notes
 
 
 def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
-    """Пытается достать первый JSON-объект даже при префиксе/суффиксе текста."""
+    """Tries to extract the first JSON object even with text prefix/suffix."""
     text = (raw or "").strip()
     if not text:
         return None
@@ -122,7 +120,7 @@ def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
 
 
 def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
-    """Извлекает список задач из ответа LLM (JSON в тексте или в fenced block)."""
+    """Extracts a task list from the LLM reply (JSON in text or a fenced block)."""
     data = _extract_first_json_object(text)
     if not isinstance(data, dict):
         return []
@@ -133,7 +131,7 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
     for t in tasks:
         if not isinstance(t, dict):
             continue
-        title = str(t.get("title") or "Задача")[:512]
+        title = str(t.get("title") or "Task")[:512]
         action = str(t.get("action_kind") or t.get("action") or "noop")[:64].strip().lower()
         alias = {
             "ssh_exec": "ssh_run_command",
@@ -161,7 +159,7 @@ def parse_execution_plan_json(text: str) -> list[dict[str, Any]]:
 
 
 def parse_execution_plan_payload(text: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Возвращает (tasks, meta) для batch-планировщика."""
+    """Returns (tasks, meta) for the batch planner."""
     data = _extract_first_json_object(text)
     if not isinstance(data, dict):
         return [], {"continue_planning": True, "done_reason": "invalid_json"}
@@ -171,7 +169,7 @@ def parse_execution_plan_payload(text: str) -> tuple[list[dict[str, Any]], dict[
         "goal_done": bool(data.get("goal_done", False)),
         "done_reason": str(data.get("done_reason") or "").strip()[:1000],
     }
-    # Если нет задач и не указан continue_planning, считаем это завершением.
+    # If there are no tasks and continue_planning is unset, treat as completion.
     if not tasks and "continue_planning" not in data:
         meta["continue_planning"] = False
         meta["goal_done"] = True
@@ -179,7 +177,7 @@ def parse_execution_plan_payload(text: str) -> tuple[list[dict[str, Any]], dict[
 
 
 def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str, Any]]:
-    """Если LLM не вернул JSON — стараемся дать исполняемую задачу по доступным tool-таргетам."""
+    """If the LLM did not return JSON — try to provide an executable task from available tool targets."""
     ssh_target_id = ""
     k8s_target_id = ""
     try:
@@ -202,7 +200,7 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
     if ssh_target_id:
         return [
             {
-                "title": "SSH: проверка сервера и подготовка деплоя",
+                "title": "SSH: server check and deploy prep",
                 "action_kind": "ssh_run_command",
                 "payload": {
                     "target_id": ssh_target_id,
@@ -211,24 +209,24 @@ def default_execution_tasks_if_empty(dev_context_summary: str) -> list[dict[str,
                         "if command -v docker >/dev/null 2>&1; then docker --version; else echo docker_not_found; fi",
                     ],
                 },
-                "plan_summary": "Автовыбор: найден SSH target в контексте, запускаем реальные команды на сервере.",
+                "plan_summary": "Auto-select: found SSH target in context; running real commands on the server.",
             }
         ]
     if k8s_target_id:
         return [
             {
-                "title": "Kubernetes: состояние кластера",
+                "title": "Kubernetes: cluster state",
                 "action_kind": "kubernetes_query",
                 "payload": {"target_id": k8s_target_id, "operation": "nodes", "wide": True},
-                "plan_summary": "Автовыбор: найден Kubernetes target в контексте.",
+                "plan_summary": "Auto-select: found Kubernetes target in context.",
             }
         ]
     return [
         {
-            "title": "Ожидание: нет исполнимых target в контексте",
+            "title": "Waiting: no executable target in context",
             "action_kind": "noop",
             "payload": {},
-            "plan_summary": "Нет SSH/Kubernetes target для автозапуска",
+            "plan_summary": "No SSH/Kubernetes target for auto-start",
         }
     ]
 
@@ -238,7 +236,7 @@ def wait_for_ai_team_execution_tasks(
     timeout_sec: float = 900.0,
     task_ids: list[str] | None = None,
 ) -> bool:
-    """Блокирует оркестратор, пока воркеры не завершат все задачи; False при таймауте."""
+    """Blocks the orchestrator until workers finish all tasks; False on timeout."""
     t0 = time.time()
     while time.time() - t0 < timeout_sec:
         r = team_get_run(run_id)
@@ -259,10 +257,10 @@ def wait_for_ai_team_execution_tasks(
 
 
 def format_execution_tasks_markdown(run: dict) -> str:
-    lines: list[str] = ["### Результаты исполнения (воркеры)", ""]
+    lines: list[str] = ["### Execution results (workers)", ""]
     tasks = run.get("execution_tasks") or []
     if not tasks:
-        lines.append("_Задач исполнения нет._")
+        lines.append("_No execution tasks._")
         return "\n".join(lines)
     for t in tasks:
         title = t.get("title", "—")
@@ -270,7 +268,7 @@ def format_execution_tasks_markdown(run: dict) -> str:
         st = t.get("status", "—")
         lines.append(f"- **{title}** (`{kind}`) — **{st}**")
         if t.get("result") is not None:
-            lines.append(f"  - результат: `{t.get('result')}`")
+            lines.append(f"- result: `{t.get('result')}`")
         if t.get("error"):
-            lines.append(f"  - ошибка: {t.get('error')}")
+            lines.append(f"- error: {t.get('error')}")
     return "\n".join(lines)

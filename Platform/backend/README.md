@@ -11,12 +11,12 @@ Python microservice scaffold (DDD-oriented) for MVP.
 - `services/llm_adapter_service` - OpenAI-compatible abstraction.
 - `services/admin_service` - superadmin endpoints.
 - `services/api_gateway` - single entrypoint, CORS and auth middleware.
-- `services/ansible_orchestrator_service` - каталог Ansible «роев» (шаблоны), рендер playbook/inventory.
-- `services/adapter_service` - целевой сервер пользователя (SSH), токен агента, приём метрик (`/api/v1/agent/ingest`).
-- `services/agent_bootstrap_service` - Kafka: при `project.created` автоматически вызывает planning (IDEA → PLAN_READY), чтобы цепочка платформы стартовала.
-- `services/agent_worker_service` - очередь `platform.agent.tasks`, опционально LLM.
-- `services/sandbox_service` - выполнение ограниченного Python-кода для агентов (таймаут, временный каталог).
-- `services/agent_graph_service` - **LangGraph** ReAct-агент с **tool calling**: инструменты ходят в adapter/project-service/sandbox; новые tools добавляются в `platform_tools.py`.
+- `services/ansible_orchestrator_service` - Ansible “swarm” catalog (templates), playbook/inventory rendering.
+- `services/adapter_service` - user target host (SSH), agent token, metrics ingest (`/api/v1/agent/ingest`).
+- `services/agent_bootstrap_service` - Kafka: on `project.created` auto-triggers planning (IDEA → PLAN_READY) so the platform chain starts.
+- `services/agent_worker_service` - queue `platform.agent.tasks`, optional LLM.
+- `services/sandbox_service` - runs constrained Python for agents (timeout, temp directory).
+- `services/agent_graph_service` - **LangGraph** ReAct agent with **tool calling**: tools call adapter/project-service/sandbox; add new tools in `platform_tools.py`.
 
 ## Shared modules
 

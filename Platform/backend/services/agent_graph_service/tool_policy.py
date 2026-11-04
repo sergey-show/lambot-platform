@@ -1,4 +1,4 @@
-"""Загрузка конфигурации инструментов из admin-service (вкл/выкл + HTTP tools)."""
+"""Load tool configuration from admin-service (on/off + HTTP tools)."""
 
 from __future__ import annotations
 

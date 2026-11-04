@@ -1,4 +1,4 @@
-"""Конфигурация ChatOpenAI (OpenAI-compatible), согласованная с llm-adapter / admin."""
+"""ChatOpenAI config (OpenAI-compatible), aligned with llm-adapter / admin."""
 
 from __future__ import annotations
 
@@ -34,12 +34,12 @@ def build_chat_model(
     base_url_override: str | None = None,
 ) -> ChatOpenAI:
     """
-    purpose: default — общая модель; coding — модель для кода (как в llm-adapter).
-    timeout_sec: переопределение HTTP-таймаута для коротких вызовов (классификаторы и т.п.).
-    model_override: явное имя модели (например лёгкая для классификатора intent).
-    base_url_override: другой OpenAI-compatible endpoint (отдельный vLLM под нагрузкой).
-    Если задан AGENT_GRAPH_OPENAI_BASE_URL (и нет base_url_override) — после admin подставляется
-    прокси (например llm-adapter /v1) для логирования каждого chat/completions в Langfuse.
+    purpose: default — shared model; coding — coding model (as in llm-adapter).
+    timeout_sec: override HTTP timeout for short calls (classifiers, etc.).
+    model_override: explicit model name (e.g. a light model for intent classification).
+    base_url_override: another OpenAI-compatible endpoint (separate vLLM under load).
+    If AGENT_GRAPH_OPENAI_BASE_URL is set (and no base_url_override) — after admin, a proxy
+    is used (e.g. llm-adapter /v1) so every chat/completions call is logged in Langfuse.
     """
     base_url = (base_url_override or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip()
     proxy_base = (os.getenv("AGENT_GRAPH_OPENAI_BASE_URL") or "").strip()

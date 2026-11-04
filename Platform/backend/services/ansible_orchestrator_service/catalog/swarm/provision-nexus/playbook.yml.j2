@@ -13,7 +13,7 @@
     lambot_project_slug: "{{ lambot_project_slug }}"
     lambot_service_password: "{{ lambot_service_password }}"
   tasks:
-    # Docker и Compose: шаблон prepare-docker-host (запускается adapter до этого плейбука).
+    # Docker and Compose: prepare-docker-host template (adapter runs it before this playbook).
 
     - name: Infra directory for Nexus
       ansible.builtin.file:

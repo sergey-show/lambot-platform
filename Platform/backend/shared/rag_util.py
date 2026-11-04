@@ -1,4 +1,4 @@
-"""Общие функции RAG: токенизация, cosine, embed и LLM-rerank через llm-adapter."""
+"""Shared RAG helpers: tokenization, cosine, embed and LLM-rerank via llm-adapter."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def embed_many(texts: list[str]) -> tuple[list[list[float]] | None, str | None, 
 
 def rerank_llm(query: str, documents: list[tuple[str, str]]) -> tuple[dict[str, float], str | None]:
     """
-    LLM-rerank через llm-adapter /api/v1/llm/rerank.
+    LLM-rerank via llm-adapter /api/v1/llm/rerank.
     documents: [(id, text), ...]
     """
     if not query.strip() or not documents:

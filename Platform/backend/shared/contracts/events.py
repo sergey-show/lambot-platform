@@ -43,6 +43,6 @@ class EventTypes:
     GITLAB_PROVISION_FAILED = "gitlab.provision.failed"
     CODE_INDEX_REQUESTED = "code.index.requested"
     CODE_INDEX_COMPLETED = "code.index.completed"
-    # AI agent worker (optional; публикуются оркестратором агентов при появлении)
+    # AI agent worker (optional; published by the agent orchestrator when available)
     AGENT_TASK_QUEUED = "agent.task.queued"
     AGENT_TASK_FINISHED = "agent.task.finished"

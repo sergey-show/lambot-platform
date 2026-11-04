@@ -1,6 +1,6 @@
 /**
- * Доступ к API gateway (инфраструктурный слой).
- * В dev Vite проксирует /api; в prod — same-origin через nginx.
+ * API gateway access (infrastructure layer).
+ * In dev Vite proxies /api; in prod — same-origin via nginx.
  */
 export function resolveGatewayBase(): string {
   if (import.meta.env.DEV) {

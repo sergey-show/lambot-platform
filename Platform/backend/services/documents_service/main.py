@@ -37,15 +37,6 @@ DOC_TYPES = frozenset(
 
 STOPWORDS = frozenset(
     {
-        "и",
-        "в",
-        "на",
-        "по",
-        "с",
-        "для",
-        "что",
-        "это",
-        "как",
         "the",
         "a",
         "an",
@@ -54,6 +45,18 @@ STOPWORDS = frozenset(
         "in",
         "for",
         "is",
+        "and",
+        "or",
+        "on",
+        "with",
+        "by",
+        "as",
+        "at",
+        "from",
+        "that",
+        "this",
+        "it",
+        "be",
     }
 )
 
@@ -128,7 +131,7 @@ def _doc_type(raw: str | None) -> str:
 
 
 def _slugify(raw: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9а-яА-Я_-]+", "-", (raw or "").strip().lower())
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "-", (raw or "").strip().lower())
     s = re.sub(r"-{2,}", "-", s).strip("-")
     return (s or "doc")[:150]
 
@@ -146,7 +149,7 @@ def _normalize_tags(tags: list[str] | None) -> list[str]:
 
 
 def _tokenize(text: str) -> set[str]:
-    words = re.findall(r"[a-zA-Zа-яА-Я0-9_]{2,}", (text or "").lower())
+    words = re.findall(r"[a-zA-Z0-9_]{2,}", (text or "").lower())
     return {w for w in words if w not in STOPWORDS}
 
 
@@ -710,8 +713,8 @@ def docs_context(project_id: UUID, body: ContextBody, db: Session = Depends(get_
     )
     items = data.get("items") or []
     if not items:
-        return {"summary_md": "(документация проекта пока пуста)", "items": []}
-    lines = ["### Релевантная документация проекта"]
+        return {"summary_md": "(project documentation is empty so far)", "items": []}
+    lines = ["### Relevant project documentation"]
     for it in items:
         lines.append(
             f"- [{it.get('doc_type')}] {it.get('title')} (slug: {it.get('slug')}, v{it.get('version')}, score={it.get('score')})\n"

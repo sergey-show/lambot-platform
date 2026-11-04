@@ -1,4 +1,4 @@
-"""Эвристики намерения пользователя (маршрутизация и проверка ответа LLM)."""
+"""Non-routing helpers: tool-call detection, approval phrases, output quality checks."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import re
 
 _BUILD_SITE = re.compile(
-    r"(сделай|создай|построй|разработай|собери|нужен|нужно|хочу)\s+.{0,40}?(сайт|веб|dashboard|дашборд|лендинг|страниц)",
+    r"(build|create|make|develop|need|want)\s+.{0,40}?(website|web\s*app|site|dashboard|landing\s*page)",
     re.I,
 )
 _FAKE_TOOL_JSON = re.compile(
@@ -14,43 +14,40 @@ _FAKE_TOOL_JSON = re.compile(
     re.I | re.DOTALL,
 )
 _OPS_FACTS = re.compile(
-    r"(uptime|load\s*average|ресурс|памят|ram\b|cpu\b|диск|disk\b|df\b|free\s+-m|"
-    r"хватает\s+ли|сколько\s+места|свободн\w*\s+мест|мест[оа]\s+на\s+сервер|"
-    r"версия\s+linux|статус\s+сервис|нагрузк|"
-    r"свободн\w*\s+памят|использован\w*\s+памят|место\s+на\s+диск)",
+    r"(uptime|load\s*average|\bram\b|\bcpu\b|disk\b|\bdf\b|free\s+-m|"
+    r"how\s+much\s+(disk|space|memory)|disk\s+space|free\s+space|"
+    r"linux\s+version|service\s+status|memory\s+usage)",
     re.I,
 )
 
-
 _FORMAL_SPEC = re.compile(
-    r"(тз\b|техническ\w*\s+задани|спецификац\w*\s+требован|формальн\w*\s+требован|"
-    r"as[- ]?is|to[- ]?be|глоссарий|traceability|трассировк\w*\s+требован|"
-    r"матриц\w*\s+требован|user\s*stor|use\s*case|bpmn|диаграмм\w*\s+процесс|"
-    r"интеграц\w+\s+с\s+(crm|erp|1c|битрикс)|согласован\w*\s+тз)",
+    r"(formal\s+spec|requirements?\s+spec|specification|glossary|traceability|"
+    r"as[- ]?is|to[- ]?be|user\s*stor(?:y|ies)|use\s*case|bpmn|"
+    r"requirements?\s+matrix|approved\s+spec)",
     re.I,
 )
 
 
 def formal_spec_intent(message: str) -> bool:
-    """Нужен системный аналитик: формальные артефакты, эпики/задачи в трекере."""
+    """True when the user asks for formal SA artifacts / tracker backlog."""
     t = (message or "").strip()
     if not t:
         return False
     if _FORMAL_SPEC.search(t):
         return True
-    if re.search(r"(эпик|бэклог|карточк\w*\s+в\s+трекер|задач\w+\s+для\s+агент)", t, re.I):
+    if re.search(r"(epics?|backlog|tracker\s+cards?|tasks?\s+for\s+agents?)", t, re.I):
         return True
     return False
 
 
 def site_build_intent(message: str) -> bool:
-    """Запрос на создание/сборку сайта или дашборда — не «консультация одной ролью»."""
+    """Request to build a site or dashboard — not a single-role consultation."""
     t = (message or "").strip()
     if not t:
         return False
     if _BUILD_SITE.search(t):
         return True
-    if re.search(r"(сайт|dashboard|дашборд).{0,60}(сделай|создай|построй)", t, re.I):
+    if re.search(r"(website|dashboard|landing).{0,60}(build|create|make)", t, re.I):
         return True
     return False
 
@@ -65,33 +62,35 @@ def _strip_markdown_json_fence(text: str) -> str:
 
 
 def user_requests_tool_execution_approval(message: str) -> bool:
-    """Пользователь явно просит выполнять действия, а не только планировать."""
+    """User explicitly asks to execute actions, not only plan."""
     t = (message or "").lower()
     if not t:
         return False
     markers = (
-        "выполняй",
-        "выполнить",
-        "реальн",
-        "действ",
-        "продолж",
-        "делай",
-        "запускай",
-        "создай репо",
-        "не спрашивай",
-        "разреш",
-        "подтверж",
-        "да,",
-        "да ",
-        "yes",
+        "execute",
+        "run it",
+        "do it",
+        "proceed",
         "go ahead",
         "continue",
+        "confirm",
+        "approved",
+        "yes,",
+        "yes ",
+        "yep",
+        "ok,",
+        "okay,",
+        "don't ask",
+        "do not ask",
+        "just do",
+        "apply changes",
+        "deploy now",
     )
     return any(m in t for m in markers)
 
 
 def operational_facts_intent(message: str) -> bool:
-    """Запрос фактов с сервера/инфры — нужны реальные tool calls, не текстовый JSON."""
+    """Request for server/infra facts — need real tool calls, not textual JSON."""
     t = (message or "").strip()
     if not t:
         return False
@@ -99,12 +98,11 @@ def operational_facts_intent(message: str) -> bool:
 
 
 def extract_tool_names_from_assistant_content(text: str) -> list[str]:
-    """Имена tools из JSON в content (Ollama OpenAI API без message.tool_calls)."""
+    """Tool names from JSON in content (Ollama OpenAI API without message.tool_calls)."""
     raw = _strip_markdown_json_fence(text or "")
     names: list[str] = []
     if not raw:
         return names
-    # Один объект или массив вызовов
     if raw.startswith("["):
         try:
             arr = json.loads(raw)
@@ -130,7 +128,7 @@ def extract_tool_names_from_assistant_content(text: str) -> list[str]:
 
 
 def looks_like_fake_tool_call_text(text: str) -> bool:
-    """Модель описала tool call JSON в тексте, без native function calling."""
+    """Model described a tool call JSON in text, without native function calling."""
     t = _strip_markdown_json_fence(text or "")
     if not t:
         return False
@@ -147,7 +145,7 @@ _GARBAGE_ARCHITECT = re.compile(
 
 def looks_like_invalid_architect_output(summary_md: str, user_message: str) -> bool:
     """
-    Ответ архитектора не про задачу пользователя (утечка chat-template / meta-English).
+    Architect reply is not about the user task (chat-template / meta-English leak).
     """
     s = (summary_md or "").strip()
     if len(s) < 120:
@@ -156,7 +154,7 @@ def looks_like_invalid_architect_output(summary_md: str, user_message: str) -> b
         return True
     if site_build_intent(user_message):
         domain = re.search(
-            r"(акци|заявк|сайт|catalog|stock|order|frontend|backend|api|postgres|docker|gitlab|fastapi|react)",
+            r"(promo|order|catalog|stock|website|site|frontend|backend|api|postgres|docker|gitlab|fastapi|react)",
             s,
             re.I,
         )

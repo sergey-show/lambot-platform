@@ -2,7 +2,7 @@ id: provision-gitlab
 active: true
 name: Provision GitLab CE (Docker)
 description: >
-  Устанавливает Docker (Debian), поднимает GitLab CE через docker compose на выбранном хосте.
+  Installs Docker (Debian), brings up GitLab CE via docker compose on the selected host.
 tags:
   - gitlab
   - docker

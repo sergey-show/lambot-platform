@@ -180,7 +180,7 @@ services:
     image: clickhouse/clickhouse-server:24.8-alpine
     ports:
       - "8123:8123"
-      # native protocol; 9000 на хосте занят rustfs — снаружи 9009
+      # native protocol; host 9000 is used by rustfs — expose as 9009
       - "9009:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
@@ -311,7 +311,7 @@ services:
       ANSIBLE_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
       ANSIBLE_S3_BUCKET: ${ANSIBLE_S3_BUCKET:-platform-ansible}
       ANSIBLE_S3_SEED_LOCAL: ${ANSIBLE_S3_SEED_LOCAL:-1}
-      # 1 = при старте перезаписать шаблоны в S3 из образа (нужно после обновления плейбуков; иначе в RustFS остаются старые).
+      # 1 = on start, overwrite templates in S3 from the image (needed after playbook updates; otherwise RustFS keeps old ones).
       ANSIBLE_S3_SYNC_LOCAL: ${ANSIBLE_S3_SYNC_LOCAL:-0}
     depends_on:
       rustfs:
@@ -407,7 +407,7 @@ services:
       agent-graph-service:
         condition: service_started
 
-  # ИИ-агенты запуска цепочки: при создании проекта → автоматический planning (IDEA → PLAN_READY).
+  # AI agents for the launch chain: on project create → automatic planning (IDEA → PLAN_READY).
   agent-bootstrap-service:
     build:
       context: ./backend
@@ -431,7 +431,7 @@ services:
       planning-service:
         condition: service_started
 
-  # Песочница выполнения Python для агентов (ограничения см. сервис).
+  # Python execution sandbox for agents (see service for limits).
   sandbox-service:
     build:
       context: ./backend
@@ -442,7 +442,7 @@ services:
     environment:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-internal-sandbox-dev-token}
 
-  # Playwright browser tool для агентов (интеракции с UI/web).
+  # Playwright browser tool for agents (UI/web interactions).
   browser-tool-service:
     build:
       context: ./backend
@@ -475,7 +475,7 @@ services:
       llm-adapter-service:
         condition: service_started
 
-  # LangGraph ReAct + tool calling (контекст проекта, sandbox, …)
+  # LangGraph ReAct + tool calling (project context, sandbox, …)
   agent-graph-service:
     build:
       context: ./backend
@@ -499,22 +499,22 @@ services:
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      # LangChain → llm-adapter /v1/chat/completions → провайдер: каждый LLM-вызов в Langfuse (input/output).
+      # LangChain → llm-adapter /v1/chat/completions → provider: every LLM call in Langfuse (input/output).
       AGENT_GRAPH_OPENAI_BASE_URL: ${AGENT_GRAPH_OPENAI_BASE_URL:-http://llm-adapter-service:8005/v1}
       OPENAI_AGENT_TIMEOUT_SEC: ${OPENAI_AGENT_TIMEOUT_SEC:-1800}
-      AGENT_ORCHESTRATION_INTAKE_HEURISTIC: ${AGENT_ORCHESTRATION_INTAKE_HEURISTIC:-1}
+      # Intake routing is always LLM-based (keyword heuristics removed).
       AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC: ${AGENT_ORCHESTRATION_INTAKE_TIMEOUT_SEC:-90}
-      AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS: ${AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS:-120}
+      AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS: ${AGENT_ORCHESTRATION_INTAKE_MAX_TOKENS:-256}
       AGENT_ORCHESTRATION_INTAKE_MODEL: ${AGENT_ORCHESTRATION_INTAKE_MODEL:-}
-      # Langfuse: LANGFUSE_TRACING_ENABLED=0 выключает SDK; по умолчанию 1.
+      # Langfuse: LANGFUSE_TRACING_ENABLED=0 disables the SDK; default is 1.
       LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-1}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_lambot_local_dev}}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_lambot_local_dev}}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
-      # ReAct LangGraph: шаги графа (вызов инструмента + ответ считаются как шаги). По умолчанию было 25 — часто мало.
+      # ReAct LangGraph: graph steps (tool call + reply count as steps). Default was 25 — often too low.
       LANGGRAPH_RECURSION_LIMIT: ${LANGGRAPH_RECURSION_LIMIT:-100}
-      # Режим «живого» исполнения: JSON pm/architect (live_execution), resume по execution_tasks; отдельного LLM-классификатора после intake нет.
+      # Live execution mode: JSON pm/architect (live_execution), resume via execution_tasks; no separate LLM classifier after intake.
       AGENT_ORCHESTRATION_MAX_SECONDS: ${AGENT_ORCHESTRATION_MAX_SECONDS:-10800}
       AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS: ${AGENT_ORCHESTRATION_EXECUTION_WAIT_SECONDS:-7200}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -595,7 +595,7 @@ services:
       KAFKA_TOPIC_EVENTS: platform.events
       ADAPTER_SERVICE_URL: http://adapter-service:8008
       INTERNAL_LLM_SETTINGS_TOKEN: ${INTERNAL_LLM_SETTINGS_TOKEN:-internal-dev-token}
-      # С --profile gitlab: GITLAB_URL=http://gitlab-ce  GITLAB_PROVISION_MOCK=0  GITLAB_ADMIN_TOKEN=glpat-...
+      # With --profile gitlab: GITLAB_URL=http://gitlab-ce  GITLAB_PROVISION_MOCK=0  GITLAB_ADMIN_TOKEN=glpat-...
       GITLAB_URL: ${GITLAB_URL:-http://gitlab-ce}
       GITLAB_ADMIN_TOKEN: ${GITLAB_ADMIN_TOKEN:-glpat-ug5FpETLbrK-AbCJbxHx}
       GITLAB_ROOT_GROUP_PATH: ${GITLAB_ROOT_GROUP_PATH:-lambot}
@@ -774,9 +774,9 @@ services:
       api-gateway:
         condition: service_started
 
-  # GitLab CE (опционально, тяжёлый ~4–8 GB RAM): docker compose --profile gitlab up -d
-  # UI с хоста: http://localhost:${GITLAB_CE_BIND:-8929} — первый вход: docker exec platform-gitlab-ce grep Password /etc/gitlab/initial_root_password
-  # Создайте root PAT (api) и группу lambot, затем в .env: GITLAB_ADMIN_TOKEN=..., GITLAB_PROVISION_MOCK=0
+  # GitLab CE (optional, heavy ~4–8 GB RAM): docker compose --profile gitlab up -d
+  # UI from host: http://localhost:${GITLAB_CE_BIND:-8929} — first login: docker exec platform-gitlab-ce grep Password /etc/gitlab/initial_root_password
+  # Create a root PAT (api) and the lambot group, then in .env: GITLAB_ADMIN_TOKEN=..., GITLAB_PROVISION_MOCK=0
   gitlab-ce:
     profiles: ["gitlab"]
     image: gitlab/gitlab-ce:17.6.4-ce.0
@@ -805,9 +805,9 @@ services:
       retries: 40
       start_period: 300s
 
-  # Langfuse LLM observability (опционально): docker compose --profile langfuse up -d
-  # Внутри сети compose: Postgres/Redis/ClickHouse/Minio/worker без проброса портов на хост.
-  # Снаружи только UI: http://localhost:3100 (см. LANGFUSE_NEXTAUTH_URL).
+  # Langfuse LLM observability (optional): docker compose --profile langfuse up -d
+  # Inside the compose network: Postgres/Redis/ClickHouse/Minio/worker without host port publishing.
+  # Outside, UI only: http://localhost:3100 (see LANGFUSE_NEXTAUTH_URL).
   langfuse-postgres:
     image: postgres:16
     restart: unless-stopped

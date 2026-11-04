@@ -1,4 +1,4 @@
-"""Прямое выполнение GitLab-операций (fallback, если LLM не вызвал tools)."""
+"""Direct GitLab operations (fallback if the LLM did not call tools)."""
 
 from __future__ import annotations
 
@@ -26,31 +26,30 @@ def parse_repo_slug_from_message(message: str) -> str | None:
     if not msg:
         return None
     patterns = [
-        r"(?:репозитор(?:ий|ия)|repo(?:sitory)?)\s+[`'\"]?([a-z0-9][a-z0-9._-]{1,62})",
-        r"(?:для\s+)?(?:проекта|project)\s+[`'\"]?([a-z0-9][a-z0-9._-]{1,62})",
+        r"(?:repo(?:sitory)?)\s+[`'\"]?([a-z0-9][a-z0-9._-]{1,62})",
+        r"(?:for\s+)?(?:project)\s+[`'\"]?([a-z0-9][a-z0-9._-]{1,62})",
         r"gitlab[^\n]{0,80}?[`'\"]?([a-z0-9][a-z0-9._-]{1,62})[`'\"]?",
     ]
     for pat in patterns:
         m = re.search(pat, msg, re.IGNORECASE)
         if m:
             slug = m.group(1).strip().lower()
-            if slug not in ("gitlab", "проекта", "project", "demo", "репозиторий", "repository"):
+            if slug not in ("gitlab", "project", "demo", "repository", "repo"):
                 return slug
     return None
 
 
 def gitlab_repo_create_intent(message: str) -> bool:
     m = (message or "").lower()
-    if "gitlab" not in m and "гитлаб" not in m:
+    if "gitlab" not in m:
         return False
     markers = (
-        "создать репозитор",
-        "создай репозитор",
         "create repo",
         "create repository",
-        "новый репозитор",
-        "репозиторий в gitlab",
+        "new repository",
+        "new repo",
         "repo in gitlab",
+        "repository in gitlab",
     )
     return any(x in m for x in markers)
 
@@ -88,11 +87,11 @@ def execute_gitlab_create_repository(project_id: UUID | str, repo_slug: str, *, 
                 timeout=180.0,
             )
             prov2 = post.json() if post.content else {"http": post.status_code}
-            lines.append(_format_result("GitLab provision (создание группы)", prov2))
+            lines.append(_format_result("GitLab provision (group create)", prov2))
             if post.status_code not in (200, 201) or not prov2.get("gitlab_group_created"):
-                return False, "\n\n".join(lines) + "\n\nНе удалось подготовить GitLab-группу проекта."
+                return False, "\n\n".join(lines) + "\n\nFailed to prepare the project GitLab group."
     except Exception as exc:
-        return False, f"Ошибка проверки GitLab-группы: {exc}"
+        return False, f"GitLab group check error: {exc}"
 
     try:
         cr = httpx.post(
@@ -102,16 +101,16 @@ def execute_gitlab_create_repository(project_id: UUID | str, repo_slug: str, *, 
             timeout=180.0,
         )
         body = cr.json() if cr.content else {"http": cr.status_code, "text": cr.text[:2000]}
-        lines.append(_format_result("Создание репозитория", body))
+        lines.append(_format_result("Creating repository", body))
         if cr.status_code not in (200, 201):
             return False, "\n\n".join(lines)
         pwn = body.get("path_with_namespace") or body.get("gitlab", {}).get("path_with_namespace")
         web = body.get("gitlab", {}).get("web_url") if isinstance(body.get("gitlab"), dict) else body.get("web_url")
-        summary = f"Репозиторий **{slug}** создан."
+        summary = f"Repository **{slug}** created."
         if pwn:
-            summary += f" Путь: `{pwn}`."
+            summary += f" Path: `{pwn}`."
         if web:
             summary += f" URL: {web}."
         return True, summary + "\n\n" + "\n\n".join(lines)
     except Exception as exc:
-        return False, "\n\n".join(lines) + f"\n\nОшибка создания репозитория: {exc}"
+        return False, "\n\n".join(lines) + f"\n\nRepository create error: {exc}"

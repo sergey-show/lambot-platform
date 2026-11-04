@@ -1,5 +1,5 @@
-<!-- Разрешить пользователю default доступ по HTTP из других контейнеров (не только localhost).
-     Базовый образ 24.x ограничивает default только 127.0.0.1 — adapter-service не может подключиться. -->
+<!-- Allow the default user HTTP access from other containers (not only localhost).
+     Base image 24.x restricts default to 127.0.0.1 — adapter-service cannot connect otherwise. -->
 <clickhouse>
   <users>
     <default>

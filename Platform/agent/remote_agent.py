@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Агент на стороне пользовательского сервера: шлёт метрики в platform ingest.
-Переменные: LAMBOT_INGEST_URL, LAMBOT_AGENT_TOKEN (задаёт Ansible/playbook или systemd).
+Agent on the user server: sends metrics to platform ingest.
+Env vars: LAMBOT_INGEST_URL, LAMBOT_AGENT_TOKEN (set by Ansible/playbook or systemd).
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Qdrant: векторы чанков баз знаний; полный текст — в Postgres."""
+"""Qdrant: knowledge-base chunk vectors; full text in Postgres."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def _collection_vector_size(client: QdrantClient) -> int | None:
 
 
 def ensure_collection(*, vector_size: int | None = None) -> None:
-    """Создать коллекцию или проверить размерность векторов."""
+    """Create a collection or verify vector dimensionality."""
     size = vector_size or VECTOR_SIZE
     if size <= 0:
         raise ValueError("vector_size must be positive")

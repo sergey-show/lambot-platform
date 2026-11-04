@@ -44,17 +44,17 @@ function gitlabProjectCell(row: ProjectRow): string {
   if (row.deleted_at) return "—";
   if (row.gitlab_group_created) {
     const path = row.gitlab_group_path ? ` title="${escapeHtml(row.gitlab_group_path)}"` : "";
-    return `<span class="lp-badge" style="background:#dcfce7;color:#166534"${path}>✓ группа</span>`;
+    return `<span class="lp-badge" style="background:#dcfce7;color:#166534"${path}>✓ group</span>`;
   }
   const st = row.gitlab_provision_status || "not_started";
   if (st === "in_progress") {
-    return `<span class="lp-badge" style="background:#e0e7ff;color:#3730a3">создаётся…</span>`;
+    return `<span class="lp-badge" style="background:#e0e7ff;color:#3730a3">creating…</span>`;
   }
   if (st === "failed") {
-    return `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">ошибка</span>
-      <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;margin-left:4px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Повторить</button>`;
+    return `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">error</span>
+      <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;margin-left:4px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Retry</button>`;
   }
-  return `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Создать группу</button>`;
+  return `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="gitlab-provision" data-pid="${escapeHtml(row.id)}">Create group</button>`;
 }
 let superadminPhasePollTimer: number | null = null;
 let portalPhasePollTimer: number | null = null;
@@ -85,7 +85,7 @@ function projectAiChatStorageKey(projectId: string): string {
 }
 
 const state = {
-  /** Опционально: только для локальных скриптов; в UI по умолчанию пусто. */
+  /** Optional: only for local scripts; empty by default in the UI. */
   userToken: "",
   superadminToken: "",
 };
@@ -154,7 +154,7 @@ function shell(params: {
   breadcrumb: string;
   title: string;
   children: string;
-  /** full = оператор (нет JWT портала); portal = только user portal + login */
+  /** full = operator (no portal JWT); portal = user portal + login only */
   nav?: "portal" | "full";
 }): string {
   const { active, breadcrumb, title, children } = params;
@@ -248,11 +248,11 @@ function renderDashboard(): void {
         <div class="lp-row">
           <div class="lp-field" style="flex:1">
             <label>Superadmin token</label>
-            <input class="lp-input" id="dashboard-sa-token" type="password" autocomplete="off" placeholder="Вставьте токен (как в compose / .env)" value="${escapeHtml(getSuperadminTokenForUi())}" style="max-width:480px" />
+            <input class="lp-input" id="dashboard-sa-token" type="password" autocomplete="off" placeholder="Paste the token (as in compose / .env)" value="${escapeHtml(getSuperadminTokenForUi())}" style="max-width:480px" />
           </div>
-          <button type="button" class="lp-btn" id="dashboard-sa-apply">Сохранить и обновить</button>
+          <button type="button" class="lp-btn" id="dashboard-sa-apply">Save and refresh</button>
         </div>
-        <p class="lp-muted">Сохраняется в localStorage этого браузера. Для демо используйте тот же токен, что и <code>SUPERADMIN_TOKEN</code> у gateway.</p>
+        <p class="lp-muted">Stored in this browser's localStorage. For demos use the same token as gateway <code>SUPERADMIN_TOKEN</code>.</p>
       </div>
       <section class="lp-hero">
         <div>
@@ -487,7 +487,7 @@ function renderSuperadminLogin(): void {
     const tok = (document.getElementById("superadmin-login-token") as HTMLInputElement).value.trim();
     setErr("");
     if (!tok) {
-      setErr("Введите Superadmin token");
+      setErr("Enter Superadmin token");
       return;
     }
     try {
@@ -502,7 +502,7 @@ function renderSuperadminLogin(): void {
         } catch {
           /* raw text */
         }
-        setErr(detail || `Ошибка ${resp.status}`);
+        setErr(detail || `Error ${resp.status}`);
         return;
       }
     } catch (e) {
@@ -524,74 +524,74 @@ function renderPortal(): void {
       title: "User portal",
       children: `
       <div class="lp-portal-app">
-      <aside class="lp-portal-sidebar" aria-label="Разделы проекта">
-        <div class="lp-portal-side-title">Разделы</div>
+      <aside class="lp-portal-sidebar" aria-label="Project sections">
+        <div class="lp-portal-side-title">Sections</div>
         <nav class="lp-portal-nav">
-          <a href="#/portal/home" data-portal-view="home">Главная</a>
-          <a href="#/portal/team" data-portal-view="team">ИИ Команда</a>
-          <a href="#/portal/docs" data-portal-view="docs">Документация</a>
-          <a href="#/portal/knowledge" data-portal-view="knowledge">Базы знаний</a>
-          <a href="#/portal/tracker" data-portal-view="tracker">Задачи агентов</a>
-          <a href="#/portal/servers" data-portal-view="servers">Серверы</a>
-          <a href="#/portal/k8s-install" data-portal-view="k8s-install">K8s: установка</a>
-          <a href="#/portal/k8s" data-portal-view="k8s">K8s: управление</a>
-          <a href="#/portal/infra" data-portal-view="infra">Инфраструктура</a>
-          <a href="#/portal/service" data-portal-view="service">Служебное</a>
+          <a href="#/portal/home" data-portal-view="home">Home</a>
+          <a href="#/portal/team" data-portal-view="team">AI Team</a>
+          <a href="#/portal/docs" data-portal-view="docs">Documentation</a>
+          <a href="#/portal/knowledge" data-portal-view="knowledge">Knowledge bases</a>
+          <a href="#/portal/tracker" data-portal-view="tracker">Agent tasks</a>
+          <a href="#/portal/servers" data-portal-view="servers">Servers</a>
+          <a href="#/portal/k8s-install" data-portal-view="k8s-install">K8s: install</a>
+          <a href="#/portal/k8s" data-portal-view="k8s">K8s: manage</a>
+          <a href="#/portal/infra" data-portal-view="infra">Infrastructure</a>
+          <a href="#/portal/service" data-portal-view="service">Service</a>
         </nav>
       </aside>
       <div class="lp-portal-outlet" id="lp-portal-outlet">
       <div id="view-home" class="lp-portal-view lp-portal-view--active">
-      <div class="lp-banner"><span>●</span><span><strong>Демо:</strong> войдите через <a href="#/login">Login</a> (JWT). Без входа можно использовать legacy token ниже.</span></div>
+      <div class="lp-banner"><span>●</span><span><strong>Demo:</strong> sign in via <a href="#/login">Login</a> (JWT). Without signing in you can use the legacy token below.</span></div>
       <div class="lp-panel">
         <div class="lp-row">
-          <div class="lp-field"><label>Сессия</label>
+          <div class="lp-field"><label>Session</label>
             <div id="portal-session" class="lp-muted">…</div>
           </div>
-          <button type="button" class="lp-btn lp-btn-ghost" id="portal-logout">Выйти (очистить JWT)</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="portal-logout">Sign out (clear JWT)</button>
         </div>
         <div class="lp-row">
           <div class="lp-field"><label>Legacy bearer (dev)</label>
             <input class="lp-input" id="user-token" value="${state.userToken}" style="max-width:420px;" />
           </div>
           <button type="button" class="lp-btn lp-btn-ghost" id="load-catalog">Catalog</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="portal-refresh-projects">Обновить проекты</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="portal-refresh-projects">Refresh projects</button>
         </div>
       </div>
       <div class="lp-panel">
-        <h2>Проект</h2>
+        <h2>Project</h2>
         <div class="lp-row">
-          <div class="lp-field"><label>Выбрать проект</label>
-            <select class="lp-select" id="project-select" style="min-width:280px;"><option value="">— создайте новый —</option></select>
+          <div class="lp-field"><label>Select project</label>
+            <select class="lp-select" id="project-select" style="min-width:280px;"><option value="">— create new —</option></select>
           </div>
         </div>
         <div class="lp-row">
-          <div class="lp-field"><label>Имя (новый)</label><input class="lp-input" id="project-name" value="Мой проект" /></div>
-          <div class="lp-field"><label>Tenant (только legacy token)</label><input class="lp-input" id="tenant-id" value="11111111-1111-1111-1111-111111111111" style="min-width:280px;" /></div>
+          <div class="lp-field"><label>Name (new)</label><input class="lp-input" id="project-name" value="My project" /></div>
+          <div class="lp-field"><label>Tenant (legacy token only)</label><input class="lp-input" id="tenant-id" value="11111111-1111-1111-1111-111111111111" style="min-width:280px;" /></div>
         </div>
-        <div class="lp-field"><label>Описание</label><textarea class="lp-textarea" id="project-desc" rows="2">Демо-проект</textarea></div>
+        <div class="lp-field"><label>Description</label><textarea class="lp-textarea" id="project-desc" rows="2">Demo project</textarea></div>
         <div class="lp-row">
-          <button type="button" class="lp-btn" id="create-project">Создать проект</button>
+          <button type="button" class="lp-btn" id="create-project">Create project</button>
         </div>
         <div class="lp-row" style="margin-top:12px;align-items:center;gap:12px;">
-          <div><strong>Статус:</strong> <span id="project-status-label" class="lp-badge">—</span></div>
-          <button type="button" class="lp-btn lp-btn-ghost" id="refresh-status">Обновить статус</button>
+          <div><strong>Status:</strong> <span id="project-status-label" class="lp-badge">—</span></div>
+          <button type="button" class="lp-btn lp-btn-ghost" id="refresh-status">Refresh status</button>
         </div>
       </div>
       <div class="lp-panel lp-project-ai-chat">
-        <h2>ИИ-чат по проекту</h2>
-        <p class="lp-muted">Один чат с мультиагентной системой платформы: можно описать стартап или продукт — агент запустит планирование (MVP), подскажет по инфраструктуре, репозиториям и статусам; при необходимости подтянет логи и метрики. Нужен LLM в Superadmin / OPENAI_API_KEY.</p>
+        <h2>Project AI chat</h2>
+        <p class="lp-muted">One chat with the platform multi-agent system: describe a startup or product — the agent will start planning (MVP), advise on infrastructure, repos, and status; and pull logs/metrics when needed. Requires LLM in Superadmin / OPENAI_API_KEY.</p>
         <p class="lp-muted" id="project-ai-chat-gate" style="font-size:13px;margin-bottom:8px;"></p>
         <div id="project-ai-chat-thread" class="lp-ai-chat-thread" role="log" aria-live="polite"></div>
         <div class="lp-row" style="flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:12px;">
           <div class="lp-field" style="flex:1;min-width:240px;">
-            <label for="project-ai-chat-input">Сообщение</label>
-            <textarea class="lp-textarea" id="project-ai-chat-input" rows="3" placeholder="Например: хочу сервис доставки еды для малого города — с чего начать? Или: какой статус проекта и что в последних логах?" style="width:100%;max-width:100%;min-height:88px;"></textarea>
+            <label for="project-ai-chat-input">Message</label>
+            <textarea class="lp-textarea" id="project-ai-chat-input" rows="3" placeholder="e.g. I want a food delivery service for a small town — where to start? Or: what is the project status and latest logs?" style="width:100%;max-width:100%;min-height:88px;"></textarea>
           </div>
           <div class="lp-row" style="gap:8px;flex-wrap:wrap;">
-            <button type="button" class="lp-btn" id="project-ai-chat-send">Отправить</button>
-            <button type="button" class="lp-btn lp-btn-ghost" id="project-ai-chat-clear">Очистить чат</button>
+            <button type="button" class="lp-btn" id="project-ai-chat-send">Send</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="project-ai-chat-clear">Clear chat</button>
           </div>
-          <p class="lp-muted" style="font-size:12px;margin-top:6px;">Оркестрация запускается автоматически из этого чата в рамках текущего run.</p>
+          <p class="lp-muted" style="font-size:12px;margin-top:6px;">Orchestration starts automatically from this chat within the current run.</p>
         </div>
         <p class="lp-muted" id="project-ai-chat-status" style="font-size:12px;margin-top:8px;"></p>
       </div>
@@ -599,21 +599,21 @@ function renderPortal(): void {
       <div id="view-team" class="lp-portal-view">
       <div class="lp-panel">
         <div class="lp-field">
-          <label for="orchestration-user-message">Запрос для оркестрации</label>
-          <textarea class="lp-textarea" id="orchestration-user-message" rows="3" placeholder="Сформулируйте задачу (можно скопировать из чата по проекту)"></textarea>
+          <label for="orchestration-user-message">Orchestration request</label>
+          <textarea class="lp-textarea" id="orchestration-user-message" rows="3" placeholder="Describe the task (you can copy from the project chat)"></textarea>
         </div>
         <div class="lp-row" style="margin-bottom:12px;">
-          <button type="button" class="lp-btn" id="project-orchestrate-btn" title="PM → Архитектор → DevOps → Backend → Frontend">Запустить оркестрацию</button>
+          <button type="button" class="lp-btn" id="project-orchestrate-btn" title="PM → Architect → DevOps → Backend → Frontend">Start orchestration</button>
         </div>
       </div>
       <div class="lp-panel" id="orchestration-panel">
-        <h2>ИИ Команда</h2>
+        <h2>AI Team</h2>
         <p class="lp-muted">
-          Состояние хранится в Postgres: маршрутизация → PM → архитектура (видна ниже) → планы DevOps/Backend/Frontend → реализация → деплой → QA → итоговый отчёт PM. Промпты ролей — в Superadmin. Можно запускать из чата автоматически или вручную кнопкой выше.
+          State is stored in Postgres: routing → PM → architecture (shown below) → DevOps/Backend/Frontend plans → implementation → deploy → QA → final PM report. Role prompts are in Superadmin. You can start from chat automatically or with the button above.
         </p>
         <p class="lp-muted" id="orchestration-status-line" style="font-size:13px;margin-bottom:8px;"></p>
         <details id="orchestration-live-log-wrap" style="margin:0 0 10px;">
-          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Realtime лог действий агента</summary>
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Realtime agent action log</summary>
           <pre id="orchestration-live-log" class="lp-pre" style="max-height:260px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
         </details>
         <details id="orchestration-state-wrap" style="margin:0 0 10px;">
@@ -627,9 +627,9 @@ function renderPortal(): void {
         <div id="orchestration-final-wrap" style="margin-top:12px;"></div>
       </div>
       <div class="lp-panel" id="browser-logs-panel">
-        <h2>Browser tool: действия и скриншоты</h2>
+        <h2>Browser tool: actions and screenshots</h2>
         <p class="lp-muted" style="font-size:12px;">
-          Логи браузерных действий агентов (Playwright) по текущему проекту и run. Для скриншотов нажмите «Открыть».
+          Browser action logs for agents (Playwright) for the current project and run. For screenshots click "Open".
         </p>
         <p class="lp-muted" id="browser-logs-status-line" style="font-size:12px;"></p>
         <div id="browser-logs-wrap" class="lp-orch-grid"></div>
@@ -637,8 +637,8 @@ function renderPortal(): void {
       <div id="orchestration-node-modal" class="lp-modal-backdrop" hidden>
         <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="orch-node-modal-title">
           <div class="lp-modal-head">
-            <h3 id="orch-node-modal-title" style="margin:0;">Детали шага</h3>
-            <button type="button" class="lp-btn lp-btn-ghost" id="orch-node-modal-close">Закрыть</button>
+            <h3 id="orch-node-modal-title" style="margin:0;">Step details</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="orch-node-modal-close">Close</button>
           </div>
           <div id="orch-node-modal-body"></div>
         </div>
@@ -647,7 +647,7 @@ function renderPortal(): void {
         <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="orch-markdown-modal-title" style="max-width:1200px;max-height:88vh;display:flex;flex-direction:column;">
           <div class="lp-modal-head">
             <h3 id="orch-markdown-modal-title" style="margin:0;">Markdown</h3>
-            <button type="button" class="lp-btn lp-btn-ghost" id="orch-markdown-modal-close">Закрыть</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="orch-markdown-modal-close">Close</button>
           </div>
           <div id="orch-markdown-modal-body" class="lp-markdown lp-orch-pre" style="overflow:auto;flex:1 1 auto;"></div>
         </div>
@@ -655,15 +655,15 @@ function renderPortal(): void {
       </div>
       <div id="view-docs" class="lp-portal-view">
       <div class="lp-panel" id="docs-panel">
-        <h2>Документация проекта (Wiki + RAG)</h2>
+        <h2>Project documentation (Wiki + RAG)</h2>
         <p class="lp-muted">
-          Здесь хранится актуальная архитектура и инструкции для пользователя/администратора. Агенты используют эти документы как контекст при решении следующих задач.
+          Current architecture and user/admin guides live here. Agents use these documents as context for later tasks.
         </p>
         <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
           <div class="lp-field" style="min-width:190px;">
-            <label>Фильтр типа</label>
+            <label>Type filter</label>
             <select class="lp-select" id="docs-filter-type">
-              <option value="">Все</option>
+              <option value="">All</option>
               <option value="architecture">architecture</option>
               <option value="user_guide">user_guide</option>
               <option value="admin_guide">admin_guide</option>
@@ -673,21 +673,21 @@ function renderPortal(): void {
               <option value="other">other</option>
             </select>
           </div>
-          <button type="button" class="lp-btn lp-btn-ghost" id="docs-refresh-btn">Обновить список</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-refresh-btn">Refresh list</button>
         </div>
         <p class="lp-muted" id="docs-status-line" style="font-size:12px;margin-bottom:8px;"></p>
         <div id="docs-items-list" class="lp-orch-grid"></div>
       </div>
       <div class="lp-panel">
-        <h3 style="margin-top:0;">Редактор документа</h3>
+        <h3 style="margin-top:0;">Document editor</h3>
         <input type="hidden" id="docs-edit-id" value="" />
         <div class="lp-row" style="flex-wrap:wrap;gap:10px;">
           <div class="lp-field" style="min-width:240px;flex:1;">
-            <label>Заголовок</label>
-            <input class="lp-input" id="docs-edit-title" placeholder="Например, Architecture Overview" />
+            <label>Title</label>
+            <input class="lp-input" id="docs-edit-title" placeholder="e.g. Architecture Overview" />
           </div>
           <div class="lp-field" style="min-width:180px;">
-            <label>Тип</label>
+            <label>Type</label>
             <select class="lp-select" id="docs-edit-type">
               <option value="architecture">architecture</option>
               <option value="user_guide">user_guide</option>
@@ -699,12 +699,12 @@ function renderPortal(): void {
             </select>
           </div>
           <div class="lp-field" style="min-width:220px;">
-            <label>Slug (опционально)</label>
+            <label>Slug (optional)</label>
             <input class="lp-input" id="docs-edit-slug" placeholder="architecture-overview" />
           </div>
         </div>
         <div class="lp-field">
-          <label>Содержимое (Markdown)</label>
+          <label>Content (Markdown)</label>
           <div class="lp-row" style="gap:10px;align-items:stretch;">
             <div style="flex:1;min-width:320px;">
               <div id="docs-md-editor" class="ansible-ide-editor" aria-label="markdown editor"></div>
@@ -716,62 +716,62 @@ function renderPortal(): void {
           </div>
         </div>
         <div class="lp-field">
-          <label>Комментарий версии</label>
-          <input class="lp-input" id="docs-edit-change-summary" placeholder="Что изменено" />
+          <label>Version comment</label>
+          <input class="lp-input" id="docs-edit-change-summary" placeholder="What changed" />
         </div>
         <div class="lp-row" style="gap:8px;">
-          <button type="button" class="lp-btn" id="docs-save-btn">Сохранить версию</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="docs-new-btn">Новый документ</button>
+          <button type="button" class="lp-btn" id="docs-save-btn">Save version</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-new-btn">New document</button>
         </div>
-        <h4 style="margin:14px 0 8px;">История версий</h4>
+        <h4 style="margin:14px 0 8px;">Version history</h4>
         <div id="docs-versions-wrap" class="lp-orch-grid"></div>
       </div>
       <div class="lp-panel">
-        <h3 style="margin-top:0;">Поиск по документации (RAG)</h3>
+        <h3 style="margin-top:0;">Documentation search (RAG)</h3>
         <div class="lp-row" style="gap:8px;align-items:flex-end;">
           <div class="lp-field" style="flex:1;">
-            <label>Запрос</label>
-            <input class="lp-input" id="docs-search-query" placeholder="например: как устроен деплой и rollback" />
+            <label>Request</label>
+            <input class="lp-input" id="docs-search-query" placeholder="e.g. how deploy and rollback work" />
           </div>
-          <button type="button" class="lp-btn lp-btn-ghost" id="docs-search-btn">Поиск</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="docs-search-btn">Search</button>
         </div>
         <div id="docs-search-results" class="lp-orch-grid"></div>
       </div>
       </div>
       <div id="view-knowledge" class="lp-portal-view">
       <div class="lp-panel" id="knowledge-panel">
-        <h2>Базы знаний проекта</h2>
-        <p class="lp-muted">PDF и изображения до 5 МБ: индексация в очереди (Kafka), поиск — Qdrant. Доступны агентам через инструмент <code>search_knowledge</code> (и общие базы платформы).</p>
+        <h2>Project knowledge bases</h2>
+        <p class="lp-muted">PDF and images up to 5 MB: queued indexing (Kafka), search via Qdrant. Available to agents via the <code>search_knowledge</code> tool (and platform-wide bases).</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
           <div class="lp-field" style="min-width:140px;"><label>Slug</label><input class="lp-input" id="kb-new-slug" placeholder="dev-notes" /></div>
-          <div class="lp-field" style="min-width:200px;"><label>Название</label><input class="lp-input" id="kb-new-name" placeholder="Разработка" /></div>
-          <div class="lp-field" style="min-width:140px;"><label>Категория</label>
+          <div class="lp-field" style="min-width:200px;"><label>Name</label><input class="lp-input" id="kb-new-name" placeholder="Development" /></div>
+          <div class="lp-field" style="min-width:140px;"><label>Category</label>
             <select class="lp-select" id="kb-new-category">
               <option value="development">development</option>
               <option value="analysis">analysis</option>
               <option value="other">other</option>
             </select>
           </div>
-          <button type="button" class="lp-btn" id="kb-create-btn">Создать базу</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="kb-refresh-btn">Обновить</button>
+          <button type="button" class="lp-btn" id="kb-create-btn">Create knowledge base</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="kb-refresh-btn">Refresh</button>
         </div>
         <p class="lp-muted" id="kb-status-line" style="font-size:12px;"></p>
         <div id="kb-bases-list" class="lp-orch-grid"></div>
         <div id="kb-docs-section" style="display:none;margin-top:16px;padding-top:12px;border-top:1px solid rgba(148,163,184,0.35);">
-          <h3 style="margin:0 0 8px;">Документы: <span id="kb-active-name"></span></h3>
+          <h3 style="margin:0 0 8px;">Documents: <span id="kb-active-name"></span></h3>
           <input type="hidden" id="kb-active-id" value="" />
           <div class="lp-row" style="gap:8px;align-items:flex-end;margin-bottom:10px;">
             <input type="file" id="kb-upload-file" accept=".pdf,image/*,.txt,.md" />
-            <button type="button" class="lp-btn" id="kb-upload-btn">Загрузить</button>
+            <button type="button" class="lp-btn" id="kb-upload-btn">Upload</button>
           </div>
           <div id="kb-docs-list" class="lp-orch-grid"></div>
         </div>
         <div class="lp-panel" style="margin-top:16px;">
-          <h3 style="margin-top:0;">Поиск</h3>
+          <h3 style="margin-top:0;">Search</h3>
           <div class="lp-row" style="gap:8px;align-items:flex-end;">
-            <input class="lp-input" id="kb-search-query" placeholder="Запрос" style="flex:1;" />
-            <label class="lp-muted" style="font-size:12px;"><input type="checkbox" id="kb-search-platform" checked /> + платформа</label>
-            <button type="button" class="lp-btn lp-btn-ghost" id="kb-search-btn">Искать</button>
+            <input class="lp-input" id="kb-search-query" placeholder="Request" style="flex:1;" />
+            <label class="lp-muted" style="font-size:12px;"><input type="checkbox" id="kb-search-platform" checked /> + platform</label>
+            <button type="button" class="lp-btn lp-btn-ghost" id="kb-search-btn">Search</button>
           </div>
           <div id="kb-search-results" class="lp-orch-grid" style="margin-top:10px;"></div>
         </div>
@@ -779,29 +779,29 @@ function renderPortal(): void {
       </div>
       <div id="view-tracker" class="lp-portal-view">
       <div class="lp-panel" id="tracker-panel">
-        <h2>Задачи агентов</h2>
+        <h2>Agent tasks</h2>
         <p class="lp-muted">
-          Создайте задачу, назначьте роль агента (ключ вида <code>agent:project:…:backend</code>) и нажмите «В очередь» — исполнение пойдёт через Kafka в agent-worker (при <code>AGENT_WORKER_USE_LLM=1</code> — вызов LLM). Пока статус не <code>queued</code> / <code>in_progress</code> / <code>done</code> / <code>cancelled</code>, можно редактировать текст и роль. «Закрыть» — отмена (статус <code>cancelled</code>).
+          Create a task, assign an agent role (key like <code>agent:project:…:backend</code>) and click "Enqueue" — execution goes via Kafka to agent-worker (with <code>AGENT_WORKER_USE_LLM=1</code> — LLM call). While status is not <code>queued</code> / <code>in_progress</code> / <code>done</code> / <code>cancelled</code>, you can edit text and role. "Close" cancels (status <code>cancelled</code>).
         </p>
         <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
           <div class="lp-field" style="min-width:180px;">
-            <label>Тип</label>
+            <label>Type</label>
             <select class="lp-select" id="tracker-new-kind">
-              <option value="task">Задача</option>
-              <option value="epic">Эпик</option>
+              <option value="task">Task</option>
+              <option value="epic">Epic</option>
             </select>
           </div>
           <div class="lp-field" style="flex:1;min-width:200px;">
-            <label>Заголовок</label>
-            <input class="lp-input" id="tracker-new-title" placeholder="Кратко" style="width:100%;" />
+            <label>Title</label>
+            <input class="lp-input" id="tracker-new-title" placeholder="Brief title" style="width:100%;" />
           </div>
           <div class="lp-field" style="min-width:160px;">
-            <label>Роль агента</label>
+            <label>Agent role</label>
             <select class="lp-select" id="tracker-new-role">
               <option value="">—</option>
-              <option value="sa">Системный аналитик</option>
+              <option value="sa">Systems analyst</option>
               <option value="pm">PM</option>
-              <option value="architect">Архитектор</option>
+              <option value="architect">Architect</option>
               <option value="devops">DevOps</option>
               <option value="backend">Backend</option>
               <option value="frontend">Frontend</option>
@@ -810,33 +810,33 @@ function renderPortal(): void {
           </div>
         </div>
         <div class="lp-field">
-          <label>Описание</label>
-          <textarea class="lp-textarea" id="tracker-new-desc" rows="2" placeholder="Что сделать"></textarea>
+          <label>Description</label>
+          <textarea class="lp-textarea" id="tracker-new-desc" rows="2" placeholder="What to do"></textarea>
         </div>
         <div class="lp-row" style="gap:8px;margin-bottom:12px;">
-          <button type="button" class="lp-btn" id="tracker-create-btn">Создать</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="tracker-refresh-btn">Обновить список</button>
+          <button type="button" class="lp-btn" id="tracker-create-btn">Create</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="tracker-refresh-btn">Refresh list</button>
         </div>
         <p class="lp-muted" id="tracker-status-line" style="font-size:12px;margin-bottom:8px;"></p>
         <div id="tracker-edit-wrap" style="display:none;margin-bottom:14px;padding:12px;border:1px solid rgba(148,163,184,0.35);border-radius:10px;background:rgba(248,250,252,0.6);">
-          <h3 style="font-size:15px;margin:0 0 10px;">Редактирование карточки</h3>
+          <h3 style="font-size:15px;margin:0 0 10px;">Edit card</h3>
           <input type="hidden" id="tracker-edit-id" value="" />
           <input type="hidden" id="tracker-edit-kind" value="task" />
           <div class="lp-field">
-            <label for="tracker-edit-title">Заголовок</label>
+            <label for="tracker-edit-title">Title</label>
             <input class="lp-input" id="tracker-edit-title" style="width:100%;max-width:520px;" />
           </div>
           <div class="lp-field">
-            <label for="tracker-edit-desc">Описание</label>
+            <label for="tracker-edit-desc">Description</label>
             <textarea class="lp-textarea" id="tracker-edit-desc" rows="3" style="width:100%;max-width:520px;"></textarea>
           </div>
           <div class="lp-field" id="tracker-edit-role-row">
-            <label for="tracker-edit-role">Роль агента (для задачи)</label>
+            <label for="tracker-edit-role">Agent role (for task)</label>
             <select class="lp-select" id="tracker-edit-role" style="max-width:280px;">
               <option value="">—</option>
-              <option value="sa">Системный аналитик</option>
+              <option value="sa">Systems analyst</option>
               <option value="pm">PM</option>
-              <option value="architect">Архитектор</option>
+              <option value="architect">Architect</option>
               <option value="devops">DevOps</option>
               <option value="backend">Backend</option>
               <option value="frontend">Frontend</option>
@@ -844,8 +844,8 @@ function renderPortal(): void {
             </select>
           </div>
           <div class="lp-row" style="gap:8px;margin-top:8px;">
-            <button type="button" class="lp-btn" id="tracker-edit-save">Сохранить</button>
-            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-edit-cancel">Отмена</button>
+            <button type="button" class="lp-btn" id="tracker-edit-save">Save</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-edit-cancel">Cancel</button>
           </div>
         </div>
         <div id="tracker-items-list" class="lp-orch-grid"></div>
@@ -853,8 +853,8 @@ function renderPortal(): void {
       <div id="tracker-task-modal" class="lp-modal-backdrop" hidden>
         <div class="lp-modal" role="dialog" aria-modal="true" aria-labelledby="tracker-task-modal-title">
           <div class="lp-modal-head">
-            <h3 id="tracker-task-modal-title" style="margin:0;">Результат задачи</h3>
-            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-task-modal-close">Закрыть</button>
+            <h3 id="tracker-task-modal-title" style="margin:0;">Task result</h3>
+            <button type="button" class="lp-btn lp-btn-ghost" id="tracker-task-modal-close">Close</button>
           </div>
           <div id="tracker-task-modal-body"></div>
         </div>
@@ -862,11 +862,11 @@ function renderPortal(): void {
       </div>
       <div id="view-servers" class="lp-portal-view">
       <div class="lp-panel">
-        <h2>Сервер (SSH / Kubernetes)</h2>
-        <p class="lp-muted">Учётные данные шифруются. <strong>SSH</strong> — проверка, затем сохранение: агент ставится автоматически (нужен <code>sudo</code> без пароля). <strong>Kubernetes</strong> — вставьте kubeconfig (доступ к API кластера), агент на ноды не ставится.</p>
-        <div class="lp-field"><label>Тип подключения</label>
+        <h2>Server (SSH / Kubernetes)</h2>
+        <p class="lp-muted">Credentials are encrypted. <strong>SSH</strong> — test, then save: the agent is installed automatically (passwordless <code>sudo</code> required). <strong>Kubernetes</strong> — paste kubeconfig (cluster API access); the agent is not installed on nodes.</p>
+        <div class="lp-field"><label>Connection type</label>
           <select class="lp-select" id="srv-kind" style="max-width:280px;">
-            <option value="ssh">SSH (сервер и агент)</option>
+            <option value="ssh">SSH (server and agent)</option>
             <option value="kubernetes">Kubernetes (kubeconfig)</option>
           </select>
         </div>
@@ -879,69 +879,69 @@ function renderPortal(): void {
         <div class="lp-field"><label>Auth</label>
           <select class="lp-select" id="srv-auth" style="max-width:200px;"><option value="key">Private key</option><option value="password">Password</option></select>
         </div>
-        <div class="lp-field"><label>Secret</label><textarea class="lp-textarea" id="srv-secret" rows="4" placeholder="PEM или пароль"></textarea></div>
+        <div class="lp-field"><label>Secret</label><textarea class="lp-textarea" id="srv-secret" rows="4" placeholder="PEM or password"></textarea></div>
         </div>
         <div id="srv-k8s-block" style="display:none;">
-          <div class="lp-field"><label>Имя кластера (для списка)</label><input class="lp-input" id="srv-k8s-name" placeholder="Мой кластер" style="max-width:320px;" /></div>
-          <div class="lp-field"><label>Контекст kubectl (необязательно)</label><input class="lp-input" id="srv-k8s-context" placeholder="Пусто = контекст по умолчанию" style="max-width:320px;" /></div>
-          <div class="lp-field"><label>kubeconfig</label><textarea class="lp-textarea" id="srv-k8s-config" rows="10" placeholder="Вставьте содержимое файла ~/.kube/config"></textarea></div>
+          <div class="lp-field"><label>Cluster name (for list)</label><input class="lp-input" id="srv-k8s-name" placeholder="My cluster" style="max-width:320px;" /></div>
+          <div class="lp-field"><label>kubectl context (optional)</label><input class="lp-input" id="srv-k8s-context" placeholder="Empty = default context" style="max-width:320px;" /></div>
+          <div class="lp-field"><label>kubeconfig</label><textarea class="lp-textarea" id="srv-k8s-config" rows="10" placeholder="Paste the contents of ~/.kube/config"></textarea></div>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;">
-          <button type="button" class="lp-btn lp-btn-ghost" id="test-ssh">Проверить подключение</button>
-          <button type="button" class="lp-btn" id="register-target">Сохранить</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="test-ssh">Test connection</button>
+          <button type="button" class="lp-btn" id="register-target">Save</button>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;">
           <button type="button" class="lp-btn lp-btn-ghost" id="load-swarm-catalog">Ansible catalog</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="prepare-ansible">Скачать bundle (вручную)</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="confirm-setup">Подтвердить настройку (если ставили вручную)</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="prepare-ansible">Download bundle (manual)</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="confirm-setup">Confirm setup (if installed manually)</button>
           <span class="lp-muted" id="workspace-hint"></span>
         </div>
         <details style="margin-top:12px;">
-          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Удалённая команда по SSH (агенты и вы)</summary>
-          <p class="lp-muted" style="font-size:12px;margin:8px 0;">Только SSH-таргеты. Простые read-only команды выполняются сразу; остальные — ответ с токеном, затем отметьте подтверждение и выполните снова с тем же текстом команды.</p>
-          <div class="lp-field"><label>Сервер (SSH)</label><select class="lp-select" id="ssh-exec-target" style="min-width:280px;"><option value="">— выберите —</option></select></div>
-          <div class="lp-field"><label>Команда</label><textarea class="lp-textarea" id="ssh-exec-cmd" rows="2" placeholder="ls -la"></textarea></div>
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Remote SSH command (agents and you)</summary>
+          <p class="lp-muted" style="font-size:12px;margin:8px 0;">SSH targets only. Simple read-only commands run immediately; others return a token — then check confirmation and run again with the same command text.</p>
+          <div class="lp-field"><label>Server (SSH)</label><select class="lp-select" id="ssh-exec-target" style="min-width:280px;"><option value="">— select —</option></select></div>
+          <div class="lp-field"><label>Command</label><textarea class="lp-textarea" id="ssh-exec-cmd" rows="2" placeholder="ls -la"></textarea></div>
           <input type="hidden" id="ssh-exec-token" value="" />
-          <label class="lp-muted" style="font-size:13px;display:block;margin:6px 0;"><input type="checkbox" id="ssh-exec-confirmed" /> Я подтверждаю выполнение (если платформа запросила подтверждение)</label>
-          <div class="lp-row" style="margin-top:8px;"><button type="button" class="lp-btn lp-btn-ghost" id="ssh-exec-run">Выполнить по SSH</button></div>
+          <label class="lp-muted" style="font-size:13px;display:block;margin:6px 0;"><input type="checkbox" id="ssh-exec-confirmed" /> I confirm execution (if the platform asked for confirmation)</label>
+          <div class="lp-row" style="margin-top:8px;"><button type="button" class="lp-btn lp-btn-ghost" id="ssh-exec-run">Run over SSH</button></div>
           <pre id="ssh-exec-out" class="lp-pre" style="max-height:240px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
         </details>
-        <h3 style="margin:16px 0 8px 0;font-size:0.95rem;">Зарегистрированные серверы</h3>
-        <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">Статус агента по метрикам; установка — результат последней автоустановки (лог с сервера).</p>
+        <h3 style="margin:16px 0 8px 0;font-size:0.95rem;">Registered servers</h3>
+        <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">Agent status from metrics; install — result of the last auto-install (server log).</p>
         <div class="lp-row" style="margin-bottom:8px;">
-          <button type="button" class="lp-btn lp-btn-ghost" id="refresh-targets-list">Обновить список</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="refresh-targets-list">Refresh list</button>
         </div>
         <div id="targets-table-wrap" style="overflow:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead><tr>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Тип</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Type</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Host</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Port</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">SSH user</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Установка</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Лог установки</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Метрик</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Агент</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Последняя метрика</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Install</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Install log</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Metrics</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Agent</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Latest metric</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;"></th>
             </tr></thead>
-            <tbody id="targets-table-body"><tr><td colspan="10" class="lp-muted">Выберите проект</td></tr></tbody>
+            <tbody id="targets-table-body"><tr><td colspan="10" class="lp-muted">Select project</td></tr></tbody>
           </table>
         </div>
       </div>
       </div>
       <div id="view-k8s-install" class="lp-portal-view">
       <div class="lp-panel">
-        <h2>Kubernetes: установка на 3 сервера (Ansible)</h2>
-        <p class="lp-muted">Сначала сохраните <strong>три</strong> SSH-таргета с <strong>одинаковым</strong> пользователем и <strong>одним и тем же</strong> ключом или паролем. Первый сервер — control plane, второй и третий — workers. Подходит для Ubuntu/Debian; установка может занять 15–40 минут.</p>
+        <h2>Kubernetes: install on 3 servers (Ansible)</h2>
+        <p class="lp-muted">First save <strong>three</strong> SSH targets with the <strong>same</strong> user and the <strong>same</strong> key or password. The first server is the control plane; the second and third are workers. For Ubuntu/Debian; install may take 15–40 minutes.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
-          <div class="lp-field"><label>Control plane</label><select class="lp-select" id="k8s-master-target" style="min-width:240px;"><option value="">— выберите SSH-таргет —</option></select></div>
-          <div class="lp-field"><label>Worker 1</label><select class="lp-select" id="k8s-worker1-target" style="min-width:240px;"><option value="">— выберите SSH-таргет —</option></select></div>
-          <div class="lp-field"><label>Worker 2</label><select class="lp-select" id="k8s-worker2-target" style="min-width:240px;"><option value="">— выберите SSH-таргет —</option></select></div>
+          <div class="lp-field"><label>Control plane</label><select class="lp-select" id="k8s-master-target" style="min-width:240px;"><option value="">— select SSH target —</option></select></div>
+          <div class="lp-field"><label>Worker 1</label><select class="lp-select" id="k8s-worker1-target" style="min-width:240px;"><option value="">— select SSH target —</option></select></div>
+          <div class="lp-field"><label>Worker 2</label><select class="lp-select" id="k8s-worker2-target" style="min-width:240px;"><option value="">— select SSH target —</option></select></div>
           <div class="lp-field"><label>Pod network CIDR</label><input class="lp-input" id="k8s-pod-cidr" value="10.244.0.0/16" style="min-width:140px;" /></div>
         </div>
         <div class="lp-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" class="lp-btn" id="k8s-install-run">Запустить установку (поток лога)</button>
+          <button type="button" class="lp-btn" id="k8s-install-run">Start install (log stream)</button>
           <span class="lp-muted" id="k8s-install-status">—</span>
         </div>
         <pre id="k8s-install-log" class="lp-pre" style="max-height:300px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
@@ -949,14 +949,14 @@ function renderPortal(): void {
       </div>
       <div id="view-k8s" class="lp-portal-view">
       <div class="lp-panel">
-        <h2>Kubernetes: управление</h2>
-        <p class="lp-muted">Нужен <strong>таргет с kubeconfig</strong> (см. выше). Команды выполняются на платформе через kubectl; произвольный ввод запрещён — только выбранные операции.</p>
+        <h2>Kubernetes: manage</h2>
+        <p class="lp-muted">A <strong>kubeconfig target</strong> is required (see above). Commands run on the platform via kubectl; free-form input is forbidden — selected operations only.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
-          <div class="lp-field"><label>Кластер</label><select class="lp-select" id="k8s-mgmt-target" style="min-width:260px;"><option value="">— сохраните kubeconfig —</option></select></div>
-          <div class="lp-field"><label>Операция</label><select class="lp-select" id="k8s-mgmt-op" style="min-width:240px;"><option value="">— загрузка… —</option></select></div>
+          <div class="lp-field"><label>Cluster</label><select class="lp-select" id="k8s-mgmt-target" style="min-width:260px;"><option value="">— save kubeconfig —</option></select></div>
+          <div class="lp-field"><label>Operation</label><select class="lp-select" id="k8s-mgmt-op" style="min-width:240px;"><option value="">— loading… —</option></select></div>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:12px;">
-          <div class="lp-field"><label>namespace</label><input class="lp-input" id="k8s-mgmt-ns" placeholder="напр. default" style="max-width:160px;" /></div>
+          <div class="lp-field"><label>namespace</label><input class="lp-input" id="k8s-mgmt-ns" placeholder="e.g. default" style="max-width:160px;" /></div>
           <div class="lp-field"><label>name</label><input class="lp-input" id="k8s-mgmt-name" placeholder="pod / deployment" style="max-width:200px;" /></div>
           <div class="lp-field"><label>resource (describe)</label><input class="lp-input" id="k8s-mgmt-res" placeholder="pod, deployment…" style="max-width:140px;" /></div>
           <div class="lp-field"><label>container (logs)</label><input class="lp-input" id="k8s-mgmt-ctr" style="max-width:120px;" /></div>
@@ -964,67 +964,67 @@ function renderPortal(): void {
           <div class="lp-field"><label>replicas (scale)</label><input class="lp-input" id="k8s-mgmt-rep" type="number" placeholder="—" style="max-width:80px;" /></div>
         </div>
         <div class="lp-row" style="gap:12px;flex-wrap:wrap;align-items:center;">
-          <label class="lp-muted" style="font-size:13px;"><input type="checkbox" id="k8s-mgmt-allns" /> все namespace (-A)</label>
+          <label class="lp-muted" style="font-size:13px;"><input type="checkbox" id="k8s-mgmt-allns" /> all namespaces (-A)</label>
           <label class="lp-muted" style="font-size:13px;"><input type="checkbox" id="k8s-mgmt-wide" /> wide</label>
-          <button type="button" class="lp-btn" id="k8s-mgmt-run">Выполнить</button>
+          <button type="button" class="lp-btn" id="k8s-mgmt-run">Run</button>
         </div>
         <pre id="k8s-mgmt-out" class="lp-pre" style="max-height:300px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
       </div>
       </div>
       <div id="view-infra" class="lp-portal-view">
       <div class="lp-panel">
-        <h2>Инфраструктура и Ansible</h2>
+        <h2>Infrastructure and Ansible</h2>
         <div style="margin:0 0 14px;padding:12px;border:1px solid #e5e7eb;border-radius:8px;">
-          <h3 style="font-size:15px;margin:0 0 6px;">GitLab платформы</h3>
-          <p class="lp-muted" style="margin:0 0 8px;">Общий GitLab площадки: у каждого проекта своя группа и токен для агентов. Старые проекты — создайте группу вручную.</p>
+          <h3 style="font-size:15px;margin:0 0 6px;">Platform GitLab</h3>
+          <p class="lp-muted" style="margin:0 0 8px;">Shared site GitLab: each project gets its own group and agent token. For older projects — create the group manually.</p>
           <p id="portal-gitlab-platform-status" class="lp-muted" style="margin:0 0 8px;">—</p>
-          <button type="button" class="lp-btn" id="portal-gitlab-platform-provision" style="display:none">Создать GitLab-группу</button>
+          <button type="button" class="lp-btn" id="portal-gitlab-platform-provision" style="display:none">Create GitLab group</button>
         </div>
-        <p class="lp-muted">Ниже — опциональная раскатка GitLab/Nexus на ваших SSH-серверах через Ansible. Если используете свой GitLab или другие сервисы — добавьте их в блоке «Сервисы и учётки» (категория «Вручную»). «Только bundles» — скачать YAML локально; «Запустить Ansible на платформе» — playbook из adapter по сохранённому SSH.</p>
+        <p class="lp-muted">Below — optional GitLab/Nexus rollout on your SSH servers via Ansible. If you use your own GitLab or other services — add them in the "Services and accounts" block (category "Manual"). "Bundles only" — download YAML locally; "Run Ansible on the platform" — playbook from adapter over saved SSH.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:16px;">
-          <div class="lp-field"><label>GitLab → сервер</label>
-            <select class="lp-select" id="infra-gitlab-target" style="min-width:260px;"><option value="">— не назначен —</option></select>
+          <div class="lp-field"><label>GitLab → server</label>
+            <select class="lp-select" id="infra-gitlab-target" style="min-width:260px;"><option value="">— not assigned —</option></select>
           </div>
-          <div class="lp-field"><label>Nexus → сервер</label>
-            <select class="lp-select" id="infra-nexus-target" style="min-width:260px;"><option value="">— не назначен —</option></select>
+          <div class="lp-field"><label>Nexus → server</label>
+            <select class="lp-select" id="infra-nexus-target" style="min-width:260px;"><option value="">— not assigned —</option></select>
           </div>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:12px;">
-          <div class="lp-field"><label>GitLab HTTP порт</label><input class="lp-input" id="infra-gitlab-port" type="number" value="8081" style="max-width:100px;" /></div>
-          <div class="lp-field"><label>Nexus HTTP порт</label><input class="lp-input" id="infra-nexus-port" type="number" value="8082" style="max-width:100px;" /></div>
+          <div class="lp-field"><label>GitLab HTTP port</label><input class="lp-input" id="infra-gitlab-port" type="number" value="8081" style="max-width:100px;" /></div>
+          <div class="lp-field"><label>Nexus HTTP port</label><input class="lp-input" id="infra-nexus-port" type="number" value="8082" style="max-width:100px;" /></div>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;">
-          <button type="button" class="lp-btn lp-btn-ghost" id="infra-save-assignments">Сохранить назначения</button>
-          <button type="button" class="lp-btn" id="infra-prepare-stack">Только bundles (YAML)</button>
-          <button type="button" class="lp-btn" id="infra-run-stack">Запустить Ansible на платформе</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="infra-load-context">Контекст разработки (JSON)</button>
-          <button type="button" class="lp-btn" id="agent-demo-run" title="Нужен GitLab с PAT в ресурсах проекта">Демо агентов (GitLab)</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="agents-bootstrap-planning" title="Повторно запустить planning (как ИИ-агент при создании проекта)">Planning (bootstrap)</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="infra-save-assignments">Save assignments</button>
+          <button type="button" class="lp-btn" id="infra-prepare-stack">Bundles only (YAML)</button>
+          <button type="button" class="lp-btn" id="infra-run-stack">Run Ansible on the platform</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="infra-load-context">Development context (JSON)</button>
+          <button type="button" class="lp-btn" id="agent-demo-run" title="Requires GitLab with a PAT in project resources">Agent demo (GitLab)</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="agents-bootstrap-planning" title="Re-run planning (same as the AI agent on project create)">Planning (bootstrap)</button>
         </div>
         <div class="lp-panel" style="margin-top:10px;padding:12px;border:1px solid var(--lp-border);border-radius:12px;">
-          <h3 style="margin:0 0 8px;font-size:0.95rem;">Ansible marketplace: запуск роли</h3>
+          <h3 style="margin:0 0 8px;font-size:0.95rem;">Ansible marketplace: run a role</h3>
           <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">
-            Выберите роль из каталога и SSH-таргет. Поля параметров строятся автоматически из vars_schema шаблона.
+            Pick a role from the catalog and an SSH target. Parameter fields are built automatically from the template vars_schema.
           </p>
           <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
-            <div class="lp-field"><label>SSH-таргет</label>
+            <div class="lp-field"><label>SSH target</label>
               <select class="lp-select" id="infra-template-target" style="min-width:260px;">
-                <option value="">— выберите SSH-сервер —</option>
+                <option value="">— select SSH server —</option>
               </select>
             </div>
-            <div class="lp-field"><label>Роль (template)</label>
+            <div class="lp-field"><label>Role (template)</label>
               <select class="lp-select" id="infra-template-id" style="min-width:320px;">
-                <option value="">— загрузка каталога… —</option>
+                <option value="">— loading catalog… —</option>
               </select>
             </div>
             <div class="lp-field">
-              <button type="button" class="lp-btn lp-btn-ghost" id="infra-template-reload">Обновить каталог</button>
+              <button type="button" class="lp-btn lp-btn-ghost" id="infra-template-reload">Refresh catalog</button>
             </div>
           </div>
           <div id="infra-template-vars" class="lp-row" style="margin-top:8px;flex-wrap:wrap;gap:10px;"></div>
           <div class="lp-row" style="margin-top:8px;gap:12px;flex-wrap:wrap;align-items:center;">
             <label class="lp-muted" style="font-size:12px;display:flex;align-items:center;gap:6px;">
-              <input type="checkbox" id="infra-template-fallback" /> fallback если роли нет
+              <input type="checkbox" id="infra-template-fallback" /> fallback if the role is missing
             </label>
             <div class="lp-field"><label>fallback service</label>
               <select class="lp-select" id="infra-template-fallback-service" style="min-width:160px;">
@@ -1033,65 +1033,65 @@ function renderPortal(): void {
                 <option value="nexus">nexus</option>
               </select>
             </div>
-            <button type="button" class="lp-btn" id="infra-template-run">Запустить роль</button>
+            <button type="button" class="lp-btn" id="infra-template-run">Run role</button>
           </div>
           <p class="lp-muted" id="infra-template-hint" style="margin:8px 0 0;font-size:12px;"></p>
         </div>
         <details style="margin-top:10px;">
-          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Песочница Python (sandbox)</summary>
-          <p class="lp-muted" style="font-size:12px;margin:8px 0;">Код выполняется на сервисе sandbox с таймаутом; только для доверенных сценариев.</p>
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Python sandbox</summary>
+          <p class="lp-muted" style="font-size:12px;margin:8px 0;">Code runs on the sandbox service with a timeout; trusted scenarios only.</p>
           <textarea class="lp-textarea" id="sandbox-code" rows="3" style="width:100%;max-width:560px;font-family:monospace;font-size:12px;">print(sum(range(10)))</textarea>
           <div class="lp-row" style="margin-top:8px;">
-            <button type="button" class="lp-btn lp-btn-ghost" id="sandbox-run">Выполнить в sandbox</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="sandbox-run">Run in sandbox</button>
           </div>
         </details>
         <div class="lp-row" style="align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
           <span id="infra-ansible-status" class="lp-muted" style="font-size:13px;flex:1;min-width:220px;">Ansible: —</span>
         </div>
         <details id="infra-ansible-log-wrap" style="margin-top:8px;">
-          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Полный лог Ansible (поток)</summary>
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Full Ansible log (stream)</summary>
           <pre id="infra-ansible-log" class="lp-pre" style="max-height:360px;overflow:auto;margin-top:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;"></pre>
         </details>
-        <h3 style="margin:16px 0 8px 0;font-size:0.95rem;">Сервисы и учётки проекта</h3>
+        <h3 style="margin:16px 0 8px 0;font-size:0.95rem;">Project services and accounts</h3>
         <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">
-          Любые внешние сервисы (свой GitLab, Nexus, реестр и т.д.): имя, адрес, пользователь, пароль или API-ключ.
-          Записи, которые подтягивает Ansible после раскатки GitLab/Nexus на сервер, попадают сюда же. Отключённые строки не попадают в контекст для ИИ-агентов.
-          Секреты хранятся зашифрованно.
+          Any external services (your GitLab, Nexus, registry, etc.): name, address, user, password or API key.
+          Records that Ansible pulls after rolling out GitLab/Nexus on a server also land here. Disabled rows are excluded from AI agent context.
+          Secrets are stored encrypted.
         </p>
         <div class="lp-panel" style="margin-bottom:12px;padding:12px;border:1px solid var(--lp-border);border-radius:12px;">
           <div class="lp-row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:8px;">
-            <div class="lp-field"><label for="infra-service-name">Название</label>
-              <input class="lp-input" id="infra-service-name" placeholder="Мой GitLab" style="min-width:160px;" /></div>
+            <div class="lp-field"><label for="infra-service-name">Name</label>
+              <input class="lp-input" id="infra-service-name" placeholder="My GitLab" style="min-width:160px;" /></div>
             <div class="lp-field"><label for="infra-service-host">IP / FQDN</label>
               <input class="lp-input" id="infra-service-host" placeholder="git.company.com" style="min-width:180px;" /></div>
-            <div class="lp-field"><label for="infra-service-user">Пользователь</label>
+            <div class="lp-field"><label for="infra-service-user">User</label>
               <input class="lp-input" id="infra-service-user" placeholder="root / token-id" style="min-width:140px;" /></div>
-            <div class="lp-field"><label for="infra-service-secret">Пароль / API key</label>
+            <div class="lp-field"><label for="infra-service-secret">Password / API key</label>
               <input class="lp-input" id="infra-service-secret" type="password" placeholder="•••" autocomplete="off" style="min-width:160px;" /></div>
             <label class="lp-muted" style="font-size:13px;display:flex;align-items:center;gap:6px;">
-              <input type="checkbox" id="infra-service-enabled" checked /> включён
+              <input type="checkbox" id="infra-service-enabled" checked /> enabled
             </label>
           </div>
           <div class="lp-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-            <button type="button" class="lp-btn" id="infra-service-save">Добавить сервис</button>
-            <button type="button" class="lp-btn lp-btn-ghost" id="infra-service-cancel-edit" style="display:none;">Отменить правку</button>
+            <button type="button" class="lp-btn" id="infra-service-save">Add service</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="infra-service-cancel-edit" style="display:none;">Cancel edit</button>
             <input type="hidden" id="infra-service-edit-id" value="" />
-            <button type="button" class="lp-btn lp-btn-ghost" id="infra-refresh-resources">Обновить таблицу</button>
+            <button type="button" class="lp-btn lp-btn-ghost" id="infra-refresh-resources">Refresh table</button>
           </div>
           <p class="lp-muted" id="infra-service-form-hint" style="margin:8px 0 0;font-size:12px;display:none;"></p>
         </div>
         <div id="infra-resources-wrap" style="overflow:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead><tr>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Название</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Name</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">IP / FQDN</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Пользователь</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Секрет</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Вкл</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Источник</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">User</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Secret</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">On</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Source</th>
               <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;"></th>
             </tr></thead>
-            <tbody id="infra-resources-body"><tr><td colspan="7" class="lp-muted">Выберите проект</td></tr></tbody>
+            <tbody id="infra-resources-body"><tr><td colspan="7" class="lp-muted">Select project</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1100,7 +1100,7 @@ function renderPortal(): void {
       <div class="lp-panel">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <h2 style="margin:0;">AI Team phase dashboard (live)</h2>
-          <button type="button" class="lp-btn lp-btn-ghost" id="portal-ai-team-live-refresh" style="padding:4px 8px;font-size:12px;">Обновить</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="portal-ai-team-live-refresh" style="padding:4px 8px;font-size:12px;">Refresh</button>
         </div>
         <div style="overflow:auto;margin-top:8px;">
           <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -1112,39 +1112,39 @@ function renderPortal(): void {
                 <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Iteration</th>
                 <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Batch</th>
                 <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Updated</th>
-                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Действия</th>
+                <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Actions</th>
               </tr>
             </thead>
-            <tbody id="portal-ai-team-runs-live-body"><tr><td colspan="7" class="lp-muted">Выберите проект</td></tr></tbody>
+            <tbody id="portal-ai-team-runs-live-body"><tr><td colspan="7" class="lp-muted">Select project</td></tr></tbody>
           </table>
         </div>
       </div>
       <div class="lp-panel">
-        <h2>Журнал действий</h2>
-        <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">Операции по проекту (Ansible, серверы, назначения) в ClickHouse. После «Запустить Ansible» обновите список — в деталях будут stdout/stderr.</p>
+        <h2>Activity log</h2>
+        <p class="lp-muted" style="margin:0 0 8px 0;font-size:12px;">Project operations (Ansible, servers, assignments) in ClickHouse. After "Run Ansible" refresh the list — details will include stdout/stderr.</p>
         <div class="lp-row" style="margin-bottom:8px;flex-wrap:wrap;gap:8px;align-items:center;">
-          <button type="button" class="lp-btn lp-btn-ghost" id="activity-logs-refresh">Обновить журнал</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="activity-logs-refresh">Refresh log</button>
           <span class="lp-muted" id="activity-logs-hint" style="font-size:12px;"></span>
         </div>
         <div id="activity-logs-wrap" style="overflow:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead><tr>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Время</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Действие</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Статус</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Кратко</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Кто</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Time</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Action</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Status</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Brief title</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Who</th>
             </tr></thead>
-            <tbody id="activity-logs-body"><tr><td colspan="5" class="lp-muted">Выберите проект</td></tr></tbody>
+            <tbody id="activity-logs-body"><tr><td colspan="5" class="lp-muted">Select project</td></tr></tbody>
           </table>
         </div>
         <details style="margin-top:10px;">
-          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Детали записи (JSON)</summary>
+          <summary class="lp-muted" style="cursor:pointer;font-size:13px;">Entry details (JSON)</summary>
           <pre class="lp-pre" id="activity-logs-detail" style="max-height:280px;overflow:auto;margin-top:8px;font-size:11px;"></pre>
         </details>
       </div>
       <div class="lp-panel">
-        <h2>Отладочный вывод</h2>
+        <h2>Debug output</h2>
         <pre class="lp-pre" id="portal-output"></pre>
       </div>
       </div>
@@ -1192,7 +1192,7 @@ function renderPortal(): void {
   let infraTemplateSchema: Record<string, { type?: string; required?: boolean }> = {};
   let infraTemplateCatalogProjectId = "";
 
-  /** Основной чат: пользователь, одиночный ассистент (LangGraph), либо сообщения ролей ИИ Команды. */
+  /** Main chat: user, single assistant (LangGraph), or AI Team role messages. */
   type ProjectChatMsg =
     | { role: "user"; content: string }
     | { role: "assistant"; content: string }
@@ -1278,13 +1278,13 @@ function renderPortal(): void {
     const gate = document.getElementById("project-ai-chat-gate");
     if (!thread) return;
     if (!currentProjectId) {
-      thread.innerHTML = `<p class="lp-muted">Выберите проект, чтобы начать диалог.</p>`;
+      thread.innerHTML = `<p class="lp-muted">Select a project to start the dialog.</p>`;
       if (gate) gate.textContent = "";
       return;
     }
     if (gate) gate.textContent = "";
     if (projectAiChatHistory.length === 0) {
-      thread.innerHTML = `<p class="lp-muted lp-ai-chat-placeholder">Опишите идею продукта или задайте вопрос по проекту. Ниже — ответ ассистента; при запуске «ИИ Команда» в этом же чате по очереди появятся сообщения от ролей (маршрутизация, PM, архитектор и т.д.).</p>`;
+      thread.innerHTML = `<p class="lp-muted lp-ai-chat-placeholder">Describe a product idea or ask a project question. Below is the assistant reply; when you start "AI Team", role messages appear in this same chat in turn (routing, PM, architect, etc.).</p>`;
       return;
     }
     thread.innerHTML = projectAiChatHistory
@@ -1308,7 +1308,7 @@ function renderPortal(): void {
     const st = document.getElementById("project-ai-chat-status");
     if (inp) inp.disabled = busy || !currentProjectId;
     if (btn) btn.disabled = busy || !currentProjectId;
-    if (st) st.textContent = busy ? "Ответ…" : "";
+    if (st) st.textContent = busy ? "Reply…" : "";
   };
 
   const token = () => getPortalToken();
@@ -1320,12 +1320,12 @@ function renderPortal(): void {
     return s.includes("Failed to fetch") || s.includes("NetworkError") || s.includes("TypeError: network error");
   };
   const fetchNetworkHint = (operation: string) =>
-    `Сетевой сбой (${operation}): браузер не смог достучаться до API. Обычно это перезапуск/недоступность api-gateway, обрыв сети или блокировка прокси/CORS. Проверьте сервисы docker compose и попробуйте повторить.`;
+    `Network failure (${operation}): the browser could not reach the API. Usually api-gateway restart/unavailability, a network drop, or proxy/CORS blocking. Check docker compose services and retry.`;
 
   let orchPollTimer: number | null = null;
   let orchStreamAbort: AbortController | null = null;
   let orchStreamSocket: WebSocket | null = null;
-  /** Счётчик поколений stream: игнорировать onclose от устаревших WebSocket. */
+  /** Stream generation counter: ignore onclose from stale WebSockets. */
   let orchStreamGeneration = 0;
   let orchStreamFinished = false;
   let orchStreamLastRun: OrchRunData | null = null;
@@ -1373,7 +1373,7 @@ function renderPortal(): void {
     const ts = new Date().toLocaleTimeString();
     let txt = (pre.textContent || "") + `[${ts}] ${line}\n`;
     if (txt.length > orchLiveLogMax) {
-      txt = `… [обрезано]\n${txt.slice(-orchLiveLogMax)}`;
+      txt = `… [truncated]\n${txt.slice(-orchLiveLogMax)}`;
     }
     pre.textContent = txt;
     pre.scrollTop = pre.scrollHeight;
@@ -1466,16 +1466,16 @@ function renderPortal(): void {
   };
 
   const ORCH_GRAPH_NODES: GraphNodeDef[] = [
-    { key: "intake", label: "Маршрутизация", lane: 0, order: 0 },
+    { key: "intake", label: "Routing", lane: 0, order: 0 },
     { key: "pm", label: "PM", lane: 1, order: 0 },
-    { key: "architect", label: "Архитектор", lane: 2, order: 0 },
+    { key: "architect", label: "Architect", lane: 2, order: 0 },
     { key: "devops_plan", label: "DevOps", lane: 3, order: 0 },
     { key: "backend_plan", label: "Backend", lane: 3, order: 1 },
     { key: "frontend_plan", label: "Frontend", lane: 3, order: 2 },
-    { key: "implementation", label: "Реализация", lane: 4, order: 0 },
-    { key: "deploy", label: "Деплой", lane: 5, order: 0 },
+    { key: "implementation", label: "Implementation", lane: 4, order: 0 },
+    { key: "deploy", label: "Deploy", lane: 5, order: 0 },
     { key: "qa_validation", label: "QA", lane: 6, order: 0 },
-    { key: "pm_summary", label: "PM итог", lane: 7, order: 0 },
+    { key: "pm_summary", label: "PM summary", lane: 7, order: 0 },
   ];
   const ORCH_LAYER_KEYS: string[][] = [
     ["intake"],
@@ -1503,12 +1503,12 @@ function renderPortal(): void {
 
   const orchStatusLabel = (raw: string | undefined): string => {
     const v = (raw || "").trim().toLowerCase();
-    if (v === "done") return "Готово";
-    if (v === "running") return "В работе";
-    if (v === "error") return "Ошибка";
-    if (v === "skipped") return "Пропущено";
-    if (v === "paused") return "Ждём уточнений";
-    return "Ожидание";
+    if (v === "done") return "Done";
+    if (v === "running") return "In progress";
+    if (v === "error") return "Error";
+    if (v === "skipped") return "Skipped";
+    if (v === "paused") return "Waiting for clarification";
+    return "Waiting";
   };
 
   const orchBadgeClass = (raw: string | undefined): string => {
@@ -1596,85 +1596,85 @@ function renderPortal(): void {
     const llmPrompt = String(stObj.llm_prompt_preview || "").trim();
     const liveAction: string[] = [];
     if ((step?.status || "") === "running") {
-      liveAction.push("Выполняет текущую задачу шага");
+      liveAction.push("Running the current step task");
     }
     if (attempt > 0 && maxAttempts > 0) {
-      liveAction.push(`Попытка ${attempt}/${maxAttempts}`);
+      liveAction.push(`Attempt ${attempt}/${maxAttempts}`);
     }
     if (envelope) {
       const ss = String(envelope.step_status || "");
       if (ss) liveAction.push(`Step status: ${ss}`);
     }
-    if (qfu.length) liveAction.push(`Ждёт уточнений пользователя: ${qfu.length}`);
-    if (peerResp.length) liveAction.push(`Синхронизация с коллегами: ${peerResp.length}`);
-    if (qaGate === "no_go") liveAction.push("QA gate: NO_GO (деплой блокирован)");
-    if (!liveAction.length) liveAction.push("Явных действий в structured-мета нет");
+    if (qfu.length) liveAction.push(`Waiting for user clarifications: ${qfu.length}`);
+    if (peerResp.length) liveAction.push(`Syncing with colleagues: ${peerResp.length}`);
+    if (qaGate === "no_go") liveAction.push("QA gate: NO_GO (deploy blocked)");
+    if (!liveAction.length) liveAction.push("No explicit actions in structured meta");
     const reasoningBrief: string[] = [];
     const reasoningDetailed: string[] = [];
     if ((step?.status || "") === "running") {
-      reasoningBrief.push("Шаг активен.");
-      reasoningDetailed.push("Шаг активен: агент выполняет текущую задачу.");
+      reasoningBrief.push("Step is active.");
+      reasoningDetailed.push("Step is active: the agent is running the current task.");
     }
     if (attempt > 0 && maxAttempts > 0) {
-      reasoningBrief.push(`Повторная попытка ${attempt}/${maxAttempts}.`);
-      reasoningDetailed.push(`Повторная попытка: ${attempt}/${maxAttempts}.`);
+      reasoningBrief.push(`Retry attempt ${attempt}/${maxAttempts}.`);
+      reasoningDetailed.push(`Retry attempt: ${attempt}/${maxAttempts}.`);
     }
     if (envelopeStatus) {
       const statusLabel =
         envelopeStatus === "need_user_clarification"
-          ? "нужно уточнение от пользователя"
+          ? "user clarification needed"
           : envelopeStatus === "need_peer_sync"
-            ? "нужна синхронизация с коллегами"
-            : "шаг завершен";
-      reasoningBrief.push(`Решение шага: ${statusLabel}.`);
-      reasoningDetailed.push(`Решение шага: ${statusLabel}.`);
+            ? "colleague sync needed"
+            : "step finished";
+      reasoningBrief.push(`Step decision: ${statusLabel}.`);
+      reasoningDetailed.push(`Step decision: ${statusLabel}.`);
     }
     if (envelopeContinue !== null) {
-      reasoningBrief.push(`Продолжение пайплайна: ${envelopeContinue ? "да" : "нет"}.`);
-      reasoningDetailed.push(`Продолжение пайплайна: ${envelopeContinue ? "да" : "нет"}.`);
+      reasoningBrief.push(`Continue pipeline: ${envelopeContinue ? "yes" : "no"}.`);
+      reasoningDetailed.push(`Continue pipeline: ${envelopeContinue ? "yes" : "no"}.`);
     }
     if (envelopePeerQueries.length) {
-      reasoningBrief.push(`Запросы к коллегам: ${envelopePeerQueries.length}.`);
+      reasoningBrief.push(`Requests to colleagues: ${envelopePeerQueries.length}.`);
       const peerQueryRows = envelopePeerQueries
         .map((x, idx) => {
-          const role = String(x.role || "").trim() || "роль";
+          const role = String(x.role || "").trim() || "role";
           const question = String(x.question || "").replace(/\s+/g, " ").trim();
-          return `   ${idx + 1}. запрос к ${role}: ${question || "без текста"}`;
+          return `   ${idx + 1}. request to ${role}: ${question || "no text"}`;
         })
         .join("\n");
-      reasoningDetailed.push(`Запросы к коллегам:\n${peerQueryRows}`);
+      reasoningDetailed.push(`Requests to colleagues:\n${peerQueryRows}`);
     }
     if (peerResp.length) {
-      reasoningBrief.push(`Ответы коллег: ${peerResp.length}.`);
+      reasoningBrief.push(`Colleague replies: ${peerResp.length}.`);
       const peerRespRows = peerResp
         .map((x, idx) => {
-          const role = String(x.role || "").trim() || "роль";
+          const role = String(x.role || "").trim() || "role";
           const answerRaw = String(x.answer || "").replace(/\s+/g, " ").trim();
           const answer = answerRaw.length > 280 ? `${answerRaw.slice(0, 280)}…` : answerRaw;
-          return `   ${idx + 1}. ответ ${role}: ${answer || "пусто"}`;
+          return `   ${idx + 1}. reply ${role}: ${answer || "empty"}`;
         })
         .join("\n");
-      reasoningDetailed.push(`Полученные ответы:\n${peerRespRows}`);
+      reasoningDetailed.push(`Received replies:\n${peerRespRows}`);
     }
     if (qfu.length) {
-      reasoningBrief.push(`Нужны уточнения пользователя: ${qfu.length}.`);
+      reasoningBrief.push(`User clarifications needed: ${qfu.length}.`);
       const qRows = qfu.map((x, idx) => `   ${idx + 1}. ${String(x)}`).join("\n");
-      reasoningDetailed.push(`Что нужно от пользователя:\n${qRows}`);
+      reasoningDetailed.push(`What is needed from the user:\n${qRows}`);
     }
     if (qaGate === "no_go") {
       reasoningBrief.push("QA gate: NO_GO.");
-      reasoningDetailed.push("QA gate: NO_GO — релиз заблокирован до исправлений.");
+      reasoningDetailed.push("QA gate: NO_GO — release blocked until fixes.");
     }
     if (envelopeSummary) {
-      reasoningBrief.push("Есть краткое обоснование шага.");
+      reasoningBrief.push("A brief step rationale is available.");
       const summary = envelopeSummary.length > 1200 ? `${envelopeSummary.slice(0, 1200)}\n…` : envelopeSummary;
-      reasoningDetailed.push(`Краткое обоснование шага:\n${summary}`);
+      reasoningDetailed.push(`Brief step rationale:\n${summary}`);
     }
     if (!reasoningBrief.length) {
-      reasoningBrief.push("Явный structured-трейс пока не сформирован.");
+      reasoningBrief.push("Explicit structured trace is not formed yet.");
     }
     if (!reasoningDetailed.length) {
-      reasoningDetailed.push("Явный structured-трейс пока не сформирован.");
+      reasoningDetailed.push("Explicit structured trace is not formed yet.");
     }
     const reasoningText = orchModalReasoningMode === "brief"
       ? reasoningBrief.join("\n")
@@ -1698,55 +1698,55 @@ function renderPortal(): void {
     if (bodyEl) {
       bodyEl.innerHTML = `
         <div class="lp-orch-modal-grid">
-          <div><b>Статус:</b> ${escapeHtml(orchStatusLabel(step?.status))}</div>
-          <div><b>Шаг:</b> <code>${escapeHtml(stepKey)}</code></div>
-          <div><b>Задача:</b> ${escapeHtml(task)}</div>
-          <div><b>Старт:</b> ${escapeHtml(fmtTs(step?.started_at))}</div>
-          <div><b>Финиш:</b> ${escapeHtml(fmtTs(step?.finished_at))}</div>
-          <div><b>Фаза run:</b> ${escapeHtml(String(data.phase || "—"))}</div>
+          <div><b>Status:</b> ${escapeHtml(orchStatusLabel(step?.status))}</div>
+          <div><b>Step:</b> <code>${escapeHtml(stepKey)}</code></div>
+          <div><b>Task:</b> ${escapeHtml(task)}</div>
+          <div><b>Start:</b> ${escapeHtml(fmtTs(step?.started_at))}</div>
+          <div><b>Finish:</b> ${escapeHtml(fmtTs(step?.finished_at))}</div>
+          <div><b>Run phase:</b> ${escapeHtml(String(data.phase || "—"))}</div>
         </div>
         <div class="lp-orch-modal-block" style="background:#f8fafc;border-radius:8px;">
-          <h4>Модель и промпт (LLM)</h4>
-          <p class="lp-muted" style="font-size:12px;margin:0 0 6px;"><b>Модель:</b> ${escapeHtml(llmModel || "—")}</p>
-          <p class="lp-muted" style="font-size:11px;margin:0 0 8px;">Текст ниже — сообщения в чат-модель (роли system / human). Пока шаг <code>running</code>, ответ подставляется сюда и в «Результат шага» по мере генерации (стрим через обновления run).</p>
+          <h4>Model and prompt (LLM)</h4>
+          <p class="lp-muted" style="font-size:12px;margin:0 0 6px;"><b>Model:</b> ${escapeHtml(llmModel || "—")}</p>
+          <p class="lp-muted" style="font-size:11px;margin:0 0 8px;">Text below is chat-model messages (system / human roles). While the step is <code>running</code>, the reply is filled here and in "Step result" as it generates (stream via run updates).</p>
           <pre class="lp-orch-pre" style="max-height:240px;overflow:auto;font-size:11px;white-space:pre-wrap;">${escapeHtml(
-            llmPrompt || "Промпт появится в начале вызова LLM. Для LangGraph сначала виден запрос к графу инструментов.",
+            llmPrompt || "The prompt appears when the LLM call starts. For LangGraph you first see the tool-graph request.",
           )}</pre>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>С кем работает</h4>
-          <p class="lp-muted">${peers.length ? escapeHtml(peers.join(" · ")) : "Этот шаг не имеет параллельных коллег в текущем DAG-слое."}</p>
+          <h4>Who it works with</h4>
+          <p class="lp-muted">${peers.length ? escapeHtml(peers.join(" · ")) : "This step has no parallel colleagues in the current DAG layer."}</p>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>Чем занят агент сейчас</h4>
+          <h4>What the agent is doing now</h4>
           <pre class="lp-orch-pre">${escapeHtml(liveAction.join("\n"))}</pre>
         </div>
         <div class="lp-orch-modal-block">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <h4 style="margin:0;">Ход рассуждений</h4>
+            <h4 style="margin:0;">Reasoning trace</h4>
             <div style="display:flex;gap:6px;">
-              <button type="button" id="orch-reasoning-brief" class="${briefBtnClass}" style="padding:4px 8px;font-size:12px;">Кратко</button>
-              <button type="button" id="orch-reasoning-detailed" class="${detailedBtnClass}" style="padding:4px 8px;font-size:12px;">Подробно</button>
+              <button type="button" id="orch-reasoning-brief" class="${briefBtnClass}" style="padding:4px 8px;font-size:12px;">Brief title</button>
+              <button type="button" id="orch-reasoning-detailed" class="${detailedBtnClass}" style="padding:4px 8px;font-size:12px;">Details</button>
             </div>
           </div>
           <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(reasoningText)}</div>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>Над чем работает</h4>
-          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(outputTail || "Пока нет live-вывода шага")}</div>
+          <h4>What it is working on</h4>
+          <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(outputTail || "No live step output yet")}</div>
         </div>
         ${
           execRows
-            ? `<div class="lp-orch-modal-block"><h4>Текущие задачи исполнения</h4><pre class="lp-orch-pre">${escapeHtml(execRows)}</pre></div>`
+            ? `<div class="lp-orch-modal-block"><h4>Current execution tasks</h4><pre class="lp-orch-pre">${escapeHtml(execRows)}</pre></div>`
             : ""
         }
         <div class="lp-orch-modal-block">
-          <h4>Ошибка</h4>
-          <pre class="lp-orch-pre lp-error">${escapeHtml(err || "Нет")}</pre>
+          <h4>Error</h4>
+          <pre class="lp-orch-pre lp-error">${escapeHtml(err || "No")}</pre>
         </div>
         <div class="lp-orch-modal-block">
-          <h4>Результат шага (live)</h4>
-          <div id="orch-modal-step-output" class="lp-markdown lp-orch-pre" style="max-height:420px;overflow:auto;">${renderMarkdownHtml(output || "Пока нет вывода")}</div>
+          <h4>Step result (live)</h4>
+          <div id="orch-modal-step-output" class="lp-markdown lp-orch-pre" style="max-height:420px;overflow:auto;">${renderMarkdownHtml(output || "No output yet")}</div>
         </div>
       `;
       const briefBtn = bodyEl.querySelector("#orch-reasoning-brief");
@@ -1785,7 +1785,7 @@ function renderPortal(): void {
     const bodyEl = document.getElementById("orch-markdown-modal-body");
     if (!root || !titleEl || !bodyEl) return;
     titleEl.textContent = title || "Markdown";
-    bodyEl.innerHTML = renderMarkdownHtml(markdown || "Пусто");
+    bodyEl.innerHTML = renderMarkdownHtml(markdown || "Empty");
     root.removeAttribute("hidden");
     document.body.classList.add("lp-modal-open");
   };
@@ -1813,18 +1813,18 @@ function renderPortal(): void {
     const attempt = Number(stObj.attempt || 0);
     const maxAttempts = Number(stObj.max_attempts || 0);
     const liveRows: string[] = [];
-    if ((s.status || "") === "running") liveRows.push("- Шаг сейчас выполняется.");
-    if (attempt > 0 && maxAttempts > 0) liveRows.push(`- Попытка ${attempt}/${maxAttempts}.`);
-    if (envelope && envelope.step_status) liveRows.push(`- Решение шага: \`${String(envelope.step_status)}\`.`);
-    if (qfu.length) liveRows.push(`- Ожидает уточнений: ${qfu.length}.`);
-    if (peerResp > 0) liveRows.push(`- Получено ответов коллег: ${peerResp}.`);
-    if (!liveRows.length) liveRows.push("- Явных live-меток нет, смотрите поток ниже.");
+    if ((s.status || "") === "running") liveRows.push("- The step is running now.");
+    if (attempt > 0 && maxAttempts > 0) liveRows.push(`- Attempt ${attempt}/${maxAttempts}.`);
+    if (envelope && envelope.step_status) liveRows.push(`- Step decision: \`${String(envelope.step_status)}\`.`);
+    if (qfu.length) liveRows.push(`- Waiting for clarifications: ${qfu.length}.`);
+    if (peerResp > 0) liveRows.push(`- Colleague replies received: ${peerResp}.`);
+    if (!liveRows.length) liveRows.push("- No explicit live labels; see the stream below.");
     const summary = envelope ? String(envelope.summary_md || "").trim() : "";
-    const reasoningMd = summary || outputTail || "Пока нет детального reasoning-трейса.";
+    const reasoningMd = summary || outputTail || "No detailed reasoning trace yet.";
     return {
       nowMd: liveRows.join("\n"),
       reasoningMd,
-      previewMd: outputTail || "Пока нет live-вывода шага.",
+      previewMd: outputTail || "No live step output yet.",
     };
   };
 
@@ -1832,7 +1832,7 @@ function renderPortal(): void {
     const wrap = document.getElementById("orchestration-graph-wrap");
     if (!wrap) return;
     if (!data) {
-      wrap.innerHTML = `<p class="lp-muted">Граф появится после запуска оркестрации.</p>`;
+      wrap.innerHTML = `<p class="lp-muted">The graph appears after orchestration starts.</p>`;
       return;
     }
     const stepMap = buildStepMap(data.steps);
@@ -1868,7 +1868,7 @@ function renderPortal(): void {
       const st = stepMap[n.key]?.status || "pending";
       const pos = positions[n.key];
       const peers = peersForStep(n.key, stepMap);
-      const peerHint = peers.length ? `В связке: ${peers.join(" · ")}` : "Последовательный шаг";
+      const peerHint = peers.length ? `Linked: ${peers.join(" · ")}` : "Sequential step";
       return `
       <button type="button" class="lp-orch-node status-${escapeHtml(st)}" data-step-key="${escapeHtml(n.key)}"
         title="${escapeHtml(peerHint)}"
@@ -1884,7 +1884,7 @@ function renderPortal(): void {
           <div class="lp-orch-graph-nodes" style="width:${width}px;height:${height}px;">${nodesHtml}</div>
         </div>
       </div>
-      <p class="lp-muted" style="margin:8px 0 0;font-size:12px;">Нажмите на узел, чтобы открыть детали шага и связи с другими агентами.</p>
+      <p class="lp-muted" style="margin:8px 0 0;font-size:12px;">Click a node to open step details and links to other agents.</p>
     `;
     wrap.querySelectorAll<HTMLButtonElement>(".lp-orch-node").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1899,9 +1899,9 @@ function renderPortal(): void {
     const wrap = document.getElementById("browser-logs-wrap");
     const st = document.getElementById("browser-logs-status-line");
     if (!wrap) return;
-    if (st) st.textContent = `run ${runId || "—"} · записей ${items.length}`;
+    if (st) st.textContent = `run ${runId || "—"} · entries ${items.length}`;
     if (!items.length) {
-      wrap.innerHTML = `<p class="lp-muted">Пока нет browser-действий для этого прогона.</p>`;
+      wrap.innerHTML = `<p class="lp-muted">No browser actions for this run yet.</p>`;
       return;
     }
     wrap.innerHTML = items
@@ -1915,7 +1915,7 @@ function renderPortal(): void {
         const err = it.error ? `<pre class="lp-orch-pre lp-error">${escapeHtml(String(it.error))}</pre>` : "";
         const artifact = String(it.artifact_name || "").trim();
         const openBtn = artifact
-          ? `<button type="button" class="lp-btn lp-btn-ghost lp-browser-open-artifact" data-name="${escapeHtml(artifact)}">Открыть скриншот</button>`
+          ? `<button type="button" class="lp-btn lp-btn-ghost lp-browser-open-artifact" data-name="${escapeHtml(artifact)}">Open screenshot</button>`
           : "";
         return `<article class="lp-orch-card">
           <div class="lp-orch-card-head">
@@ -1962,7 +1962,7 @@ function renderPortal(): void {
     const wrap = document.getElementById("browser-logs-wrap");
     const st = document.getElementById("browser-logs-status-line");
     if (!wrap || !currentProjectId || !runId) {
-      if (wrap) wrap.innerHTML = `<p class="lp-muted">Логи браузера появятся после запуска оркестрации.</p>`;
+      if (wrap) wrap.innerHTML = `<p class="lp-muted">Browser logs appear after orchestration starts.</p>`;
       if (st) st.textContent = "";
       return;
     }
@@ -2001,7 +2001,7 @@ function renderPortal(): void {
     }
   };
 
-  /** Дублирует завершённые шаги оркестрации в основной чат как «групповой диалог» ролей. */
+  /** Mirrors completed orchestration steps into the main chat as a role "group dialog". */
   const syncOrchestrationStepsToChat = (
     runId: string,
     data: {
@@ -2032,7 +2032,7 @@ function renderPortal(): void {
         const errBody = s.error || s.output || "";
         projectAiChatHistory.push({
           role: "team",
-          content: `Ошибка шага: ${errBody}`,
+          content: `Step error: ${errBody}`,
           teamLabel: lbl,
           taskTitle: tsk,
           stepKey: sk,
@@ -2069,7 +2069,7 @@ function renderPortal(): void {
       graphWrap.innerHTML = "";
     }
     if (!data) {
-      stepsEl.innerHTML = `<p class="lp-muted">Выберите проект. Запуск — «Оркестрация ролей» (то же сообщение, что для чата).</p>`;
+      stepsEl.innerHTML = `<p class="lp-muted">Select a project. Start via "Role orchestration" (same message as for chat).</p>`;
       if (statusEl) statusEl.textContent = "";
       renderOrchestrationStateLive(null);
       renderOrchestrationGraph(null);
@@ -2079,10 +2079,10 @@ function renderPortal(): void {
     renderOrchestrationStateLive(data);
     renderOrchestrationGraph(data);
     if (statusEl) {
-      statusEl.textContent = `Прогон: ${data.status || "—"} · фаза ${data.phase || "—"} · run ${data.run_id || ""}${data.error && data.status === "error" ? ` · ${data.error}` : ""}`;
+      statusEl.textContent = `Run: ${data.status || "—"} · phase ${data.phase || "—"} · run ${data.run_id || ""}${data.error && data.status === "error" ? ` · ${data.error}` : ""}`;
     }
     if (archWrap && data.architecture_md) {
-      archWrap.innerHTML = `<div class="lp-orch-arch"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:15px;">Архитектура</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="Архитектура" data-md-kind="architecture" style="padding:4px 8px;font-size:12px;">Открыть полноэкранно</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(data.architecture_md || ""))}</div></div>`;
+      archWrap.innerHTML = `<div class="lp-orch-arch"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:15px;">Architecture</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="Architecture" data-md-kind="architecture" style="padding:4px 8px;font-size:12px;">Open fullscreen</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(data.architecture_md || ""))}</div></div>`;
     }
     const execTasks = data.execution_tasks;
     if (execWrap && execTasks && execTasks.length > 0) {
@@ -2095,7 +2095,7 @@ function renderPortal(): void {
           return `<li><strong>${escapeHtml(title)}</strong> · <code>${escapeHtml(kind)}</code> · ${escapeHtml(st)}${err}</li>`;
         })
         .join("");
-      execWrap.innerHTML = `<div class="lp-orch-arch" style="margin-top:10px;"><h3 style="margin:0 0 8px;font-size:15px;">Исполнение (воркеры / API)</h3><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">${rows}</ul></div>`;
+      execWrap.innerHTML = `<div class="lp-orch-arch" style="margin-top:10px;"><h3 style="margin:0 0 8px;font-size:15px;">Execution (workers / API)</h3><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">${rows}</ul></div>`;
     }
     const steps = data.steps || [];
     let html = steps
@@ -2107,23 +2107,23 @@ function renderPortal(): void {
         const stepKey = String(s.step_key || "");
         const insight = getStepRealtimeSummary(s);
         const detailsBtn = s.output
-          ? `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="${escapeHtml(`${lbl}: полный markdown`) }" data-md-kind="step_output" data-step-key="${escapeHtml(stepKey)}" style="padding:4px 8px;font-size:12px;">Полный markdown</button>`
+          ? `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="${escapeHtml(`${lbl}: full markdown`) }" data-md-kind="step_output" data-step-key="${escapeHtml(stepKey)}" style="padding:4px 8px;font-size:12px;">Full markdown</button>`
           : "";
         const errBlock = s.error
-          ? `<div class="lp-orch-modal-block" style="margin-top:8px;"><h4 style="font-size:12px;">Ошибка</h4><div class="lp-markdown lp-orch-pre lp-error">${renderMarkdownHtml(String(s.error || ""))}</div></div>`
+          ? `<div class="lp-orch-modal-block" style="margin-top:8px;"><h4 style="font-size:12px;">Error</h4><div class="lp-markdown lp-orch-pre lp-error">${renderMarkdownHtml(String(s.error || ""))}</div></div>`
           : "";
         const compactPreview = s.error
           ? String(s.error || "").split(/\r?\n/).filter((x) => x.trim()).slice(0, 2).join("\n")
           : insight.previewMd;
         const body = `<div class="lp-markdown lp-orch-pre" style="max-height:96px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(compactPreview)}</div>
           <details style="margin-top:8px;">
-            <summary class="lp-muted" style="cursor:pointer;font-size:12px;">Подробнее: действия и рассуждения</summary>
+            <summary class="lp-muted" style="cursor:pointer;font-size:12px;">Details: actions and reasoning</summary>
             <div class="lp-orch-modal-block" style="margin-top:8px;">
-              <h4 style="font-size:12px;">Что делает</h4>
+              <h4 style="font-size:12px;">What it does</h4>
               <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(insight.nowMd)}</div>
             </div>
             <div class="lp-orch-modal-block" style="margin-top:8px;">
-              <h4 style="font-size:12px;">Ход рассуждений</h4>
+              <h4 style="font-size:12px;">Reasoning trace</h4>
               <div class="lp-markdown lp-orch-pre">${renderMarkdownHtml(insight.reasoningMd)}</div>
             </div>
             <div class="lp-orch-modal-block" style="margin-top:8px;">
@@ -2150,9 +2150,9 @@ function renderPortal(): void {
     const fin = data.final_report_md || data.final_message;
     if (finalWrap) {
       if (data.status === "paused") {
-        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Ожидание ответа</h3><p class="lp-muted" style="margin:0;font-size:13px;">Пайплайн приостановлен: проверьте шаги ниже — там могут быть вопросы к вам. Отправьте уточнение в чат и нажмите «Запустить ИИ команду» — цепочка продолжится с текущего шага.</p></div>`;
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><h3 style="margin:0 0 8px;font-size:14px;">Waiting for reply</h3><p class="lp-muted" style="margin:0;font-size:13px;">Pipeline paused: check the steps below — there may be questions for you. Send a clarification in chat and click "Start AI Team" — the chain will continue from the current step.</p></div>`;
       } else if (fin && (data.status === "done" || data.status === "running")) {
-        finalWrap.innerHTML = `<div class="lp-orch-summary"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:14px;">Итог для пользователя (PM)</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="Итог PM" data-md-kind="final" style="padding:4px 8px;font-size:12px;">Открыть полноэкранно</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(fin || ""))}</div></div>`;
+        finalWrap.innerHTML = `<div class="lp-orch-summary"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;font-size:14px;">User summary (PM)</h3><button type="button" class="lp-btn lp-btn-ghost lp-open-orch-markdown" data-md-title="PM summary" data-md-kind="final" style="padding:4px 8px;font-size:12px;">Open fullscreen</button></div><div class="lp-markdown lp-orch-pre" style="max-height:220px;overflow:auto;margin-top:8px;">${renderMarkdownHtml(String(fin || ""))}</div></div>`;
       } else {
         finalWrap.innerHTML = "";
       }
@@ -2182,11 +2182,11 @@ function renderPortal(): void {
     const tbody = document.getElementById("portal-ai-team-runs-live-body");
     if (!tbody) return;
     if (!currentProjectId) {
-      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Select project</td></tr>`;
       return;
     }
     if (!runs.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Нет активных или недавних run</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">No active or recent runs</td></tr>`;
       return;
     }
     tbody.innerHTML = runs
@@ -2198,7 +2198,7 @@ function renderPortal(): void {
         const batch = escapeHtml(String(r.batch_status || "idle"));
         const updated = r.updated_at ? new Date(r.updated_at).toLocaleTimeString() : "—";
         const err = r.error ? `<span class="lp-muted" title="${escapeHtml(String(r.error))}">⚠</span>` : "";
-        const openBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-run" data-run-id="${runId}" style="padding:4px 8px;font-size:12px;">Открыть</button>`;
+        const openBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-open-orch-run" data-run-id="${runId}" style="padding:4px 8px;font-size:12px;">Open</button>`;
         return `<tr>
           <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><code>${runId}</code></td>
           <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><span class="lp-badge">${st}</span>${err}</td>
@@ -2221,7 +2221,7 @@ function renderPortal(): void {
     stopOrchestrationStream();
     resetOrchestrationLiveLog();
     sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, runId);
-    appendOrchestrationLiveLog(`ручной просмотр run ${runId}: подключение к stream LLM…`);
+    appendOrchestrationLiveLog(`manual view of run ${runId}: connecting to LLM stream…`);
     await pollOrchestration(runId);
     void loadBrowserLogs(runId);
     void startOrchestrationStream(runId);
@@ -2231,7 +2231,7 @@ function renderPortal(): void {
     const tbody = document.getElementById("portal-ai-team-runs-live-body");
     if (!tbody) return;
     if (!currentProjectId) {
-      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="lp-muted">Select project</td></tr>`;
       return;
     }
     try {
@@ -2267,7 +2267,7 @@ function renderPortal(): void {
     const prev = orchStreamLastRun;
     const iter = Number(data.iteration || 0);
     const batchStatus = String(data.batch_status || "—");
-    const runLine = `run ${runId}: статус ${String(data.status || "—")} · фаза ${String(data.phase || "—")} · iteration ${iter} · batch ${batchStatus}`;
+    const runLine = `run ${runId}: status ${String(data.status || "—")} · phase ${String(data.phase || "—")} · iteration ${iter} · batch ${batchStatus}`;
     if (!prev) {
       appendOrchestrationLiveLog(runLine);
     } else {
@@ -2287,7 +2287,7 @@ function renderPortal(): void {
         const st = String(s.status || "");
         const pst = String(p?.status || "");
         if (!p || st !== pst) {
-          appendOrchestrationLiveLog(`шаг ${key}: ${st}`);
+          appendOrchestrationLiveLog(`step ${key}: ${st}`);
         }
         const out = String(s.output || "");
         const pout = String(p?.output || "");
@@ -2299,7 +2299,7 @@ function renderPortal(): void {
           }
         }
         if (s.error && s.error !== p?.error) {
-          appendOrchestrationLiveLog(`шаг ${key}: ошибка ${String(s.error)}`);
+          appendOrchestrationLiveLog(`step ${key}: error ${String(s.error)}`);
         }
       }
       const prevExec = new Map((prev.execution_tasks || []).map((t) => [String(t.id || t.seq || ""), t]));
@@ -2403,7 +2403,7 @@ function renderPortal(): void {
     }
     if (typ === "stream_end") {
       orchStreamFinished = true;
-      appendOrchestrationLiveLog(`stream завершён: ${String(ev.status || "unknown")}`);
+      appendOrchestrationLiveLog(`stream finished: ${String(ev.status || "unknown")}`);
       return;
     }
     if (typ === "agent_trace") {
@@ -2457,7 +2457,7 @@ function renderPortal(): void {
       }
     } catch (e) {
       if (!ctrl.signal.aborted) {
-        const msg = isFetchNetworkError(e) ? fetchNetworkHint("stream оркестрации") : String(e);
+        const msg = isFetchNetworkError(e) ? fetchNetworkHint("orchestration stream") : String(e);
         appendOrchestrationLiveLog(`stream disconnected: ${msg}`);
         void pollOrchestration(runId);
         orchPollTimer = window.setInterval(() => void pollOrchestration(runId), 900);
@@ -2528,7 +2528,7 @@ function renderPortal(): void {
       const code = typeof ev?.code === "number" ? ev.code : 0;
       const reason = String(ev?.reason || "").trim();
       appendOrchestrationLiveLog(
-        `websocket закрыт (code=${code}${reason ? `, ${reason}` : ""}), переключение на NDJSON stream`,
+        `websocket closed (code=${code}${reason ? `, ${reason}` : ""}), switching to NDJSON stream`,
       );
       void startOrchestrationNdjsonStream(runId);
     };
@@ -2569,7 +2569,7 @@ function renderPortal(): void {
     if (!preview) return;
     const markdown = docsMdEditor ? getDocsMarkdownContent(docsMdEditor) : "";
     if (!markdown.trim()) {
-      preview.innerHTML = `<p class="lp-muted">Предпросмотр появится здесь…</p>`;
+      preview.innerHTML = `<p class="lp-muted">Preview will appear here…</p>`;
       return;
     }
     preview.innerHTML = renderMarkdownHtml(markdown);
@@ -2599,8 +2599,8 @@ function renderPortal(): void {
     ensureDocsMarkdownEditor();
     if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, "");
     renderDocsMarkdownPreview();
-    if (chgEl) chgEl.value = "Создано/обновлено вручную";
-    if (versionsWrap) versionsWrap.innerHTML = `<p class="lp-muted">Выберите документ в списке слева.</p>`;
+    if (chgEl) chgEl.value = "Created/updated manually";
+    if (versionsWrap) versionsWrap.innerHTML = `<p class="lp-muted">Select a document in the list on the left.</p>`;
   };
 
   const loadDocumentVersions = async (docId: string) => {
@@ -2611,13 +2611,13 @@ function renderPortal(): void {
       { headers: authHeader(token()) },
     );
     if (!resp.ok) {
-      wrap.innerHTML = `<p class="lp-muted">Ошибка загрузки версий: ${resp.status}</p>`;
+      wrap.innerHTML = `<p class="lp-muted">Error loading versions: ${resp.status}</p>`;
       return;
     }
     const data = (await resp.json()) as { items?: Array<Record<string, unknown>> };
     const items = data.items || [];
     if (items.length === 0) {
-      wrap.innerHTML = `<p class="lp-muted">Пока нет версий.</p>`;
+      wrap.innerHTML = `<p class="lp-muted">No versions yet.</p>`;
       return;
     }
     wrap.innerHTML = items
@@ -2631,7 +2631,7 @@ function renderPortal(): void {
             <span class="lp-muted" style="font-size:12px;">${escapeHtml(created)}</span>
           </div>
           <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">${escapeHtml(summary || "—")}</p>
-          <button type="button" class="lp-btn lp-btn-ghost lp-docs-load-ver" data-version="${ver}">Открыть</button>
+          <button type="button" class="lp-btn lp-btn-ghost lp-docs-load-ver" data-version="${ver}">Open</button>
         </article>`;
       })
       .join("");
@@ -2644,7 +2644,7 @@ function renderPortal(): void {
           { headers: authHeader(token()) },
         );
         if (!r.ok) {
-          alert(`Не удалось загрузить версию ${ver}: ${r.status}`);
+          alert(`Failed to load version ${ver}: ${r.status}`);
           return;
         }
         const payload = (await r.json()) as { version?: Record<string, unknown> };
@@ -2682,7 +2682,7 @@ function renderPortal(): void {
     ensureDocsMarkdownEditor();
     if (docsMdEditor) setDocsMarkdownContent(docsMdEditor, String(ver.content_md ?? ""));
     renderDocsMarkdownPreview();
-    if (chgEl) chgEl.value = "Обновлено вручную";
+    if (chgEl) chgEl.value = "Updated manually";
     await loadDocumentVersions(currentDocId);
   };
 
@@ -2692,7 +2692,7 @@ function renderPortal(): void {
     const typeEl = document.getElementById("docs-filter-type") as HTMLSelectElement | null;
     if (!listEl || !stEl) return;
     if (!currentProjectId) {
-      listEl.innerHTML = `<p class="lp-muted">Выберите проект</p>`;
+      listEl.innerHTML = `<p class="lp-muted">Select project</p>`;
       stEl.textContent = "";
       resetDocsEditor();
       return;
@@ -2706,15 +2706,15 @@ function renderPortal(): void {
       { headers: authHeader(token()) },
     );
     if (!r.ok) {
-      listEl.innerHTML = `<p class="lp-muted">Ошибка загрузки: ${r.status}</p>`;
+      listEl.innerHTML = `<p class="lp-muted">Load error: ${r.status}</p>`;
       stEl.textContent = "";
       return;
     }
     const data = (await r.json()) as { items?: ProjectDocItem[] };
     const items = data.items || [];
-    stEl.textContent = `Документов: ${items.length}`;
+    stEl.textContent = `Documents: ${items.length}`;
     if (items.length === 0) {
-      listEl.innerHTML = `<p class="lp-muted">Пока нет документов.</p>`;
+      listEl.innerHTML = `<p class="lp-muted">No documents yet.</p>`;
       return;
     }
     listEl.innerHTML = items
@@ -2727,8 +2727,8 @@ function renderPortal(): void {
           <h4 style="margin:0 0 4px;font-size:14px;">${escapeHtml(d.title || d.slug)}</h4>
           <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">slug: ${escapeHtml(d.slug)} · ${escapeHtml(d.status)}</p>
           <div class="lp-row" style="gap:6px;">
-            <button type="button" class="lp-btn lp-btn-ghost lp-doc-open" data-doc-id="${escapeHtml(d.id)}">Открыть</button>
-            <button type="button" class="lp-btn lp-btn-ghost lp-doc-del" data-doc-id="${escapeHtml(d.id)}" style="color:#b91c1c;">Удалить</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-doc-open" data-doc-id="${escapeHtml(d.id)}">Open</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-doc-del" data-doc-id="${escapeHtml(d.id)}" style="color:#b91c1c;">Delete</button>
           </div>
         </article>`,
       )
@@ -2743,12 +2743,12 @@ function renderPortal(): void {
       b.addEventListener("click", async () => {
         const id = (b as HTMLButtonElement).dataset.docId;
         if (!id || !currentProjectId) return;
-        if (!window.confirm("Удалить документ?")) return;
+        if (!window.confirm("Delete document?")) return;
         const rr = await fetch(
           `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(id)}`,
           { method: "DELETE", headers: authHeader(token()) },
         );
-        if (!rr.ok) alert(`Ошибка удаления: ${rr.status}`);
+        if (!rr.ok) alert(`Delete error: ${rr.status}`);
         if (currentDocId === id) resetDocsEditor();
         void loadDocumentsList();
       });
@@ -2757,7 +2757,7 @@ function renderPortal(): void {
 
   const saveDocumentFromEditor = async () => {
     if (!currentProjectId) {
-      alert("Выберите проект");
+      alert("Select project");
       return;
     }
     const title = (document.getElementById("docs-edit-title") as HTMLInputElement | null)?.value.trim() || "";
@@ -2768,7 +2768,7 @@ function renderPortal(): void {
     const changeSummary =
       (document.getElementById("docs-edit-change-summary") as HTMLInputElement | null)?.value.trim() || "Updated";
     if (!title || !content.trim()) {
-      alert("Нужны title и content");
+      alert("Title and content are required");
       return;
     }
     if (!currentDocId) {
@@ -2787,7 +2787,7 @@ function renderPortal(): void {
       });
       if (!resp.ok) {
         const txt = await resp.text();
-        alert(txt || `Ошибка ${resp.status}`);
+        alert(txt || `Error ${resp.status}`);
         return;
       }
       const payload = (await resp.json()) as { document?: { id?: string } };
@@ -2810,7 +2810,7 @@ function renderPortal(): void {
     );
     if (!vr.ok) {
       const txt = await vr.text();
-      alert(txt || `Ошибка ${vr.status}`);
+      alert(txt || `Error ${vr.status}`);
       return;
     }
     await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/${encodeURIComponent(currentDocId)}`, {
@@ -2827,11 +2827,11 @@ function renderPortal(): void {
     const q = (document.getElementById("docs-search-query") as HTMLInputElement | null)?.value.trim() || "";
     if (!wrap) return;
     if (!currentProjectId) {
-      wrap.innerHTML = `<p class="lp-muted">Выберите проект</p>`;
+      wrap.innerHTML = `<p class="lp-muted">Select project</p>`;
       return;
     }
     if (!q) {
-      wrap.innerHTML = `<p class="lp-muted">Введите запрос</p>`;
+      wrap.innerHTML = `<p class="lp-muted">Enter a query</p>`;
       return;
     }
     const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/documents/search`, {
@@ -2840,13 +2840,13 @@ function renderPortal(): void {
       body: JSON.stringify({ query: q, top_k: 8 }),
     });
     if (!r.ok) {
-      wrap.innerHTML = `<p class="lp-muted">Ошибка поиска: ${r.status}</p>`;
+      wrap.innerHTML = `<p class="lp-muted">Search error: ${r.status}</p>`;
       return;
     }
     const data = (await r.json()) as { items?: Array<Record<string, unknown>> };
     const items = data.items || [];
     if (items.length === 0) {
-      wrap.innerHTML = `<p class="lp-muted">Ничего не найдено.</p>`;
+      wrap.innerHTML = `<p class="lp-muted">Nothing found.</p>`;
       return;
     }
     wrap.innerHTML = items
@@ -2860,7 +2860,7 @@ function renderPortal(): void {
           </div>
           <h4 style="margin:0 0 6px;font-size:14px;">${escapeHtml(String(it.title ?? ""))}</h4>
           <p class="lp-muted" style="margin:0 0 8px;font-size:12px;">${escapeHtml(String(it.excerpt ?? ""))}</p>
-          <button type="button" class="lp-btn lp-btn-ghost lp-doc-search-open" data-doc-id="${escapeHtml(docId)}">Открыть документ</button>
+          <button type="button" class="lp-btn lp-btn-ghost lp-doc-search-open" data-doc-id="${escapeHtml(docId)}">Open document</button>
         </article>`;
       })
       .join("");
@@ -2884,7 +2884,7 @@ function renderPortal(): void {
     const root = document.getElementById("tracker-task-modal");
     const body = document.getElementById("tracker-task-modal-body");
     if (!root || !body) return;
-    body.innerHTML = `<p class="lp-muted">Загрузка…</p>`;
+    body.innerHTML = `<p class="lp-muted">Loading…</p>`;
     root.removeAttribute("hidden");
     document.body.classList.add("lp-modal-open");
     try {
@@ -2912,7 +2912,7 @@ function renderPortal(): void {
         evData = {};
       }
       if (!itemResp.ok) {
-        body.innerHTML = `<p class="lp-error">Ошибка загрузки задачи: ${escapeHtml(String((item as { detail?: string }).detail || itemRaw || itemResp.status))}</p>`;
+        body.innerHTML = `<p class="lp-error">Error loading task: ${escapeHtml(String((item as { detail?: string }).detail || itemRaw || itemResp.status))}</p>`;
         return;
       }
       const meta = (item.meta && typeof item.meta === "object" ? (item.meta as Record<string, unknown>) : {}) || {};
@@ -2955,7 +2955,7 @@ function renderPortal(): void {
               </article>`;
             })
             .join("")
-        : `<p class="lp-muted">Событий пока нет.</p>`;
+        : `<p class="lp-muted">No events yet.</p>`;
       body.innerHTML = `
         <div class="lp-orch-grid">
           <article class="lp-orch-card">
@@ -2968,19 +2968,19 @@ function renderPortal(): void {
             <p class="lp-muted" style="font-size:12px;">execution_id: <code>${escapeHtml(String(item.last_execution_id || "—"))}</code></p>
           </article>
           <article class="lp-orch-card">
-            <h4 style="margin:0 0 8px;font-size:14px;">Результат агента</h4>
+            <h4 style="margin:0 0 8px;font-size:14px;">Agent result</h4>
             ${
               commentary
                 ? `<p style="margin:0 0 10px;font-size:13px;white-space:pre-wrap;">${escapeHtml(commentary)}</p>`
-                : `<p class="lp-muted" style="margin:0 0 10px;">Комментарий агента пока отсутствует.</p>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">No agent comment yet.</p>`
             }
-            <h4 style="margin:0 0 8px;font-size:14px;">Что было сделано</h4>
+            <h4 style="margin:0 0 8px;font-size:14px;">What was done</h4>
             ${
               workDone.length
                 ? `<ul style="margin:0 0 10px 18px;padding:0;">${workDone
                     .map((row) => `<li style="margin:0 0 4px;">${escapeHtml(row)}</li>`)
                     .join("")}</ul>`
-                : `<p class="lp-muted" style="margin:0 0 10px;">Нет явного списка выполненных действий.</p>`
+                : `<p class="lp-muted" style="margin:0 0 10px;">No explicit list of completed actions.</p>`
             }
             <h4 style="margin:0 0 8px;font-size:14px;">DoD</h4>
             <p style="margin:0 0 8px;font-size:13px;">
@@ -2996,13 +2996,13 @@ function renderPortal(): void {
             }
             ${dodNotes ? `<p class="lp-muted" style="margin:0 0 10px;">${escapeHtml(dodNotes)}</p>` : ""}
             <details>
-              <summary class="lp-muted" style="cursor:pointer;">Показать raw result JSON</summary>
-              ${resultJson ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(resultJson)}</pre>` : `<p class="lp-muted">Результат ещё не сформирован.</p>`}
+              <summary class="lp-muted" style="cursor:pointer;">Show raw result JSON</summary>
+              ${resultJson ? `<pre class="lp-orch-pre" style="margin-top:8px;">${escapeHtml(resultJson)}</pre>` : `<p class="lp-muted">Result not formed yet.</p>`}
             </details>
-            ${lastErr ? `<h4 style="margin:12px 0 8px;font-size:14px;">Ошибка</h4><pre class="lp-orch-pre lp-error">${escapeHtml(lastErr)}</pre>` : ""}
+            ${lastErr ? `<h4 style="margin:12px 0 8px;font-size:14px;">Error</h4><pre class="lp-orch-pre lp-error">${escapeHtml(lastErr)}</pre>` : ""}
           </article>
         </div>
-        <h4 style="margin:12px 0 8px;font-size:14px;">История выполнения</h4>
+        <h4 style="margin:12px 0 8px;font-size:14px;">Execution history</h4>
         <div>${eventsHtml}</div>
       `;
     } catch (e) {
@@ -3016,25 +3016,25 @@ function renderPortal(): void {
     if (!listEl || !currentProjectId) return;
     const t = token();
     if (!t) return;
-    if (stEl) stEl.textContent = "Загрузка…";
+    if (stEl) stEl.textContent = "Loading…";
     try {
       const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases`, {
         headers: authHeader(t),
       });
       const data = await r.json();
       const items = Array.isArray(data.items) ? data.items : [];
-      if (stEl) stEl.textContent = `${items.length} баз(ы)`;
+      if (stEl) stEl.textContent = `${items.length} base(s)`;
       listEl.innerHTML = items
         .map((kb: Record<string, unknown>) => {
           const id = String(kb.id || "");
           return `<article class="lp-orch-card"><p style="margin:0;font-weight:600;">${escapeHtml(String(kb.name || ""))}</p>
             <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(kb.category || ""))} · ${escapeHtml(String(kb.slug || ""))}</p>
             <div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
-            <button type="button" class="lp-btn lp-btn-ghost lp-kb-open" data-id="${escapeHtml(id)}" data-name="${escapeHtml(String(kb.name || ""))}">Документы</button>
-            <button type="button" class="lp-btn lp-btn-ghost lp-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить базу</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-open" data-id="${escapeHtml(id)}" data-name="${escapeHtml(String(kb.name || ""))}">Documents</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Delete base</button>
             </div></article>`;
         })
-        .join("") || `<p class="lp-muted">Нет баз — создайте первую.</p>`;
+        .join("") || `<p class="lp-muted">No bases — create the first one.</p>`;
       listEl.querySelectorAll(".lp-kb-open").forEach((b) => {
         b.addEventListener("click", () => {
           const id = (b as HTMLButtonElement).dataset.id || "";
@@ -3050,7 +3050,7 @@ function renderPortal(): void {
       listEl.querySelectorAll(".lp-kb-delete").forEach((b) => {
         b.addEventListener("click", async () => {
           const id = (b as HTMLButtonElement).dataset.id || "";
-          if (!id || !currentProjectId || !confirm("Удалить базу знаний и все её документы?")) return;
+          if (!id || !currentProjectId || !confirm("Delete the knowledge base and all its documents?")) return;
           const resp = await fetch(
             `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(id)}`,
             { method: "DELETE", headers: authHeader(token()) },
@@ -3085,13 +3085,13 @@ function renderPortal(): void {
         const id = String(d.id || "");
         const en = d.enabled !== false;
         return `<article class="lp-orch-card" style="${en ? "" : "opacity:0.65;"}"><p style="margin:4px 0;font-weight:600;">${escapeHtml(String(d.filename || ""))}</p>
-          <p class="lp-muted" style="font-size:12px;">${escapeHtml(st)} · chunks: ${Number(d.chunk_count || 0)} · ${en ? "вкл" : "выкл"}</p>
+          <p class="lp-muted" style="font-size:12px;">${escapeHtml(st)} · chunks: ${Number(d.chunk_count || 0)} · ${en ? "on" : "off"}</p>
           <div class="lp-row" style="gap:6px;margin-top:6px;flex-wrap:wrap;">
-            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-toggle" data-id="${escapeHtml(id)}" data-enabled="${en ? "0" : "1"}">${en ? "Выключить" : "Включить"}</button>
-            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-toggle" data-id="${escapeHtml(id)}" data-enabled="${en ? "0" : "1"}">${en ? "Disable" : "Enable"}</button>
+            <button type="button" class="lp-btn lp-btn-ghost lp-kb-doc-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Delete</button>
           </div></article>`;
       })
-      .join("") || `<p class="lp-muted">Нет файлов.</p>`;
+      .join("") || `<p class="lp-muted">No files.</p>`;
     listEl.querySelectorAll(".lp-kb-doc-toggle").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const docId = (btn as HTMLButtonElement).dataset.id || "";
@@ -3115,7 +3115,7 @@ function renderPortal(): void {
     listEl.querySelectorAll(".lp-kb-doc-delete").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const docId = (btn as HTMLButtonElement).dataset.id || "";
-        if (!docId || !kbId || !currentProjectId || !confirm("Удалить документ безвозвратно?")) return;
+        if (!docId || !kbId || !currentProjectId || !confirm("Permanently delete the document?")) return;
         const resp = await fetch(
           `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
           { method: "DELETE", headers: authHeader(token()) },
@@ -3134,11 +3134,11 @@ function renderPortal(): void {
     const stEl = document.getElementById("tracker-status-line");
     if (!listEl) return;
     if (!currentProjectId) {
-      listEl.innerHTML = `<p class="lp-muted">Выберите проект.</p>`;
+      listEl.innerHTML = `<p class="lp-muted">Select project.</p>`;
       if (stEl) stEl.textContent = "";
       return;
     }
-    if (stEl) stEl.textContent = "Загрузка…";
+    if (stEl) stEl.textContent = "Loading…";
     try {
       const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/tracker/items`, {
         headers: authHeader(token()),
@@ -3148,7 +3148,7 @@ function renderPortal(): void {
       try {
         data = JSON.parse(raw) as { items?: Array<Record<string, unknown>> };
       } catch {
-        listEl.innerHTML = `<p class="lp-muted">Ошибка разбора ответа</p>`;
+        listEl.innerHTML = `<p class="lp-muted">Failed to parse response</p>`;
         if (stEl) stEl.textContent = "";
         return;
       }
@@ -3158,9 +3158,9 @@ function renderPortal(): void {
         return;
       }
       const items = data.items || [];
-      if (stEl) stEl.textContent = `${items.length} карточек`;
+      if (stEl) stEl.textContent = `${items.length} cards`;
       if (items.length === 0) {
-        listEl.innerHTML = `<p class="lp-muted">Пока нет задач — создайте выше.</p>`;
+        listEl.innerHTML = `<p class="lp-muted">No tasks yet — create one above.</p>`;
         return;
       }
       const canDispatch = (it: Record<string, unknown>) => {
@@ -3201,20 +3201,20 @@ function renderPortal(): void {
               : "";
           const key = it.assignee_agent_key ? escapeHtml(String(it.assignee_agent_key)) : "";
           const editBtn = canEdit(it)
-            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-edit" data-id="${escapeHtml(id)}">Редактировать</button>`
+            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-edit" data-id="${escapeHtml(id)}">Edit</button>`
             : "";
           const dispatchBtn = canDispatch(it)
-            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-dispatch" data-id="${escapeHtml(id)}">В очередь</button>`
+            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-dispatch" data-id="${escapeHtml(id)}">Enqueue</button>`
             : "";
           const closeBtn = canClose(it)
-            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-close" data-id="${escapeHtml(id)}">Закрыть</button>`
+            ? `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-close" data-id="${escapeHtml(id)}">Close</button>`
             : "";
-          const detailsBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-result" data-id="${escapeHtml(id)}">Результат</button>`;
+          const detailsBtn = `<button type="button" class="lp-btn lp-btn-ghost lp-tracker-result" data-id="${escapeHtml(id)}">Result</button>`;
           const actions =
             editBtn || dispatchBtn || closeBtn || detailsBtn
               ? `<div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">${detailsBtn}${editBtn}${dispatchBtn}${closeBtn}</div>`
               : "";
-          return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Роль: ${role}</p>${metaLine}<p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
+          return `<article class="lp-orch-card"><div class="lp-orch-card-head"><span class="lp-orch-badge wait">${kind}</span><span class="${statusBadgeClass(rawSt)}" style="font-size:12px;">${st}</span></div><p style="margin:6px 0;font-weight:600;">${title}</p><p class="lp-muted" style="font-size:12px;margin:0;">Role: ${role}</p>${metaLine}<p class="lp-muted" style="font-size:11px;margin:4px 0 0;word-break:break-all;">${key}</p>${actions}</article>`;
         })
         .join("");
       const showTrackerEdit = (show: boolean) => {
@@ -3235,7 +3235,7 @@ function renderPortal(): void {
             try {
               item = JSON.parse(raw) as Record<string, unknown>;
             } catch {
-              alert("Некорректный ответ");
+              alert("Invalid response");
               return;
             }
             if (!resp.ok) {
@@ -3287,7 +3287,7 @@ function renderPortal(): void {
         b.addEventListener("click", async () => {
           const id = (b as HTMLButtonElement).dataset.id;
           if (!id || !currentProjectId) return;
-          if (!window.confirm("Закрыть эту карточку? Статус станет «cancelled».")) return;
+          if (!window.confirm("Close this card? Status will become "cancelled".")) return;
           (b as HTMLButtonElement).disabled = true;
           try {
             const resp = await fetch(
@@ -3338,7 +3338,7 @@ function renderPortal(): void {
     }
     const last = sessionStorage.getItem(`lambot_orch_run_${currentProjectId}`);
     if (last) {
-      appendOrchestrationLiveLog(`подключение к stream run ${last}…`);
+      appendOrchestrationLiveLog(`connecting to stream run ${last}…`);
       void (async () => {
         await pollOrchestration(last);
         void startOrchestrationStream(last);
@@ -3366,7 +3366,7 @@ function renderPortal(): void {
             const st = typeof j.run.status === "string" ? j.run.status : "";
             if (st === "running") {
               sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, rid);
-              appendOrchestrationLiveLog(`подключение к stream run ${rid}…`);
+              appendOrchestrationLiveLog(`connecting to stream run ${rid}…`);
               void startOrchestrationStream(rid);
             }
           } else {
@@ -3383,20 +3383,20 @@ function renderPortal(): void {
 
   const startOrchestration = async () => {
     if (!currentProjectId) {
-      alert("Выберите проект");
+      alert("Select project");
       return;
     }
     const orchInp = document.getElementById("orchestration-user-message") as HTMLTextAreaElement | null;
     const chatInp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
     const msg = (orchInp?.value?.trim() || chatInp?.value?.trim() || "").trim();
     if (!msg) {
-      alert("Введите запрос в поле оркестрации или сообщение в чате по проекту");
+      alert("Enter a query in the orchestration field or a message in the project chat");
       return;
     }
     stopOrchestrationPoll();
     stopOrchestrationStream();
     const stLine = document.getElementById("orchestration-status-line");
-    if (stLine) stLine.textContent = "Подготовка запуска…";
+    if (stLine) stLine.textContent = "Preparing start…";
     try {
       let endpoint = `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/start`;
       let continueRunId = "";
@@ -3415,13 +3415,13 @@ function renderPortal(): void {
             if (st === "paused" || st === "done" || st === "error") {
               continueRunId = lastRunId;
               endpoint = `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-orchestrate/runs/${encodeURIComponent(lastRunId)}/continue`;
-              if (stLine) stLine.textContent = st === "paused" ? "Продолжение приостановленного запуска…" : "Продолжение run по новому сообщению…";
+              if (stLine) stLine.textContent = st === "paused" ? "Resuming paused run…" : "Continuing run with a new message…";
               appendOrchestrationLiveLog(
-                `${st === "paused" ? "resume" : "continue"} run ${lastRunId}: отправлено сообщение пользователя`,
+                `${st === "paused" ? "resume" : "continue"} run ${lastRunId}: user message sent`,
               );
             } else if (st === "running") {
-              if (stLine) stLine.textContent = `run ${lastRunId} уже выполняется — дождитесь завершения шага`;
-              appendOrchestrationLiveLog(`run ${lastRunId} уже running: новое сообщение будет доступно после завершения текущего цикла`);
+              if (stLine) stLine.textContent = `run ${lastRunId} is already running — wait for the step to finish`;
+              appendOrchestrationLiveLog(`run ${lastRunId} already running: a new message will be available after the current cycle finishes`);
               await pollOrchestration(lastRunId);
               void startOrchestrationStream(lastRunId);
               return;
@@ -3445,7 +3445,7 @@ function renderPortal(): void {
       try {
         payload = JSON.parse(raw) as { run_id?: string; detail?: string };
       } catch {
-        alert(resp.ok ? "Некорректный ответ" : `Ошибка ${resp.status}`);
+        alert(resp.ok ? "Invalid response" : `Error ${resp.status}`);
         if (stLine) stLine.textContent = "";
         return;
       }
@@ -3461,10 +3461,10 @@ function renderPortal(): void {
       if (chatInp) chatInp.value = "";
       const effectiveRunId = continueRunId || payload.run_id;
       sessionStorage.setItem(`lambot_orch_run_${currentProjectId}`, effectiveRunId);
-      appendOrchestrationLiveLog(`stream run ${effectiveRunId}: подключение…`);
+      appendOrchestrationLiveLog(`stream run ${effectiveRunId}: connecting…`);
       void startOrchestrationStream(effectiveRunId);
     } catch (e) {
-      const msg = isFetchNetworkError(e) ? fetchNetworkHint("запуск оркестрации") : String(e);
+      const msg = isFetchNetworkError(e) ? fetchNetworkHint("start orchestration") : String(e);
       alert(msg);
       write({ error: msg, raw_error: String(e) });
       if (stLine) stLine.textContent = "";
@@ -3475,12 +3475,12 @@ function renderPortal(): void {
     const el = document.getElementById("portal-session");
     const t = token();
     if (!t) {
-      if (el) el.textContent = "Не авторизован — откройте #/login";
+      if (el) el.textContent = "Not authenticated — open #/login";
       return;
     }
     const r = await fetch(`${GATEWAY_BASE}/api/v1/auth/me`, { headers: authHeader(t) });
     if (!r.ok) {
-      if (el) el.textContent = "JWT недействителен — войдите снова";
+      if (el) el.textContent = "JWT invalid — sign in again";
       return;
     }
     const me = await r.json();
@@ -3489,17 +3489,17 @@ function renderPortal(): void {
 
   const agentStatusRu = (s: string) => {
     const m: Record<string, string> = {
-      ok: "Онлайн",
-      stale: "Задержка",
-      offline: "Нет связи",
-      no_data: "Нет метрик",
+      ok: "Online",
+      stale: "Latency",
+      offline: "No connection",
+      no_data: "No metrics",
     };
     return m[s] || s;
   };
 
   const provisionInstallRu = (ok: boolean | null | undefined) => {
     if (ok === null || ok === undefined) return "—";
-    return ok ? "Успех" : "Ошибка";
+    return ok ? "Success" : "Error";
   };
 
   const loadActivityLogs = async () => {
@@ -3508,7 +3508,7 @@ function renderPortal(): void {
     const det = document.getElementById("activity-logs-detail");
     if (!currentProjectId) {
       lastActivityItems = [];
-      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">Выберите проект</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">Select project</td></tr>`;
       if (hint) hint.textContent = "";
       if (det) det.textContent = "";
       return;
@@ -3523,12 +3523,12 @@ function renderPortal(): void {
     if (hint) {
       const ch = raw.clickhouse;
       hint.textContent = ch
-        ? `ClickHouse: ${ch.enabled ? (ch.reachable ? "подключён" : "нет связи") : "не задан (CLICKHOUSE_HOST)"}`
+        ? `ClickHouse: ${ch.enabled ? (ch.reachable ? "connected" : "no connection") : "not set (CLICKHOUSE_HOST)"}`
         : "";
     }
     if (!tbody) return;
     if (!r.ok) {
-      tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">Журнал: ошибка ${r.status}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">Log: error ${r.status}</td></tr>`;
       return;
     }
     const items = (raw.items || []) as Array<{
@@ -3540,7 +3540,7 @@ function renderPortal(): void {
     }>;
     lastActivityItems = items as Array<Record<string, unknown>>;
     if (items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">Пока нет записей</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="lp-muted">No entries yet</td></tr>`;
       return;
     }
     tbody.innerHTML = items
@@ -3562,10 +3562,10 @@ function renderPortal(): void {
     const nx = document.getElementById("infra-nexus-target") as HTMLSelectElement | null;
     const tplTarget = document.getElementById("infra-template-target") as HTMLSelectElement | null;
     if (!currentProjectId) {
-      if (resBody) resBody.innerHTML = `<tr><td colspan="7" class="lp-muted">Выберите проект</td></tr>`;
-      if (gl) gl.innerHTML = `<option value="">— не назначен —</option>`;
-      if (nx) nx.innerHTML = `<option value="">— не назначен —</option>`;
-      if (tplTarget) tplTarget.innerHTML = `<option value="">— выберите SSH-сервер —</option>`;
+      if (resBody) resBody.innerHTML = `<tr><td colspan="7" class="lp-muted">Select project</td></tr>`;
+      if (gl) gl.innerHTML = `<option value="">— not assigned —</option>`;
+      if (nx) nx.innerHTML = `<option value="">— not assigned —</option>`;
+      if (tplTarget) tplTarget.innerHTML = `<option value="">— select SSH server —</option>`;
       infraTemplateCatalogProjectId = "";
       void loadActivityLogs();
       return;
@@ -3580,12 +3580,12 @@ function renderPortal(): void {
     type Tgt = { id: string; host: string; label: string; target_kind?: string };
     const targets: Tgt[] = tRes.ok ? ((await tRes.json()) as Tgt[]) : [];
     const sshTargets = targets.filter((x) => x.target_kind !== "kubernetes");
-    const optHtml = `<option value="">— не назначен —</option>${sshTargets
+    const optHtml = `<option value="">— not assigned —</option>${sshTargets
       .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
       .join("")}`;
     if (gl) gl.innerHTML = optHtml;
     if (nx) nx.innerHTML = optHtml;
-    if (tplTarget) tplTarget.innerHTML = `<option value="">— выберите SSH-сервер —</option>${sshTargets
+    if (tplTarget) tplTarget.innerHTML = `<option value="">— select SSH server —</option>${sshTargets
       .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
       .join("")}`;
     if (infraTemplateCatalogProjectId !== currentProjectId) {
@@ -3631,13 +3631,13 @@ function renderPortal(): void {
           return "—";
         };
         const sourceOf = (r: (typeof resources)[0]) => {
-          if (r.category === "service") return "Вручную";
+          if (r.category === "service") return "Manual";
           if (r.category === "gitlab") return "Ansible → GitLab";
           if (r.category === "nexus") return "Ansible → Nexus";
           return r.category;
         };
         if (resources.length === 0) {
-          resBody.innerHTML = `<tr><td colspan="7" class="lp-muted">Пока нет записей — добавьте сервис или дождитесь Ansible</td></tr>`;
+          resBody.innerHTML = `<tr><td colspan="7" class="lp-muted">No entries yet — add a service or wait for Ansible</td></tr>`;
         } else {
           resBody.innerHTML = resources
             .map((r) => {
@@ -3645,17 +3645,17 @@ function renderPortal(): void {
               const canEdit = r.category === "service";
               const secretCell = r.has_secret ? "••••" : "—";
               const editBtn = canEdit
-                ? `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-infra-edit="${escapeHtml(r.id)}">Изменить</button>`
+                ? `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-infra-edit="${escapeHtml(r.id)}">Edit</button>`
                 : "";
               return `<tr data-infra-row="${escapeHtml(r.id)}">
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${escapeHtml(r.label)}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;max-width:200px;word-break:break-all;font-size:12px;">${escapeHtml(hostOf(r))}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;font-size:12px;">${escapeHtml(userOf(r))}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${secretCell}</td>
-            <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><input type="checkbox" data-infra-enabled="${escapeHtml(r.id)}" ${en ? "checked" : ""} aria-label="Включён" /></td>
+            <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><input type="checkbox" data-infra-enabled="${escapeHtml(r.id)}" ${en ? "checked" : ""} aria-label="Enabled" /></td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;font-size:12px;">${escapeHtml(sourceOf(r))}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${editBtn}
-              <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;color:#b91c1c" data-infra-del="${escapeHtml(r.id)}">Удалить</button></td>
+              <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;color:#b91c1c" data-infra-del="${escapeHtml(r.id)}">Delete</button></td>
           </tr>`;
             })
             .join("");
@@ -3671,7 +3671,7 @@ function renderPortal(): void {
     if (!wrap) return;
     const entries = Object.entries(infraTemplateSchema || {});
     if (entries.length === 0) {
-      wrap.innerHTML = `<p class="lp-muted" style="font-size:12px;">У выбранной роли нет обязательных пользовательских параметров.</p>`;
+      wrap.innerHTML = `<p class="lp-muted" style="font-size:12px;">The selected role has no required user parameters.</p>`;
       if (hint) hint.textContent = "";
       return;
     }
@@ -3692,7 +3692,7 @@ function renderPortal(): void {
         </div>`;
       })
       .join("");
-    if (hint) hint.textContent = "Поля с * обычно требуются шаблоном. Базовые vars (ssh_user/server_host/project_*) заполняются автоматически.";
+    if (hint) hint.textContent = "Fields marked * are usually required by the template. Base vars (ssh_user/server_host/project_*) are filled automatically.";
   };
 
   const loadInfraTemplateCatalog = async () => {
@@ -3700,7 +3700,7 @@ function renderPortal(): void {
     const hint = document.getElementById("infra-template-hint");
     if (!sel) return;
     if (!currentProjectId) {
-      sel.innerHTML = `<option value="">— выберите проект —</option>`;
+      sel.innerHTML = `<option value="">— select project —</option>`;
       infraTemplateCatalog = [];
       infraTemplateSchema = {};
       infraTemplateCatalogProjectId = "";
@@ -3709,14 +3709,14 @@ function renderPortal(): void {
     }
     const r = await fetch(`${GATEWAY_BASE}/api/v1/ansible/swarm/catalog`, { headers: authHeader(token()) });
     if (!r.ok) {
-      sel.innerHTML = `<option value="">— ошибка каталога (${r.status}) —</option>`;
-      if (hint) hint.textContent = `Ошибка загрузки каталога: ${r.status}`;
+      sel.innerHTML = `<option value="">— catalog error (${r.status}) —</option>`;
+      if (hint) hint.textContent = `Catalog load error: ${r.status}`;
       return;
     }
     const rows = (await r.json()) as InfraTemplateCatalogItem[];
     infraTemplateCatalog = Array.isArray(rows) ? rows : [];
     infraTemplateCatalogProjectId = currentProjectId;
-    sel.innerHTML = `<option value="">— выберите роль —</option>${infraTemplateCatalog
+    sel.innerHTML = `<option value="">— select role —</option>${infraTemplateCatalog
       .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name || x.id)}</option>`)
       .join("")}`;
     const first = infraTemplateCatalog[0];
@@ -3757,13 +3757,13 @@ function renderPortal(): void {
     const tbody = document.getElementById("targets-table-body");
     if (!tbody) return;
     if (!currentProjectId) {
-      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">Выберите проект</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">Select project</td></tr>`;
       void refreshInfraUi();
       return;
     }
     const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/targets`, { headers: authHeader(token()) });
     if (!r.ok) {
-      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">Ошибка ${r.status}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">Error ${r.status}</td></tr>`;
       void refreshInfraUi();
       return;
     }
@@ -3782,13 +3782,13 @@ function renderPortal(): void {
       last_provision_log: string | null;
     }>;
     if (rows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">Нет зарегистрированных таргетов</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="lp-muted">No registered targets</td></tr>`;
       void refreshInfraUi();
       return;
     }
     const targetKindRu = (k?: string) => (k === "kubernetes" ? "K8s" : "SSH");
     const sshOnly = rows.filter((x) => x.target_kind !== "kubernetes");
-    const k8sOpts = `<option value="">— выберите SSH-таргет —</option>${sshOnly
+    const k8sOpts = `<option value="">— select SSH target —</option>${sshOnly
       .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
       .join("")}`;
     const km = document.getElementById("k8s-master-target") as HTMLSelectElement | null;
@@ -3799,14 +3799,14 @@ function renderPortal(): void {
     if (kw2) kw2.innerHTML = k8sOpts;
     const sshExecSel = document.getElementById("ssh-exec-target") as HTMLSelectElement | null;
     if (sshExecSel) {
-      sshExecSel.innerHTML = `<option value="">— выберите SSH-сервер —</option>${sshOnly
+      sshExecSel.innerHTML = `<option value="">— select SSH server —</option>${sshOnly
         .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
         .join("")}`;
     }
     const k8sRows = rows.filter((x) => x.target_kind === "kubernetes");
     const kmg = document.getElementById("k8s-mgmt-target") as HTMLSelectElement | null;
     if (kmg) {
-      kmg.innerHTML = `<option value="">— выберите кластер —</option>${k8sRows
+      kmg.innerHTML = `<option value="">— select cluster —</option>${k8sRows
         .map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.host)} (${escapeHtml(x.label)})</option>`)
         .join("")}`;
     }
@@ -3817,11 +3817,11 @@ function renderPortal(): void {
           if (or.ok) {
             const d = (await or.json()) as { operations?: string[] };
             const ops = d.operations || [];
-            opSel.innerHTML = `<option value="">— операция —</option>${ops
+            opSel.innerHTML = `<option value="">— operation —</option>${ops
               .map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`)
               .join("")}`;
           } else {
-            opSel.innerHTML = `<option value="">(ошибка ${or.status})</option>`;
+            opSel.innerHTML = `<option value="">(error ${or.status})</option>`;
           }
         },
       );
@@ -3841,7 +3841,7 @@ function renderPortal(): void {
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${row.agent_metrics_total}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${escapeHtml(agentStatusRu(row.agent_status))}</td>
             <td style="padding:6px;border-bottom:1px solid #f1f5f9;">${row.agent_last_seen_at ? escapeHtml(row.agent_last_seen_at) : "—"}</td>
-            <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><button type="button" class="lp-btn lp-btn-ghost" style="color:#b91c1c;padding:4px 8px;font-size:12px" data-del-tid="${escapeHtml(row.id)}">Удалить</button></td>
+            <td style="padding:6px;border-bottom:1px solid #f1f5f9;"><button type="button" class="lp-btn lp-btn-ghost" style="color:#b91c1c;padding:4px 8px;font-size:12px" data-del-tid="${escapeHtml(row.id)}">Delete</button></td>
           </tr>`;
       })
       .join("");
@@ -3854,11 +3854,11 @@ function renderPortal(): void {
     const t = token();
     const r = await fetch(`${GATEWAY_BASE}/api/v1/projects`, { headers: authHeader(t) });
     if (!r.ok) {
-      sel.innerHTML = `<option value="">(${r.status} — нужен JWT)</option>`;
+      sel.innerHTML = `<option value="">(${r.status} — JWT required)</option>`;
       return;
     }
     const rows = (await r.json()) as { id: string; name: string }[];
-    sel.innerHTML = `<option value="">— выберите —</option>${rows.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}`;
+    sel.innerHTML = `<option value="">— select —</option>${rows.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}`;
     const hasCurrent = !!currentProjectId && rows.some((p) => p.id === currentProjectId);
     if (hasCurrent) {
       sel.value = currentProjectId;
@@ -3870,7 +3870,7 @@ function renderPortal(): void {
     loadProjectAiChatForProject(currentProjectId);
     renderProjectAiChat();
     setProjectAiChatBusy(false);
-    /* restoreOrchestrationForProject — только при смене проекта и при первом mount (см. внизу), не при каждом refresh списка. */
+    /* restoreOrchestrationForProject — only on project change and first mount (see below), not on every list refresh. */
     void loadTargetsList();
   };
 
@@ -3890,7 +3890,7 @@ function renderPortal(): void {
     const st = document.getElementById("portal-gitlab-platform-status");
     const btn = document.getElementById("portal-gitlab-platform-provision") as HTMLButtonElement | null;
     if (!currentProjectId) {
-      if (st) st.textContent = "Выберите проект.";
+      if (st) st.textContent = "Select project.";
       if (btn) btn.style.display = "none";
       return;
     }
@@ -3905,26 +3905,26 @@ function renderPortal(): void {
         error_message?: string;
       };
       if (data.gitlab_group_created) {
-        if (st) st.textContent = `Группа создана${data.group_path ? `: ${data.group_path}` : ""}.`;
+        if (st) st.textContent = `Group created${data.group_path ? `: ${data.group_path}` : ""}.`;
         if (btn) btn.style.display = "none";
       } else if (data.status === "in_progress") {
-        if (st) st.textContent = "Создание группы…";
+        if (st) st.textContent = "Creating group…";
         if (btn) btn.style.display = "none";
       } else if (data.status === "failed") {
-        if (st) st.textContent = `Ошибка: ${data.error_message || "см. логи gitlab-service"}`;
+        if (st) st.textContent = `Error: ${data.error_message || "see gitlab-service logs"}`;
         if (btn) {
           btn.style.display = "inline-block";
-          btn.textContent = "Повторить";
+          btn.textContent = "Retry";
         }
       } else {
-        if (st) st.textContent = "Группа ещё не создана (проект создан до автопровижининга?).";
+        if (st) st.textContent = "Group not created yet (project was created before auto-provisioning?).";
         if (btn) {
           btn.style.display = "inline-block";
-          btn.textContent = "Создать GitLab-группу";
+          btn.textContent = "Create GitLab group";
         }
       }
     } catch (exc) {
-      if (st) st.textContent = `Ошибка: ${exc}`;
+      if (st) st.textContent = `Error: ${exc}`;
     }
   };
 
@@ -3933,15 +3933,15 @@ function renderPortal(): void {
     const r = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/workspace`, { headers: authHeader(token()) });
     const hint = document.getElementById("workspace-hint");
     if (!r.ok) {
-      if (hint) hint.textContent = "workspace: ошибка";
+      if (hint) hint.textContent = "workspace: error";
       return;
     }
     const w = (await r.json()) as { can_use_llm_chat?: boolean; agent_metrics_count?: number };
     const ok = !!w.can_use_llm_chat;
     if (hint) {
       hint.textContent = ok
-        ? "Агент на сервере: ок (метрики есть или настройка подтверждена)."
-        : `Агент: метрик ${w.agent_metrics_count ?? 0} — для установки агента сохраните SSH или подтвердите настройку вручную.`;
+        ? "Agent on server: ok (metrics exist or setup confirmed)."
+        : `Agent: metrics ${w.agent_metrics_count ?? 0} — to install the agent, save SSH or confirm setup manually.`;
     }
   };
 
@@ -3970,7 +3970,7 @@ function renderPortal(): void {
 
   document.getElementById("portal-gitlab-platform-provision")?.addEventListener("click", async () => {
     if (!currentProjectId) return;
-    if (!confirm("Создать GitLab-группу и токен для этого проекта?")) return;
+    if (!confirm("Create GitLab group and token for this project?")) return;
     const btn = document.getElementById("portal-gitlab-platform-provision") as HTMLButtonElement | null;
     if (btn) btn.disabled = true;
     try {
@@ -4034,7 +4034,7 @@ function renderPortal(): void {
 
   document.getElementById("infra-save-assignments")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const gl = document.getElementById("infra-gitlab-target") as HTMLSelectElement | null;
@@ -4056,7 +4056,7 @@ function renderPortal(): void {
 
   document.getElementById("infra-prepare-stack")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const gp = Number((document.getElementById("infra-gitlab-port") as HTMLInputElement).value || 8081);
@@ -4076,10 +4076,10 @@ function renderPortal(): void {
 
   document.getElementById("infra-run-stack")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
-    if (!confirm("Запустить ansible-playbook на сервере платформы по SSH к вашим хостам? Первый запуск GitLab может занять 10+ минут.")) {
+    if (!confirm("Run ansible-playbook on the platform server over SSH to your hosts? The first GitLab run may take 10+ minutes.")) {
       return;
     }
     const gp = Number((document.getElementById("infra-gitlab-port") as HTMLInputElement).value || 8081);
@@ -4097,14 +4097,14 @@ function renderPortal(): void {
       let t = logPre.textContent || "";
       t += s;
       if (t.length > infraAnsibleLogMax) {
-        t = `… [обрезано]\n${t.slice(-infraAnsibleLogMax)}`;
+        t = `… [truncated]\n${t.slice(-infraAnsibleLogMax)}`;
       }
       logPre.textContent = t;
       logPre.scrollTop = logPre.scrollHeight;
     };
 
     if (logPre) logPre.textContent = "";
-    setStatus("Ansible: подключение…");
+    setStatus("Ansible: connecting…");
     if (runBtn) runBtn.disabled = true;
 
     try {
@@ -4122,13 +4122,13 @@ function renderPortal(): void {
           /* raw text */
         }
         write({ error: "run-stack-stream", status: resp.status, detail });
-        setStatus(`Ansible: ошибка HTTP ${resp.status}`);
+        setStatus(`Ansible: error HTTP ${resp.status}`);
         appendLog(`${errText}\n`);
         return;
       }
       if (!resp.body) {
-        write({ error: "Нет тела ответа (stream)" });
-        setStatus("Ansible: ошибка потока");
+        write({ error: "No response body (stream)" });
+        setStatus("Ansible: stream error");
         return;
       }
       const reader = resp.body.getReader();
@@ -4158,9 +4158,9 @@ function renderPortal(): void {
             const sr = ev.service_role != null ? String(ev.service_role) : "";
             const tid = String(ev.template_id || "");
             if (step === "prepare-docker-host") {
-              setStatus(`Ansible: подготовка Docker на ${host}…`);
+              setStatus(`Ansible: preparing Docker on ${host}…`);
             } else {
-              setStatus(`Ansible: ${sr || "роль"} (${tid}) на ${host}…`);
+              setStatus(`Ansible: ${sr || "role"} (${tid}) on ${host}…`);
             }
           } else if (typ === "line") {
             appendLog(`${String(ev.text ?? "")}\n`);
@@ -4169,18 +4169,18 @@ function renderPortal(): void {
             const rc = ev.ansible_rc;
             setStatus(
               ok
-                ? `Ansible: шаг завершён (rc=${String(rc)})`
-                : `Ansible: шаг с ошибкой (rc=${String(rc)})`,
+                ? `Ansible: step finished (rc=${String(rc)})`
+                : `Ansible: step failed (rc=${String(rc)})`,
             );
           } else if (typ === "skip") {
-            setStatus(`Ansible: пропуск — ${String(ev.reason || "")}`);
+            setStatus(`Ansible: skip — ${String(ev.reason || "")}`);
           } else if (typ === "bundle_error") {
-            setStatus(`Ansible: ошибка bundle — ${String(ev.detail || ev.step || "")}`);
+            setStatus(`Ansible: error bundle — ${String(ev.detail || ev.step || "")}`);
             appendLog(`[bundle_error] ${JSON.stringify(ev)}\n`);
           } else if (typ === "done") {
             finalPayload = ev.payload;
             const st = String(ev.summary || ev.status || "");
-            setStatus(st ? `Ansible: ${st}` : "Ansible: готово");
+            setStatus(st ? `Ansible: ${st}` : "Ansible: done");
           }
         }
       }
@@ -4197,13 +4197,13 @@ function renderPortal(): void {
       if (finalPayload !== null) {
         write(finalPayload);
       } else {
-        write({ warning: "Поток завершён без события done", hint: "Смотрите лог выше" });
+        write({ warning: "Stream ended without a done event", hint: "See the log above" });
       }
       void refreshInfraUi();
       void loadActivityLogs();
     } catch (e) {
       write({ error: String(e) });
-      setStatus("Ansible: сбой запроса");
+      setStatus("Ansible: request failed");
     } finally {
       if (runBtn) runBtn.disabled = false;
     }
@@ -4220,13 +4220,13 @@ function renderPortal(): void {
 
   document.getElementById("infra-template-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const targetId = (document.getElementById("infra-template-target") as HTMLSelectElement | null)?.value || "";
     const templateId = (document.getElementById("infra-template-id") as HTMLSelectElement | null)?.value || "";
     if (!targetId || !templateId) {
-      write({ error: "Выберите SSH-таргет и роль" });
+      write({ error: "Select an SSH target and role" });
       return;
     }
     const vars = collectInfraTemplateVars();
@@ -4239,7 +4239,7 @@ function renderPortal(): void {
     const statusEl = document.getElementById("infra-ansible-status");
     const hint = document.getElementById("infra-template-hint");
     if (runBtn) runBtn.disabled = true;
-    if (statusEl) statusEl.textContent = `Ansible: запуск ${templateId}…`;
+    if (statusEl) statusEl.textContent = `Ansible: starting ${templateId}…`;
     try {
       const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/infra/run-template`, {
         method: "POST",
@@ -4269,17 +4269,17 @@ function renderPortal(): void {
         (obj && typeof obj.error === "string" && obj.error.trim()) ||
         "";
       if (resp.ok && okFlag !== false) {
-        if (statusEl) statusEl.textContent = `Ansible: ${templateId} завершён`;
-        if (hint) hint.textContent = "Роль выполнена. Смотрите журнал и ресурсы ниже.";
+        if (statusEl) statusEl.textContent = `Ansible: ${templateId} finished`;
+        if (hint) hint.textContent = "Role finished. See the log and resources below.";
       } else {
-        if (statusEl) statusEl.textContent = `Ansible: ошибка ${resp.status}`;
-        if (hint) hint.textContent = detailText ? `Ошибка запуска: ${detailText}` : `Ошибка запуска: ${resp.status}`;
+        if (statusEl) statusEl.textContent = `Ansible: error ${resp.status}`;
+        if (hint) hint.textContent = detailText ? `Start error: ${detailText}` : `Start error: ${resp.status}`;
       }
       void refreshInfraUi();
       void loadActivityLogs();
     } catch (e) {
       write({ error: String(e) });
-      if (statusEl) statusEl.textContent = "Ansible: сбой запроса";
+      if (statusEl) statusEl.textContent = "Ansible: request failed";
       if (hint) hint.textContent = String(e);
     } finally {
       if (runBtn) runBtn.disabled = false;
@@ -4290,7 +4290,7 @@ function renderPortal(): void {
 
   document.getElementById("k8s-install-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const master = (document.getElementById("k8s-master-target") as HTMLSelectElement).value;
@@ -4298,16 +4298,16 @@ function renderPortal(): void {
     const w2 = (document.getElementById("k8s-worker2-target") as HTMLSelectElement).value;
     const pod = (document.getElementById("k8s-pod-cidr") as HTMLInputElement).value.trim() || "10.244.0.0/16";
     if (!master || !w1 || !w2) {
-      write({ error: "Выберите три разных SSH-таргета" });
+      write({ error: "Select three different SSH targets" });
       return;
     }
     if (new Set([master, w1, w2]).size !== 3) {
-      write({ error: "Нужны три разных сервера (control plane и два worker)" });
+      write({ error: "Three different servers are required (control plane and two workers)" });
       return;
     }
     if (
       !confirm(
-        "Запустить установку Kubernetes (kubeadm) на выбранных серверах через Ansible на платформе? Это долго и изменит ОС.",
+        "Start Kubernetes (kubeadm) install on the selected servers via Ansible on the platform? This takes a while and will change the OS.",
       )
     ) {
       return;
@@ -4329,13 +4329,13 @@ function renderPortal(): void {
       let t = logPre.textContent || "";
       t += s;
       if (t.length > k8sInstallLogMax) {
-        t = `… [обрезано]\n${t.slice(-k8sInstallLogMax)}`;
+        t = `… [truncated]\n${t.slice(-k8sInstallLogMax)}`;
       }
       logPre.textContent = t;
       logPre.scrollTop = logPre.scrollHeight;
     };
     if (logPre) logPre.textContent = "";
-    setStatus("Kubernetes: подключение…");
+    setStatus("Kubernetes: connecting…");
     if (runBtn) runBtn.disabled = true;
     try {
       const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/infra/k8s-install-3node-stream`, {
@@ -4346,13 +4346,13 @@ function renderPortal(): void {
       if (!resp.ok) {
         const errText = await resp.text();
         write({ error: "k8s-install-stream", status: resp.status, detail: errText });
-        setStatus(`Kubernetes: ошибка HTTP ${resp.status}`);
+        setStatus(`Kubernetes: error HTTP ${resp.status}`);
         appendLog(`${errText}\n`);
         return;
       }
       if (!resp.body) {
-        write({ error: "Нет тела ответа (stream)" });
-        setStatus("Kubernetes: ошибка потока");
+        write({ error: "No response body (stream)" });
+        setStatus("Kubernetes: stream error");
         return;
       }
       const reader = resp.body.getReader();
@@ -4379,12 +4379,12 @@ function renderPortal(): void {
           if (typ === "phase") {
             const host = String(ev.host || "");
             const tid = String(ev.template_id || "");
-            setStatus(`Kubernetes: ${tid} на ${host}…`);
+            setStatus(`Kubernetes: ${tid} on ${host}…`);
           } else if (typ === "line") {
             appendLog(`${String(ev.text ?? "")}\n`);
           } else if (typ === "done") {
             finalPayload = ev.payload;
-            setStatus(String(ev.summary || ev.status || "Kubernetes: готово"));
+            setStatus(String(ev.summary || ev.status || "Kubernetes: done"));
           }
         }
       }
@@ -4397,11 +4397,11 @@ function renderPortal(): void {
         }
       }
       if (finalPayload !== null) write(finalPayload);
-      else write({ warning: "Поток завершён без события done" });
+      else write({ warning: "Stream ended without a done event" });
       void loadActivityLogs();
     } catch (e) {
       write({ error: String(e) });
-      setStatus("Kubernetes: сбой запроса");
+      setStatus("Kubernetes: request failed");
     } finally {
       if (runBtn) runBtn.disabled = false;
     }
@@ -4409,13 +4409,13 @@ function renderPortal(): void {
 
   document.getElementById("k8s-mgmt-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const tid = (document.getElementById("k8s-mgmt-target") as HTMLSelectElement).value;
     const op = (document.getElementById("k8s-mgmt-op") as HTMLSelectElement).value;
     if (!tid || !op) {
-      write({ error: "Выберите кластер и операцию" });
+      write({ error: "Select a cluster and an operation" });
       return;
     }
     const body: Record<string, unknown> = {
@@ -4457,7 +4457,7 @@ function renderPortal(): void {
 
   document.getElementById("infra-load-context")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/development-context`, {
@@ -4468,14 +4468,14 @@ function renderPortal(): void {
 
   document.getElementById("agent-demo-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const setAns = (t: string) => {
       const el = document.getElementById("infra-ansible-status");
       if (el) el.textContent = t;
     };
-    setAns("Демо агентов: запрос…");
+    setAns("Agent demo: requesting…");
     try {
       const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/agent-demo/run`, {
         method: "POST",
@@ -4485,20 +4485,20 @@ function renderPortal(): void {
       const data = await resp.json();
       write(data);
       if (resp.ok && data.ok) {
-        setAns("Демо агентов: готово — см. JSON и журнал");
+        setAns("Agent demo: done — see JSON and the log");
       } else {
-        setAns(`Демо агентов: ошибка (${resp.status})`);
+        setAns(`Agent demo: error (${resp.status})`);
       }
     } catch (e) {
       write({ error: String(e) });
-      setAns("Демо агентов: сбой запроса");
+      setAns("Agent demo: request failed");
     }
     void loadActivityLogs();
   });
 
   document.getElementById("agents-bootstrap-planning")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const setAns = (t: string) => {
@@ -4517,7 +4517,7 @@ function renderPortal(): void {
       setAns(resp.ok ? "Bootstrap: OK" : `Bootstrap: ${resp.status}`);
     } catch (e) {
       write({ error: String(e) });
-      setAns("Bootstrap: ошибка");
+      setAns("Bootstrap: error");
     }
     void refreshStatus();
   });
@@ -4525,7 +4525,7 @@ function renderPortal(): void {
   const sendProjectAiChat = async () => {
     if (!currentProjectId) {
       const g = document.getElementById("project-ai-chat-gate");
-      if (g) g.textContent = "Сначала выберите проект в списке выше.";
+      if (g) g.textContent = "First select a project in the list above.";
       return;
     }
     const inp = document.getElementById("project-ai-chat-input") as HTMLTextAreaElement | null;
@@ -4582,7 +4582,7 @@ function renderPortal(): void {
 
   document.getElementById("tracker-create-btn")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      alert("Выберите проект");
+      alert("Select project");
       return;
     }
     const kind = (document.getElementById("tracker-new-kind") as HTMLSelectElement).value;
@@ -4590,11 +4590,11 @@ function renderPortal(): void {
     const desc = (document.getElementById("tracker-new-desc") as HTMLTextAreaElement).value.trim();
     const role = (document.getElementById("tracker-new-role") as HTMLSelectElement).value;
     if (!title) {
-      alert("Укажите заголовок");
+      alert("Enter a title");
       return;
     }
     if (kind === "task" && !role) {
-      alert("Для задачи выберите роль агента");
+      alert("Select an agent role for the task");
       return;
     }
     const body: Record<string, unknown> = { kind, title, description: desc };
@@ -4622,7 +4622,7 @@ function renderPortal(): void {
     const name = (document.getElementById("kb-new-name") as HTMLInputElement).value.trim();
     const category = (document.getElementById("kb-new-category") as HTMLSelectElement).value;
     if (!slug || !name) {
-      alert("Slug и название обязательны");
+      alert("Slug and name are required");
       return;
     }
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/knowledge/bases`, {
@@ -4642,7 +4642,7 @@ function renderPortal(): void {
     const fileInput = document.getElementById("kb-upload-file") as HTMLInputElement;
     const file = fileInput.files?.[0];
     if (!kbId || !file || !currentProjectId) {
-      alert("Выберите базу и файл");
+      alert("Select a base and a file");
       return;
     }
     const fd = new FormData();
@@ -4677,7 +4677,7 @@ function renderPortal(): void {
           `<article class="lp-orch-card"><p class="lp-muted" style="font-size:12px;">score ${Number(it.score || 0)} · ${escapeHtml(String(it.filename || ""))}</p>
           <p style="font-size:13px;white-space:pre-wrap;">${escapeHtml(String(it.excerpt || ""))}</p></article>`,
       )
-      .join("") || `<p class="lp-muted">Ничего не найдено.</p>`;
+      .join("") || `<p class="lp-muted">Nothing found.</p>`;
   });
   (window as unknown as { __lpLoadKb?: () => void }).__lpLoadKb = () => void loadProjectKnowledgeBases();
 
@@ -4694,11 +4694,11 @@ function renderPortal(): void {
     const role = (document.getElementById("tracker-edit-role") as HTMLSelectElement).value;
     if (!id || !currentProjectId) return;
     if (!title) {
-      alert("Укажите заголовок");
+      alert("Enter a title");
       return;
     }
     if (kind === "task" && !role) {
-      alert("Для задачи укажите роль агента");
+      alert("Set an agent role for the task");
       return;
     }
     const body: Record<string, unknown> = { title, description: desc };
@@ -4729,13 +4729,13 @@ function renderPortal(): void {
   });
   document.getElementById("project-ai-chat-clear")?.addEventListener("click", () => {
     if (!currentProjectId) return;
-    if (!confirm("Очистить историю чата для этого проекта?")) return;
+    if (!confirm("Clear chat history for this project?")) return;
     stopOrchestrationPoll();
     stopOrchestrationStream();
     projectAiChatHistory = [];
     sessionStorage.removeItem(projectAiChatStorageKey(currentProjectId));
     sessionStorage.removeItem(`lambot_orch_run_${currentProjectId}`);
-    /* Ключи syncOrchestrationStepsToChat не сбрасываем: иначе следующий poll снова подтянет шаги ИИ Команды в чат. */
+    /* Do not reset syncOrchestrationStepsToChat keys: otherwise the next poll would pull AI Team steps into chat again. */
     renderProjectAiChat();
   });
   document.getElementById("project-ai-chat-input")?.addEventListener("keydown", (ev) => {
@@ -4752,12 +4752,12 @@ function renderPortal(): void {
 
   document.getElementById("sandbox-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const code = (document.getElementById("sandbox-code") as HTMLTextAreaElement)?.value ?? "";
     if (!code.trim()) {
-      write({ error: "Введите код" });
+      write({ error: "Enter code" });
       return;
     }
     try {
@@ -4791,7 +4791,7 @@ function renderPortal(): void {
     if (e) e.checked = true;
     if (hid) hid.value = "";
     if (cancel) cancel.style.display = "none";
-    if (saveBtn) saveBtn.textContent = "Добавить сервис";
+    if (saveBtn) saveBtn.textContent = "Add service";
     if (hint) {
       hint.style.display = "none";
       hint.textContent = "";
@@ -4802,7 +4802,7 @@ function renderPortal(): void {
 
   document.getElementById("infra-service-save")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const name = (document.getElementById("infra-service-name") as HTMLInputElement).value.trim();
@@ -4812,7 +4812,7 @@ function renderPortal(): void {
     const enabled = (document.getElementById("infra-service-enabled") as HTMLInputElement).checked;
     const editId = (document.getElementById("infra-service-edit-id") as HTMLInputElement).value.trim();
     if (!name || !host) {
-      alert("Укажите название и IP/FQDN");
+      alert("Enter a name and IP/FQDN");
       return;
     }
     const value_json: Record<string, unknown> = { host, user, enabled };
@@ -4888,7 +4888,7 @@ function renderPortal(): void {
     if (delBtn) {
       const id = delBtn.getAttribute("data-infra-del");
       if (!id || !currentProjectId) return;
-      if (!confirm("Удалить эту запись? Секрет будет удалён из проекта.")) return;
+      if (!confirm("Delete this entry? The secret will be removed from the project.")) return;
       try {
         const resp = await fetch(
           `${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/infra/resources/${encodeURIComponent(id)}`,
@@ -4933,12 +4933,12 @@ function renderPortal(): void {
       (document.getElementById("infra-service-secret") as HTMLInputElement).value = "";
       (document.getElementById("infra-service-enabled") as HTMLInputElement).checked = row.enabled !== false;
       (document.getElementById("infra-service-edit-id") as HTMLInputElement).value = id;
-      (document.getElementById("infra-service-save") as HTMLButtonElement).textContent = "Сохранить";
+      (document.getElementById("infra-service-save") as HTMLButtonElement).textContent = "Save";
       (document.getElementById("infra-service-cancel-edit") as HTMLElement).style.display = "inline-flex";
       const hint = document.getElementById("infra-service-form-hint");
       if (hint) {
         hint.style.display = "block";
-        hint.textContent = "Пароль/API key укажите только если меняете; пустое поле оставит прежний секрет.";
+        hint.textContent = "Enter Password/API key only if changing; an empty field keeps the previous secret.";
       }
     } catch (e) {
       alert(String(e));
@@ -4960,7 +4960,7 @@ function renderPortal(): void {
     if (!btn) return;
     const tid = btn.getAttribute("data-del-tid");
     if (!tid || !currentProjectId) return;
-    if (!confirm("Удалить этот SSH-сервер из проекта? Метрики агента для него будут удалены.")) return;
+    if (!confirm("Delete this SSH server from the project? Agent metrics for it will be removed.")) return;
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/projects/${currentProjectId}/targets/${encodeURIComponent(tid)}`, {
       method: "DELETE",
       headers: authHeader(token()),
@@ -4993,7 +4993,7 @@ function renderPortal(): void {
   const buildTargetBody = (): Record<string, unknown> => {
     const kind = (document.getElementById("srv-kind") as HTMLSelectElement | null)?.value || "ssh";
     if (kind === "kubernetes") {
-      const name = (document.getElementById("srv-k8s-name") as HTMLInputElement).value.trim() || "Мой кластер";
+      const name = (document.getElementById("srv-k8s-name") as HTMLInputElement).value.trim() || "My cluster";
       return {
         target_kind: "kubernetes",
         host: name,
@@ -5022,7 +5022,7 @@ function renderPortal(): void {
 
   document.getElementById("test-ssh")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите или создайте проект" });
+      write({ error: "Select or create a project" });
       return;
     }
     const body = buildTargetBody();
@@ -5036,13 +5036,13 @@ function renderPortal(): void {
 
   document.getElementById("ssh-exec-run")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите проект" });
+      write({ error: "Select project" });
       return;
     }
     const tid = (document.getElementById("ssh-exec-target") as HTMLSelectElement).value;
     const cmd = (document.getElementById("ssh-exec-cmd") as HTMLTextAreaElement).value;
     if (!tid || !cmd.trim()) {
-      write({ error: "Выберите SSH-сервер и введите команду" });
+      write({ error: "Select an SSH server and enter a command" });
       return;
     }
     const tokEl = document.getElementById("ssh-exec-token") as HTMLInputElement | null;
@@ -5081,7 +5081,7 @@ function renderPortal(): void {
 
   document.getElementById("register-target")?.addEventListener("click", async () => {
     if (!currentProjectId) {
-      write({ error: "Выберите или создайте проект" });
+      write({ error: "Select or create a project" });
       return;
     }
     const kind = (document.getElementById("srv-kind") as HTMLSelectElement | null)?.value || "ssh";
@@ -5102,7 +5102,7 @@ function renderPortal(): void {
 
   document.getElementById("prepare-ansible")?.addEventListener("click", async () => {
     if (!currentProjectId || !currentTargetId) {
-      write({ error: "Сначала зарегистрируйте сервер" });
+      write({ error: "Register a server first" });
       return;
     }
     const resp = await fetch(
@@ -5118,7 +5118,7 @@ function renderPortal(): void {
 
   document.getElementById("confirm-setup")?.addEventListener("click", async () => {
     if (!currentProjectId || !currentTargetId) {
-      write({ error: "Нет target" });
+      write({ error: "No target" });
       return;
     }
     const resp = await fetch(
@@ -5152,7 +5152,7 @@ function renderSuperadminRunsLive(runs: AiTeamLiveRun[]): void {
   const tbody = document.getElementById("ai-team-runs-live-body");
   if (!tbody) return;
   if (!runs.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">Нет активных или недавних run</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="lp-muted">No active or recent runs</td></tr>`;
     return;
   }
   tbody.innerHTML = runs
@@ -5174,7 +5174,7 @@ function renderSuperadminRunsLive(runs: AiTeamLiveRun[]): void {
         <td>${iter}</td>
         <td><code>${b}</code></td>
         <td>${escapeHtml(updated)}</td>
-        <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;" data-superadmin-open-project="${pid}">Открыть</button></td>
+        <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;" data-superadmin-open-project="${pid}">Open</button></td>
       </tr>`;
     })
     .join("");
@@ -5187,22 +5187,22 @@ async function loadSaKnowledgeBases(): Promise<void> {
   const listEl = document.getElementById("sa-kb-list");
   const stEl = document.getElementById("sa-kb-status");
   if (!listEl || !token) return;
-  if (stEl) stEl.textContent = "Загрузка…";
+  if (stEl) stEl.textContent = "Loading…";
   const r = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases`, { headers: authHeader(token) });
   const data = await r.json();
   const items = Array.isArray(data.items) ? data.items : [];
-  if (stEl) stEl.textContent = `${items.length} баз(ы) платформы`;
+  if (stEl) stEl.textContent = `${items.length} platform base(s)`;
   listEl.innerHTML = items
     .map((kb: Record<string, unknown>) => {
       const id = String(kb.id || "");
       return `<article class="lp-orch-card"><p style="margin:0;font-weight:600;">${escapeHtml(String(kb.name || ""))}</p>
         <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(kb.category || ""))}</p>
         <div class="lp-row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
-        <button type="button" class="lp-btn lp-btn-ghost sa-kb-open" data-id="${escapeHtml(id)}" data-title="${escapeHtml(String(kb.name || ""))}">Файлы</button>
-        <button type="button" class="lp-btn lp-btn-ghost sa-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Удалить</button>
+        <button type="button" class="lp-btn lp-btn-ghost sa-kb-open" data-id="${escapeHtml(id)}" data-title="${escapeHtml(String(kb.name || ""))}">Files</button>
+        <button type="button" class="lp-btn lp-btn-ghost sa-kb-delete" data-id="${escapeHtml(id)}" style="color:#b91c1c;">Delete</button>
         </div></article>`;
     })
-    .join("") || `<p class="lp-muted">Пусто</p>`;
+    .join("") || `<p class="lp-muted">Empty</p>`;
   const renderSaKbDocs = async (kbId: string, token: string) => {
     const dr = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents`, {
       headers: authHeader(token),
@@ -5216,13 +5216,13 @@ async function loadSaKnowledgeBases(): Promise<void> {
         const docId = String(d.id || "");
         const en = d.enabled !== false;
         return `<article class="lp-orch-card" style="${en ? "" : "opacity:0.65;"}"><p>${escapeHtml(String(d.filename || ""))}</p>
-          <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(d.status || ""))} · ${en ? "вкл" : "выкл"}</p>
+          <p class="lp-muted" style="font-size:12px;">${escapeHtml(String(d.status || ""))} · ${en ? "on" : "off"}</p>
           <div class="lp-row" style="gap:6px;margin-top:6px;">
-            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-toggle" data-id="${escapeHtml(docId)}" data-enabled="${en ? "0" : "1"}">${en ? "Выключить" : "Включить"}</button>
-            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-delete" data-id="${escapeHtml(docId)}" style="color:#b91c1c;">Удалить</button>
+            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-toggle" data-id="${escapeHtml(docId)}" data-enabled="${en ? "0" : "1"}">${en ? "Disable" : "Enable"}</button>
+            <button type="button" class="lp-btn lp-btn-ghost sa-kb-doc-delete" data-id="${escapeHtml(docId)}" style="color:#b91c1c;">Delete</button>
           </div></article>`;
       })
-      .join("") || `<p class="lp-muted">Нет файлов</p>`;
+      .join("") || `<p class="lp-muted">No files</p>`;
     docsEl.querySelectorAll(".sa-kb-doc-toggle").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const docId = (btn as HTMLButtonElement).dataset.id || "";
@@ -5245,7 +5245,7 @@ async function loadSaKnowledgeBases(): Promise<void> {
     docsEl.querySelectorAll(".sa-kb-doc-delete").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const docId = (btn as HTMLButtonElement).dataset.id || "";
-        if (!confirm("Удалить документ?")) return;
+        if (!confirm("Delete document?")) return;
         const resp = await fetch(
           `${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
           { method: "DELETE", headers: authHeader(token) },
@@ -5273,7 +5273,7 @@ async function loadSaKnowledgeBases(): Promise<void> {
   listEl.querySelectorAll(".sa-kb-delete").forEach((b) => {
     b.addEventListener("click", async () => {
       const id = (b as HTMLButtonElement).dataset.id || "";
-      if (!id || !confirm("Удалить базу знаний и все документы?")) return;
+      if (!id || !confirm("Delete the knowledge base and all documents?")) return;
       const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/knowledge/bases/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: authHeader(token),
@@ -5372,16 +5372,16 @@ async function loadSuperadminData(): Promise<void> {
         <td class="lp-muted">${escapeHtml(row.tenant_id)}</td>
         <td><span class="lp-badge">${escapeHtml(row.status)}</span></td>
         <td>${gitlabProjectCell(row)}</td>
-        <td>${row.suspended ? '<span class="lp-badge" style="background:#fef3c7;color:#92400e">Пауза</span>' : "—"}</td>
-        <td>${row.deleted_at ? `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">Удалён</span>` : "—"}</td>
+        <td>${row.suspended ? '<span class="lp-badge" style="background:#fef3c7;color:#92400e">Pause</span>' : "—"}</td>
+        <td>${row.deleted_at ? `<span class="lp-badge" style="background:#fee2e2;color:#991b1b">Deleted</span>` : "—"}</td>
         <td>${escapeHtml(new Date(row.created_at).toLocaleString())}</td>
         <td style="white-space:nowrap;">
-          <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="edit" data-pid="${escapeHtml(row.id)}">Править</button>
+          <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="edit" data-pid="${escapeHtml(row.id)}">Edit</button>
           ${
             row.deleted_at
-              ? `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="restore" data-pid="${escapeHtml(row.id)}">Восстановить</button>`
-              : `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="${row.suspended ? "resume" : "suspend"}" data-pid="${escapeHtml(row.id)}">${row.suspended ? "Снять паузу" : "Пауза"}</button>
-                 <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;color:#b91c1c" data-pa="delete" data-pid="${escapeHtml(row.id)}">Удалить</button>`
+              ? `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="restore" data-pid="${escapeHtml(row.id)}">Restore</button>`
+              : `<button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px" data-pa="${row.suspended ? "resume" : "suspend"}" data-pid="${escapeHtml(row.id)}">${row.suspended ? "Resume" : "Pause"}</button>
+                 <button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;font-size:12px;color:#b91c1c" data-pa="delete" data-pid="${escapeHtml(row.id)}">Delete</button>`
           }
         </td>
       </tr>
@@ -5445,8 +5445,8 @@ async function loadSuperadminData(): Promise<void> {
     if (rerankingEl) rerankingEl.value = llm.reranking_model ?? "";
     if (keyStatusEl) {
       keyStatusEl.textContent = llm.has_api_key
-        ? `(ключ задан${llm.api_key_hint ? ` ${llm.api_key_hint}` : ""})`
-        : "(ключ не задан — используется mock без OPENAI_API_KEY в env)";
+        ? `(key set${llm.api_key_hint ? ` ${llm.api_key_hint}` : ""})`
+        : "(key not set — mock is used without OPENAI_API_KEY in env)";
     }
   }
 
@@ -5499,7 +5499,7 @@ async function loadSuperadminData(): Promise<void> {
         )
         .join("");
       if (!(ag.builtins || []).length) {
-        agWrap.innerHTML = `<p class="lp-muted">Нет записей встроенных tools</p>`;
+        agWrap.innerHTML = `<p class="lp-muted">No built-in tool entries</p>`;
       }
       const rows = ag.http_tools || [];
       agHttpBody.innerHTML = rows.length
@@ -5511,11 +5511,11 @@ async function loadSuperadminData(): Promise<void> {
       <td class="lp-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(h.description)}">${escapeHtml(h.description)}</td>
       <td class="lp-muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(h.url_template)}"><code>${escapeHtml(h.url_template)}</code></td>
       <td><input type="checkbox" data-ag-http-en="${escapeHtml(h.id)}" ${h.enabled ? "checked" : ""} /></td>
-      <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;color:#b91c1c" data-ag-http-del="${escapeHtml(h.id)}">Удалить</button></td>
+      <td><button type="button" class="lp-btn lp-btn-ghost" style="padding:4px 8px;color:#b91c1c" data-ag-http-del="${escapeHtml(h.id)}">Delete</button></td>
     </tr>`,
             )
             .join("")
-        : `<tr><td colspan="5" class="lp-muted">Нет HTTP tools</td></tr>`;
+        : `<tr><td colspan="5" class="lp-muted">No HTTP tools</td></tr>`;
     }
   }
   await loadSuperadminRunsLive();
@@ -5740,135 +5740,135 @@ function renderSuperadmin(): void {
       </div>
       <div class="lp-panel">
         <h2>Portal users</h2>
-        <p class="lp-muted">Создайте учётную запись для демо. У каждого пользователя свой tenant; вход: <code>#/login</code>.</p>
+        <p class="lp-muted">Create a demo account. Each user has their own tenant; sign-in: <code>#/login</code>.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;align-items:flex-end;">
           <div class="lp-field"><label>Email</label><input class="lp-input" id="new-user-email" type="email" placeholder="owner@company.com" style="min-width:220px" /></div>
           <div class="lp-field"><label>Password</label><input class="lp-input" id="new-user-password" type="password" style="min-width:160px" /></div>
-          <div class="lp-field"><label>Имя</label><input class="lp-input" id="new-user-name" placeholder="Owner" style="min-width:140px" /></div>
-          <button type="button" class="lp-btn" id="create-user-btn">Создать пользователя</button>
+          <div class="lp-field"><label>Name</label><input class="lp-input" id="new-user-name" placeholder="Owner" style="min-width:140px" /></div>
+          <button type="button" class="lp-btn" id="create-user-btn">Create user</button>
         </div>
         <div class="lp-table-wrap" style="margin-top:12px">
           <table class="lp-table">
-            <thead><tr><th>Email</th><th>Tenant</th><th>Создан</th></tr></thead>
+            <thead><tr><th>Email</th><th>Tenant</th><th>Created</th></tr></thead>
             <tbody id="users-table-body"></tbody>
           </table>
         </div>
       </div>
       <div class="lp-panel">
         <h2>LLM adapter</h2>
-        <p class="lp-muted">OpenAI-compatible API. Значения хранятся в admin DB; ключ шифруется (Fernet). Переопределяют env в контейнере llm-adapter-service. Пустые поля «код» / «эмбеддинги» — использовать модель по умолчанию (или env <code>OPENAI_CODING_MODEL</code> / <code>OPENAI_EMBEDDING_MODEL</code>).</p>
+        <p class="lp-muted">OpenAI-compatible API. Values are stored in admin DB; the key is encrypted (Fernet). They override env in the llm-adapter-service container. Empty "code" / "embeddings" fields — use the default model (or env <code>OPENAI_CODING_MODEL</code> / <code>OPENAI_EMBEDDING_MODEL</code>).</p>
         <div class="lp-row">
           <div class="lp-field">
             <label>Base URL</label>
             <input class="lp-input" id="llm-base-url" placeholder="https://api.openai.com/v1" style="min-width: 320px" />
           </div>
           <div class="lp-field">
-            <label>Модель по умолчанию (общие задачи)</label>
+            <label>Default model (general tasks)</label>
             <input class="lp-input" id="llm-default-model" placeholder="gpt-4o-mini" style="min-width: 220px" />
           </div>
         </div>
         <div class="lp-row">
           <div class="lp-field">
-            <label>Модель для кода / агентов</label>
-            <input class="lp-input" id="llm-coding-model" placeholder="Оставьте пустым = как выше" style="min-width: 220px" />
+            <label>Model for code / agents</label>
+            <input class="lp-input" id="llm-coding-model" placeholder="Leave empty = same as above" style="min-width: 220px" />
           </div>
           <div class="lp-field">
-            <label>Модель эмбеддингов</label>
+            <label>Embedding model</label>
             <input class="lp-input" id="llm-embedding-model" placeholder="text-embedding-3-small" style="min-width: 220px" />
           </div>
           <div class="lp-field">
-            <label>Модель reranking</label>
+            <label>Reranking model</label>
             <input class="lp-input" id="llm-reranking-model" placeholder="gpt-4o-mini" style="min-width: 220px" />
           </div>
         </div>
         <div class="lp-field">
           <label>API key <span id="llm-key-status" class="lp-muted"></span></label>
-          <input class="lp-input" type="password" id="llm-api-key" placeholder="Пусто = не менять ключ" autocomplete="off" style="max-width: 480px" />
+          <input class="lp-input" type="password" id="llm-api-key" placeholder="Empty = leave key unchanged" autocomplete="off" style="max-width: 480px" />
         </div>
         <button type="button" class="lp-btn" id="llm-settings-save">Save LLM settings</button>
       </div>
       <div class="lp-panel">
         <h2>Remote agent (ingest)</h2>
-        <p class="lp-muted">Полный URL <code>POST .../api/v1/agent/ingest</code>, доступный с серверов пользователей (интернет или VPN). Сохраняется в admin DB; adapter подставляет его при установке агента. Fallback — переменная <code>AGENT_INGEST_PUBLIC_URL</code> в контейнере adapter.</p>
+        <p class="lp-muted">Full URL <code>POST .../api/v1/agent/ingest</code>, reachable from user servers (internet or VPN). Stored in admin DB; adapter injects it when installing the agent. Fallback — <code>AGENT_INGEST_PUBLIC_URL</code> in the adapter container.</p>
         <div class="lp-field">
           <label>Ingest URL</label>
           <input class="lp-input" id="agent-ingest-url" placeholder="https://your-domain/api/v1/agent/ingest" style="max-width: 560px" />
         </div>
-        <button type="button" class="lp-btn" id="agent-settings-save">Сохранить URL агента</button>
+        <button type="button" class="lp-btn" id="agent-settings-save">Save agent URL</button>
       </div>
       <div class="lp-panel">
-        <h2>Агенты разработки (системные промпты)</h2>
-        <p class="lp-muted">Роли PM, архитектор, DevOps, backend и frontend — базовый контекст для задач и демо агентов (см. development-context).</p>
+        <h2>Development agents (system prompts)</h2>
+        <p class="lp-muted">PM, architect, DevOps, backend, and frontend roles — base context for tasks and agent demos (see development-context).</p>
         <div class="lp-field"><label>PM</label><textarea class="lp-textarea" id="prompt-pm" rows="3" style="width:100%;max-width:720px;"></textarea></div>
         <div class="lp-field"><label>Architect</label><textarea class="lp-textarea" id="prompt-architect" rows="3" style="width:100%;max-width:720px;"></textarea></div>
         <div class="lp-field"><label>DevOps</label><textarea class="lp-textarea" id="prompt-devops" rows="4" style="width:100%;max-width:720px;"></textarea></div>
         <div class="lp-field"><label>Backend</label><textarea class="lp-textarea" id="prompt-backend" rows="4" style="width:100%;max-width:720px;"></textarea></div>
         <div class="lp-field"><label>Frontend</label><textarea class="lp-textarea" id="prompt-frontend" rows="4" style="width:100%;max-width:720px;"></textarea></div>
-        <button type="button" class="lp-btn" id="agent-dev-prompts-save">Сохранить промпты</button>
+        <button type="button" class="lp-btn" id="agent-dev-prompts-save">Save prompts</button>
       </div>
       <div class="lp-panel" id="knowledge-admin-panel">
-        <h2>Базы знаний платформы</h2>
-        <p class="lp-muted">Общие базы для всех проектов. Файлы PDF/изображения до 5 МБ → S3 (<code>platform-knowledge</code>) → очередь Kafka → эмбеддинги в Qdrant. Распознавание — общая LLM, чанки — embedding-модель.</p>
+        <h2>Platform knowledge bases</h2>
+        <p class="lp-muted">Shared bases for all projects. PDF/image files up to 5 MB → S3 (<code>platform-knowledge</code>) → Kafka queue → embeddings in Qdrant. Recognition — shared LLM; chunks — embedding model.</p>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:10px;">
           <div class="lp-field"><label>Slug</label><input class="lp-input" id="sa-kb-slug" placeholder="platform-dev" style="min-width:140px;" /></div>
-          <div class="lp-field"><label>Название</label><input class="lp-input" id="sa-kb-name" placeholder="Разработка" style="min-width:180px;" /></div>
-          <div class="lp-field"><label>Категория</label>
+          <div class="lp-field"><label>Name</label><input class="lp-input" id="sa-kb-name" placeholder="Development" style="min-width:180px;" /></div>
+          <div class="lp-field"><label>Category</label>
             <select class="lp-select" id="sa-kb-category">
               <option value="development">development</option>
               <option value="analysis">analysis</option>
               <option value="other">other</option>
             </select>
           </div>
-          <button type="button" class="lp-btn" id="sa-kb-create">Создать</button>
-          <button type="button" class="lp-btn lp-btn-ghost" id="sa-kb-refresh">Обновить</button>
+          <button type="button" class="lp-btn" id="sa-kb-create">Create</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="sa-kb-refresh">Refresh</button>
         </div>
         <p class="lp-muted" id="sa-kb-status" style="font-size:12px;"></p>
         <div id="sa-kb-list" class="lp-orch-grid"></div>
         <div id="sa-kb-docs-wrap" style="display:none;margin-top:14px;">
-          <h3 style="font-size:15px;">Документы: <span id="sa-kb-active-title"></span></h3>
+          <h3 style="font-size:15px;">Documents: <span id="sa-kb-active-title"></span></h3>
           <input type="hidden" id="sa-kb-active-id" value="" />
           <div class="lp-row" style="gap:8px;margin:8px 0;">
             <input type="file" id="sa-kb-file" accept=".pdf,image/*,.txt,.md" />
-            <button type="button" class="lp-btn" id="sa-kb-upload">Загрузить</button>
+            <button type="button" class="lp-btn" id="sa-kb-upload">Upload</button>
           </div>
           <div id="sa-kb-docs" class="lp-orch-grid"></div>
         </div>
       </div>
       <div class="lp-panel" id="agent-graph-tools-panel">
         <h2>LangGraph agent tools</h2>
-        <p class="lp-muted">Встроенные инструменты можно отключить. HTTP GET: URL с <code>{project_id}</code>, хосты <code>adapter-service</code> и <code>project-service</code>, путь <code>/api/v1/projects/...</code>.</p>
-        <h3 style="font-size:14px;margin:12px 0 8px;">Встроенные</h3>
-        <div id="agent-graph-builtin-wrap" class="lp-muted">Загрузка…</div>
-        <button type="button" class="lp-btn" id="agent-graph-builtin-save" style="margin-top:8px;">Сохранить встроенные</button>
+        <p class="lp-muted">Built-in tools can be disabled. HTTP GET: URL with <code>{project_id}</code>, hosts <code>adapter-service</code> and <code>project-service</code>, path <code>/api/v1/projects/...</code>.</p>
+        <h3 style="font-size:14px;margin:12px 0 8px;">Built-in</h3>
+        <div id="agent-graph-builtin-wrap" class="lp-muted">Loading…</div>
+        <button type="button" class="lp-btn" id="agent-graph-builtin-save" style="margin-top:8px;">Save built-in</button>
         <h3 style="font-size:14px;margin:16px 0 8px;">HTTP tools (GET)</h3>
         <div id="agent-graph-http-panel" class="lp-table-wrap">
           <table class="lp-table">
-            <thead><tr><th>Имя</th><th>Описание</th><th>URL шаблон</th><th>Вкл</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Description</th><th>URL template</th><th>On</th><th></th></tr></thead>
             <tbody id="agent-graph-http-body"><tr><td colspan="5" class="lp-muted">—</td></tr></tbody>
           </table>
         </div>
         <div class="lp-row" style="flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:12px;">
           <div class="lp-field"><label>tool_name</label><input class="lp-input" id="ag-http-name" placeholder="my_project_facts" style="min-width:180px" /></div>
-          <div class="lp-field"><label>Описание</label><input class="lp-input" id="ag-http-desc" placeholder="Кратко для LLM" style="min-width:220px" /></div>
+          <div class="lp-field"><label>Description</label><input class="lp-input" id="ag-http-desc" placeholder="Brief title for LLM" style="min-width:220px" /></div>
           <div class="lp-field" style="flex:1;min-width:280px;"><label>url_template</label><input class="lp-input" id="ag-http-url" placeholder="http://project-service:8002/api/v1/projects/{project_id}/facts" style="width:100%;max-width:480px" /></div>
-          <button type="button" class="lp-btn" id="agent-graph-http-add">Добавить</button>
+          <button type="button" class="lp-btn" id="agent-graph-http-add">Add</button>
         </div>
       </div>
       <div class="lp-panel">
         <h2>AI Team phase dashboard (live)</h2>
-        <p class="lp-muted">Обновляется автоматически каждые 3с. Показывает текущую фазу, iteration батча и состояние исполнения.</p>
+        <p class="lp-muted">Refreshes automatically every 3s. Shows the current phase, batch iteration, and execution state.</p>
         <div class="lp-row" style="align-items:flex-end;gap:8px;">
           <div class="lp-field">
-            <label>Фильтр статуса run</label>
+            <label>Run status filter</label>
             <select id="ai-team-live-status" class="lp-select" style="min-width:180px;">
-              <option value="">Все</option>
+              <option value="">All</option>
               <option value="running">running</option>
               <option value="paused">paused</option>
               <option value="error">error</option>
               <option value="done">done</option>
             </select>
           </div>
-          <button type="button" class="lp-btn lp-btn-ghost" id="ai-team-live-refresh">Обновить сейчас</button>
+          <button type="button" class="lp-btn lp-btn-ghost" id="ai-team-live-refresh">Refresh now</button>
         </div>
         <div class="lp-table-wrap" style="margin-top:12px;">
           <table class="lp-table">
@@ -5884,7 +5884,7 @@ function renderSuperadmin(): void {
                 <th></th>
               </tr>
             </thead>
-            <tbody id="ai-team-runs-live-body"><tr><td colspan="8" class="lp-muted">Загрузка…</td></tr></tbody>
+            <tbody id="ai-team-runs-live-body"><tr><td colspan="8" class="lp-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -5919,21 +5919,21 @@ function renderSuperadmin(): void {
         </div>
       </div>
       <div class="lp-panel">
-        <h2>Проекты (управление)</h2>
-        <p class="lp-muted">Пауза блокирует изменения и LLM для пользователей; удаление — мягкое (скрыто из списков tenant).</p>
+        <h2>Projects (management)</h2>
+        <p class="lp-muted">Pause blocks changes and LLM for users; delete is soft (hidden from tenant lists).</p>
         <div class="lp-table-wrap">
           <table class="lp-table">
             <thead>
               <tr>
-                <th>Имя</th>
-                <th>Описание</th>
+                <th>Name</th>
+                <th>Description</th>
                 <th>Tenant</th>
-                <th>Статус workflow</th>
-                <th>GitLab группа</th>
-                <th>Пауза</th>
-                <th>Удалён</th>
-                <th>Обновлён</th>
-                <th>Действия</th>
+                <th>Status workflow</th>
+                <th>GitLab group</th>
+                <th>Pause</th>
+                <th>Deleted</th>
+                <th>Updated</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="projects-table-body"></tbody>
@@ -5942,7 +5942,7 @@ function renderSuperadmin(): void {
       </div>
       <div class="lp-panel" id="ansible-templates-panel">
         <h2>Ansible swarm templates</h2>
-        <p class="lp-muted">Хранение в S3 (RustFS). В пользовательском каталоге только шаблоны с <code>active: true</code> в <code>meta.yaml</code>.</p>
+        <p class="lp-muted">Stored in S3 (RustFS). The user catalog only shows templates with <code>active: true</code> in <code>meta.yaml</code>.</p>
         <div class="lp-row">
           <button type="button" class="lp-btn lp-btn-ghost" id="ansible-load-list">Reload list</button>
           <button type="button" class="lp-btn" id="ansible-new">New template</button>
@@ -5976,8 +5976,8 @@ function renderSuperadmin(): void {
             <div id="ansible-play-cm" class="ansible-ide-editor" aria-label="playbook.yml.j2"></div>
           </div>
           <p class="lp-muted" style="font-size: 12px; margin: 8px 0">
-            Редактор Monaco (как в VS Code): подсветка YAML, миникарта, сворачивание, поиск и замена (Ctrl+H),
-            мультикурсор (Alt+Click). Jinja <code>{{ }}</code> в playbook остаётся в рамках YAML-подсветки.
+            Monaco editor (VS Code-like): YAML highlighting, minimap, folding, find and replace (Ctrl+H),
+            multi-cursor (Alt+Click). Jinja <code>{{ }}</code> in the playbook stays within YAML highlighting.
           </p>
           <div class="lp-row">
             <button type="button" class="lp-btn" id="ansible-save">Save</button>
@@ -6033,7 +6033,7 @@ function renderSuperadmin(): void {
     const kbId = (document.getElementById("sa-kb-active-id") as HTMLInputElement).value.trim();
     const file = (document.getElementById("sa-kb-file") as HTMLInputElement).files?.[0];
     if (!kbId || !file) {
-      alert("Выберите базу и файл");
+      alert("Select a base and a file");
       return;
     }
     const fd = new FormData();
@@ -6069,7 +6069,7 @@ function renderSuperadmin(): void {
       (document.getElementById("superadmin-token") as HTMLInputElement | null)?.value.trim() ||
       getSuperadminTokenForUi();
     if (!t) {
-      alert("Нужен superadmin token");
+      alert("Required superadmin token");
       return;
     }
     const headers = { ...authHeader(t), "Content-Type": "application/json" };
@@ -6078,8 +6078,8 @@ function renderSuperadmin(): void {
         const row = lastAdminProjectsSnapshot.find((p) => p.id === pid);
         const force = row?.gitlab_provision_status === "failed";
         const msg = force
-          ? "Повторить создание GitLab-группы для проекта?"
-          : "Создать GitLab-группу и токен для этого проекта? (для старых проектов без автопровижининга)";
+          ? "Retry creating the GitLab group for the project?"
+          : "Create GitLab group and token for this project? (for older projects without auto-provisioning)";
         if (!confirm(msg)) return;
         const resp = await fetch(
           `${GATEWAY_BASE}/api/v1/admin/projects/${encodeURIComponent(pid)}/gitlab-provision`,
@@ -6092,17 +6092,17 @@ function renderSuperadmin(): void {
         }
         alert(
           payload.gitlab_group_created
-            ? `Готово: ${payload.group_path || "группа создана"}`
-            : `Статус: ${payload.status || "unknown"}${payload.error ? `\n${payload.error}` : ""}`,
+            ? `Done: ${payload.group_path || "group created"}`
+            : `Status: ${payload.status || "unknown"}${payload.error ? `\n${payload.error}` : ""}`,
         );
         await loadSuperadminData();
         return;
       }
       if (action === "edit") {
         const row = lastAdminProjectsSnapshot.find((p) => p.id === pid);
-        const name = prompt("Имя проекта", row?.name ?? "");
+        const name = prompt("Project name", row?.name ?? "");
         if (name === null) return;
-        const desc = prompt("Описание", row?.description ?? "");
+        const desc = prompt("Description", row?.description ?? "");
         if (desc === null) return;
         const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/projects/${encodeURIComponent(pid)}`, {
           method: "PATCH",
@@ -6125,7 +6125,7 @@ function renderSuperadmin(): void {
         });
         if (!resp.ok) alert(await resp.text());
       } else if (action === "delete") {
-        if (!confirm(`Удалить проект ${pid}? (мягкое удаление)`)) return;
+        if (!confirm(`Delete project ${pid}? (soft delete)`)) return;
         const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/projects/${encodeURIComponent(pid)}`, {
           method: "DELETE",
           headers: authHeader(t),
@@ -6170,7 +6170,7 @@ function renderSuperadmin(): void {
     const t = (document.getElementById("superadmin-token") as HTMLInputElement)?.value.trim() || getSuperadminTokenForUi();
     const ingest_public_url = (document.getElementById("agent-ingest-url") as HTMLInputElement).value.trim();
     if (!ingest_public_url) {
-      alert("Укажите URL");
+      alert("Enter a URL");
       return;
     }
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/agent-settings`, {
@@ -6228,7 +6228,7 @@ function renderSuperadmin(): void {
     const description = (document.getElementById("ag-http-desc") as HTMLInputElement).value.trim();
     const url_template = (document.getElementById("ag-http-url") as HTMLInputElement).value.trim();
     if (!tool_name || !description || !url_template) {
-      alert("Заполните все поля");
+      alert("Fill in all fields");
       return;
     }
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/agent-graph-tools/http`, {
@@ -6267,7 +6267,7 @@ function renderSuperadmin(): void {
     const btn = (ev.target as HTMLElement).closest("[data-ag-http-del]");
     if (!btn) return;
     const id = btn.getAttribute("data-ag-http-del");
-    if (!id || !confirm("Удалить этот HTTP tool?")) return;
+    if (!id || !confirm("Delete this HTTP tool?")) return;
     const t =
       (document.getElementById("superadmin-token") as HTMLInputElement)?.value.trim() || getSuperadminTokenForUi();
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/agent-graph-tools/http/${encodeURIComponent(id)}`, {
@@ -6286,7 +6286,7 @@ function renderSuperadmin(): void {
     const password = (document.getElementById("new-user-password") as HTMLInputElement).value;
     const display_name = (document.getElementById("new-user-name") as HTMLInputElement).value.trim();
     if (!email || !password) {
-      alert("Email и password обязательны");
+      alert("Email and password are required");
       return;
     }
     const resp = await fetch(`${GATEWAY_BASE}/api/v1/admin/users`, {

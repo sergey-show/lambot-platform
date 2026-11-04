@@ -1,6 +1,6 @@
 """
-Песочница для выполнения ограниченного Python-кода (агенты, проверки, демо).
-Не замена полноценной изоляции: для production используйте отдельные контейнеры/K8s Job.
+Sandbox for running limited Python code (agents, checks, demos).
+Not a substitute for full isolation: for production use separate containers/K8s Jobs.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def run_python(
     _: None = Depends(_require_token),
 ) -> SandboxPythonResponse:
     """
-    Выполняет `python -c <code>` во временном каталоге с урезанным окружением.
-    Сеть и ФС не изолированы на уровне ядра — только для доверенного контура платформы.
+    Runs `python -c <code>` in a temp directory with a reduced environment.
+    Network and FS are not kernel-isolated — only for the trusted platform perimeter.
     """
     return _execute_python(req)

@@ -1,9 +1,9 @@
 flowchart TB
-  subgraph orchestrator["Оркестратор (orchestration_runner)"]
+  subgraph orchestrator["Orchestrator (orchestration_runner)"]
     intake[intake: full / direct + sa?]
-    sa[SA: spec, glossary, traceability, трекер]
+    sa[SA: spec, glossary, traceability, tracker]
     narrative[PM, architect, *_plan, implementation, deploy, QA]
-    execplan[execution_plan: JSON батч]
+    execplan[execution_plan: JSON batch]
   end
 
   subgraph llm["LLM"]
@@ -17,7 +17,7 @@ flowchart TB
     tasks[AITeamExecutionTask]
   end
 
-  subgraph workers["Воркеры (Kafka)"]
+  subgraph workers["Workers (Kafka)"]
     ssh[ssh_run_command]
     k8s[kubernetes_query]
     ansible[ansible_run_template]
@@ -27,7 +27,7 @@ flowchart TB
   sa --> narrative
   narrative --> chat
   narrative --> react
-  react -.->|get_project_docs_context по запросу| storage
+  react -.->|get_project_docs_context on demand| storage
   narrative --> execplan
   execplan --> tasks
   tasks --> workers

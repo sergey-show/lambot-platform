@@ -107,19 +107,19 @@ class LlmSettingsPublicResponse(BaseModel):
     default_model: str
     coding_model: str | None = Field(
         default=None,
-        description="Модель для кода/агентов; пусто в UI = использовать модель по умолчанию",
+        description="Model for code/agents; empty in UI = use the default model",
     )
     embedding_model: str | None = Field(
         default=None,
-        description="Модель для эмбеддингов; пусто = использовать env/дефолт на стороне adapter",
+        description="Embedding model; empty = use env/default on the adapter side",
     )
     reranking_model: str | None = Field(
         default=None,
-        description="Модель для LLM-reranking в knowledge search; пусто = default_model",
+        description="Model for LLM-reranking in knowledge search; empty = default_model",
     )
     has_api_key: bool
     api_key_hint: str | None = Field(
-        default=None, description="Последние символы ключа, если задан"
+        default=None, description="Last characters of the key, if set"
     )
 
 
@@ -128,19 +128,19 @@ class LlmSettingsUpdateBody(BaseModel):
     default_model: str | None = None
     coding_model: str | None = Field(
         default=None,
-        description="Пустая строка — сбросить (как модель по умолчанию)",
+        description="Empty string — reset (like the default model)",
     )
     embedding_model: str | None = Field(
         default=None,
-        description="Пустая строка — сбросить",
+        description="Empty string — reset",
     )
     reranking_model: str | None = Field(
         default=None,
-        description="Пустая строка — сбросить (будет default_model)",
+        description="Empty string — reset (will use default_model)",
     )
     api_key: str | None = Field(
         default=None,
-        description="Новый ключ; пустая строка = не менять",
+        description="New key; empty string = leave unchanged",
     )
 
 
@@ -167,21 +167,21 @@ class AgentSettingsInternalResponse(BaseModel):
 
 class AgentDevelopmentPromptsPublicResponse(BaseModel):
     prompts: dict[str, str] = Field(
-        description="Ключ — роль: sa, devops, backend, frontend, qa, architect, pm; значение — системный промпт"
+        description="Key — role: sa, devops, backend, frontend, qa, architect, pm; value — system prompt"
     )
 
 
 class AgentDevelopmentPromptsUpdateBody(BaseModel):
     prompts: dict[str, str] = Field(
         default_factory=dict,
-        description="Полные тексты промптов по ролям; можно передать только изменённые ключи",
+        description="Full prompt texts by role; you may pass only changed keys",
     )
 
 
 class AgentGraphBuiltinUpdateBody(BaseModel):
     tools: dict[str, bool] = Field(
         default_factory=dict,
-        description="Ключ — имя встроенного tool (get_development_context, …), значение — включён",
+        description="Key — built-in tool name (get_development_context, …), value — enabled",
     )
 
 
@@ -190,7 +190,7 @@ class AgentGraphHttpToolCreateBody(BaseModel):
     description: str = Field(..., min_length=4, max_length=4000)
     url_template: str = Field(
         ...,
-        description="GET URL с плейсхолдером {project_id}, только adapter-service / project-service",
+        description="GET URL with {project_id} placeholder, adapter-service / project-service only",
     )
     enabled: bool = True
 
@@ -208,25 +208,25 @@ _ALLOWED_HTTP_HOSTS = frozenset({"adapter-service", "project-service"})
 
 def _validate_agent_http_url_template(template: str) -> None:
     if "{project_id}" not in template:
-        raise HTTPException(status_code=400, detail="url_template должен содержать {project_id}")
+        raise HTTPException(status_code=400, detail="url_template must contain {project_id}")
     sample = "00000000-0000-0000-0000-000000000001"
     try:
         url = template.format(project_id=sample)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"шаблон URL: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"URL template: {exc}") from exc
     from urllib.parse import urlparse
 
     p = urlparse(url)
     if p.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="только http/https")
+        raise HTTPException(status_code=400, detail="http/https only")
     host = (p.hostname or "").lower()
     if host not in _ALLOWED_HTTP_HOSTS:
         raise HTTPException(
             status_code=400,
-            detail=f"разрешены только хосты: {', '.join(sorted(_ALLOWED_HTTP_HOSTS))}",
+            detail=f"only these hosts are allowed: {', '.join(sorted(_ALLOWED_HTTP_HOSTS))}",
         )
     if not (p.path or "").startswith("/api/v1/projects/"):
-        raise HTTPException(status_code=400, detail="путь должен начинаться с /api/v1/projects/")
+        raise HTTPException(status_code=400, detail="path must start with /api/v1/projects/")
 
 
 def _get_agent_row(db: Session) -> AgentPlatformSettings:
@@ -624,7 +624,7 @@ def internal_get_llm_settings(
     _: None = Depends(require_internal_llm_token),
     db: Session = Depends(get_db),
 ) -> LlmSettingsInternalResponse:
-    """Только для сервисов внутри сети (llm-adapter-service)."""
+    """Only for in-network services (llm-adapter-service)."""
     row = _get_llm_row(db)
     api_key: str | None = None
     if row.api_key_encrypted:
@@ -666,7 +666,7 @@ def admin_put_agent_settings(
     if "/api/v1/agent/ingest" not in url:
         raise HTTPException(
             status_code=400,
-            detail="URL должен указывать на endpoint .../api/v1/agent/ingest",
+            detail="URL must point to endpoint .../api/v1/agent/ingest",
         )
     row = _get_agent_row(db)
     row.ingest_public_url = url
@@ -680,7 +680,7 @@ def internal_get_agent_settings(
     _: None = Depends(require_internal_llm_token),
     db: Session = Depends(get_db),
 ) -> AgentSettingsInternalResponse:
-    """Только для сервисов внутри сети (adapter-service)."""
+    """Only for in-network services (adapter-service)."""
     row = _get_agent_row(db)
     return AgentSettingsInternalResponse(ingest_public_url=row.ingest_public_url.strip())
 
@@ -731,7 +731,7 @@ def internal_get_agent_development_prompts(
     _: None = Depends(require_internal_llm_token),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    """Системные промпты для агентов разработки (adapter / worker)."""
+    """System prompts for development agents (adapter / worker)."""
     return _all_dev_prompts(db)
 
 
@@ -805,7 +805,7 @@ def admin_put_agent_graph_builtins(
 ) -> dict[str, str]:
     for key, en in body.tools.items():
         if key not in KNOWN_AGENT_GRAPH_BUILTIN_KEYS:
-            raise HTTPException(status_code=400, detail=f"Неизвестный встроенный tool: {key}")
+            raise HTTPException(status_code=400, detail=f"Unknown built-in tool: {key}")
         row = db.get(AgentGraphBuiltinTool, key)
         if row is None:
             db.add(
@@ -833,14 +833,14 @@ def admin_create_agent_graph_http_tool(
     if not _TOOL_NAME_RE.match(name):
         raise HTTPException(
             status_code=400,
-            detail="tool_name: только a-z, цифры, _; начинается с буквы",
+            detail="tool_name: only a-z, digits, _; must start with a letter",
         )
     existing = db.execute(select(AgentGraphHttpTool).where(AgentGraphHttpTool.tool_name == name)).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="tool_name уже занят")
+        raise HTTPException(status_code=409, detail="tool_name already taken")
     _validate_agent_http_url_template(body.url_template.strip())
     if name in KNOWN_AGENT_GRAPH_BUILTIN_KEYS:
-        raise HTTPException(status_code=400, detail="имя конфликтует со встроенным tool")
+        raise HTTPException(status_code=400, detail="name conflicts with a built-in tool")
     row = AgentGraphHttpTool(
         tool_name=name,
         description=body.description.strip(),
@@ -868,13 +868,13 @@ def admin_patch_agent_graph_http_tool(
     if body.tool_name is not None:
         nn = body.tool_name.strip()
         if not _TOOL_NAME_RE.match(nn):
-            raise HTTPException(status_code=400, detail="tool_name: неверный формат")
+            raise HTTPException(status_code=400, detail="tool_name: invalid format")
         if nn != row.tool_name:
             clash = db.execute(select(AgentGraphHttpTool).where(AgentGraphHttpTool.tool_name == nn)).scalar_one_or_none()
             if clash is not None:
-                raise HTTPException(status_code=409, detail="tool_name занят")
+                raise HTTPException(status_code=409, detail="tool_name taken")
         if nn in KNOWN_AGENT_GRAPH_BUILTIN_KEYS:
-            raise HTTPException(status_code=400, detail="имя конфликтует со встроенным tool")
+            raise HTTPException(status_code=400, detail="name conflicts with a built-in tool")
         row.tool_name = nn
     if body.description is not None:
         row.description = body.description.strip()
@@ -907,7 +907,7 @@ def internal_get_agent_graph_tools(
     _: None = Depends(require_internal_llm_token),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Конфигурация инструментов LangGraph-агента (agent-graph-service)."""
+    """LangGraph agent tool configuration (agent-graph-service)."""
     builtins = _agent_graph_builtin_rows(db)
     builtin_map = {r.tool_key: r.enabled for r in builtins}
     for k in KNOWN_AGENT_GRAPH_BUILTIN_KEYS:

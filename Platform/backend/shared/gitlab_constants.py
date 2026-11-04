@@ -1,4 +1,4 @@
-"""Константы интеграции GitLab платформы."""
+"""Constants for platform GitLab integration."""
 
-GITLAB_PLATFORM_RESOURCE_LABEL = "GitLab платформа (группа и токен)"
+GITLAB_PLATFORM_RESOURCE_LABEL = "GitLab platform (group and token)"
 GITLAB_PLATFORM_CATEGORY = "gitlab"

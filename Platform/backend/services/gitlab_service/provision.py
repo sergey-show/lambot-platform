@@ -1,4 +1,4 @@
-"""Провижининг GitLab-группы и токена при создании проекта."""
+"""Provision GitLab group and token on project create."""
 
 from __future__ import annotations
 

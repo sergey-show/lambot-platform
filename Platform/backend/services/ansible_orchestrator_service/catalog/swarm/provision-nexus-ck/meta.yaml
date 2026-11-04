@@ -2,9 +2,9 @@ id: provision-nexus-ck
 active: true
 name: Nexus 3 OSS (cloudkrafter.nexus)
 description: >
-  Sonatype Nexus 3 OSS через коллекцию cloudkrafter.nexus (роль nexus_oss): установка на хост,
-  без Docker. После — REST: hosted Maven/Docker и файл учётных данных для Lambot.
-  Память JVM по умолчанию снижена до ~768M для небольших VM (см. playbook).
+  Sonatype Nexus 3 OSS via the cloudkrafter.nexus collection (role nexus_oss): install on the host,
+  without Docker. Then REST: hosted Maven/Docker and a credentials file for Lambot.
+  Default JVM memory is lowered to ~768M for small VMs (see playbook).
 tags:
   - nexus
   - ansible-galaxy

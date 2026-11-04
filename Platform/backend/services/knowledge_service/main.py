@@ -1,4 +1,4 @@
-"""Базы знаний: платформа + проекты, S3, очередь Kafka, Qdrant."""
+"""Knowledge bases: platform + projects, S3, Kafka queue, Qdrant."""
 
 from __future__ import annotations
 

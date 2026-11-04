@@ -93,7 +93,7 @@ def parse_bearer_token(authorization: str | None) -> str:
 
 
 def _append_activity_headers(request: Request, headers: dict[str, str]) -> None:
-    """Пробрасываем в adapter для журнала ClickHouse (email / sub из JWT)."""
+    """Forwarded to adapter for the ClickHouse log (email / sub from JWT)."""
     try:
         token = parse_bearer_token(request.headers.get("Authorization"))
         ctx = decode_auth_context(token)
@@ -154,7 +154,7 @@ async def assert_project_tenant_access(ctx: AuthContext, project_id: str) -> Non
 
 
 async def assert_project_mutable(ctx: AuthContext, project_id: str) -> None:
-    """Проект существует, не удалён; для пользователя — tenant совпадает; не в режиме приостановки."""
+    """Project exists and is not deleted; for a user — tenant matches; not suspended."""
     async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.get(f"{PROJECT_SERVICE_URL}/api/v1/projects/{project_id}")
     if r.status_code == 404:
@@ -376,7 +376,7 @@ async def auth_login(request: Request):
 
 @app.post("/api/v1/internal/projects/{project_id}/http/execute")
 async def internal_http_execute(project_id: str, request: Request):
-    """Безопасный HTTP-executor для agent-graph tools (alias + path + method)."""
+    """Safe HTTP executor for agent-graph tools (alias + path + method)."""
     xit = (request.headers.get("X-Internal-Token") or "").strip()
     if xit != INTERNAL_LLM_SETTINGS_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -482,7 +482,7 @@ async def internal_http_execute(project_id: str, request: Request):
 
 @app.post("/api/v1/internal/projects/{project_id}/browser/execute")
 async def internal_browser_execute(project_id: str, request: Request):
-    """Proxy для browser-tool-service (только internal token)."""
+    """Proxy for browser-tool-service (internal token only)."""
     xit = (request.headers.get("X-Internal-Token") or "").strip()
     if xit != INTERNAL_LLM_SETTINGS_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -997,7 +997,7 @@ async def admin_agent_graph_http_delete(tool_id: str, request: Request):
 
 async def _proxy_get(url: str, request: Request) -> JSONResponse:
     started = time.monotonic()
-    # Только query из входящего запроса. Если в url уже был «?…», не дублировать (?limit=1?limit=1 → 422 у FastAPI).
+    # Only the query from the incoming request. If the url already had "?…", do not duplicate (?limit=1?limit=1 → FastAPI 422).
     base = url.split("?", 1)[0]
     q = request.url.query
     url = f"{base}?{q}" if q else base
@@ -1246,7 +1246,7 @@ async def infra_run_template(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/infra/run-stack-stream")
 async def infra_run_stack_stream(project_id: str, request: Request):
-    """Прокси NDJSON-потока логов Ansible (долгий запрос)."""
+    """Proxy Ansible log NDJSON stream (long request)."""
     ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
     await assert_project_mutable(ctx, project_id)
     payload = await request.json()
@@ -1298,7 +1298,7 @@ async def infra_k8s_install_3node(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/infra/k8s-install-3node-stream")
 async def infra_k8s_install_3node_stream(project_id: str, request: Request):
-    """Прокси NDJSON: kubeadm на три SSH-таргета (долгий запрос)."""
+    """NDJSON proxy: kubeadm on three SSH targets (long request)."""
     ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
     await assert_project_mutable(ctx, project_id)
     payload = await request.json()
@@ -1338,7 +1338,7 @@ async def infra_k8s_install_3node_stream(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/agent-demo/run")
 async def agent_demo_run(project_id: str, request: Request):
-    """Мультиагентное демо: LLM-нарратив + создание репозитория и CI в GitLab (нужен PAT в ресурсах проекта)."""
+    """Multi-agent demo: LLM narrative + create repository and CI in GitLab (PAT required in project resources)."""
     ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
     await assert_project_mutable(ctx, project_id)
     return await proxy_json(
@@ -1351,7 +1351,7 @@ async def agent_demo_run(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/agents/bootstrap-planning")
 async def agents_bootstrap_planning(project_id: str, request: Request):
-    """Повторный запуск planning через agent-bootstrap (как при создании проекта). Опционально {\"force\": true}."""
+    """Re-run planning via agent-bootstrap (same as on project create). Optionally {\"force\": true}."""
     ctx = require_roles(request, {ROLE_OWNER, ROLE_ADMIN, ROLE_SUPERADMIN})
     await assert_project_mutable(ctx, project_id)
     started = time.monotonic()
@@ -1380,7 +1380,7 @@ async def agents_bootstrap_planning(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/agent-graph/invoke")
 async def agent_graph_invoke(project_id: str, request: Request):
-    """LangGraph ReAct-агент с tool calling (инструменты платформы + sandbox)."""
+    """LangGraph ReAct agent with tool calling (platform tools + sandbox)."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     await assert_project_mutable(ctx, project_id)
@@ -1402,7 +1402,7 @@ async def agent_graph_invoke(project_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/agent-orchestrate/start")
 async def agent_orchestrate_start(project_id: str, request: Request):
-    """Фоновый запуск оркестрации ролей (PM → Frontend); вернуть run_id для опроса статуса."""
+    """Background role orchestration (PM → Frontend); return run_id for status polling."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     await assert_project_mutable(ctx, project_id)
@@ -1500,7 +1500,7 @@ async def agent_orchestrate_run_stream(project_id: str, run_id: str, request: Re
 
 @app.websocket("/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/ws")
 async def agent_orchestrate_run_ws(project_id: str, run_id: str, websocket: WebSocket):
-    """Оркестрация в реальном времени: первый кадр — snapshot (после перезагрузки страницы), далее дельты."""
+    """Realtime orchestration: first frame is a snapshot (after page reload), then deltas."""
     started = time.monotonic()
     path = f"/api/v1/projects/{project_id}/agent-orchestrate/runs/{run_id}/ws"
     token = (websocket.query_params.get("access_token") or websocket.query_params.get("token") or "").strip()
@@ -1571,7 +1571,7 @@ async def agent_orchestrate_run_ws(project_id: str, run_id: str, websocket: WebS
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")
 async def ai_team_state(project_id: str, request: Request):
-    """Последний прогон AI-команды: шаги, архитектура, итог (Postgres через agent-graph)."""
+    """Latest AI Team run: steps, architecture, summary (Postgres via agent-graph)."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     started = time.monotonic()
@@ -1973,7 +1973,7 @@ async def project_knowledge_document_patch(
 
 @app.get("/api/v1/projects/{project_id}/tracker/items")
 async def tracker_items_list(project_id: str, request: Request):
-    """Трекер задач агентов (эпики/задачи) в проекте."""
+    """Agent task tracker (epics/tasks) in the project."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     started = time.monotonic()
@@ -2057,7 +2057,7 @@ async def tracker_item_events(project_id: str, item_id: str, request: Request):
 
 @app.post("/api/v1/projects/{project_id}/tracker/items/{item_id}/dispatch")
 async def tracker_item_dispatch(project_id: str, item_id: str, request: Request):
-    """Поставить задачу в очередь агента (Kafka → agent_worker)."""
+    """Enqueue an agent task (Kafka → agent_worker)."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     await assert_project_mutable(ctx, project_id)
@@ -2073,7 +2073,7 @@ async def tracker_item_dispatch(project_id: str, item_id: str, request: Request)
 
 @app.post("/api/v1/projects/{project_id}/sandbox/python")
 async def sandbox_python(project_id: str, request: Request):
-    """Песочница Python: выполнение кода в изолированном временном каталоге (внутренний сервис)."""
+    """Python sandbox: run code in an isolated temp directory (internal service)."""
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
     started = time.monotonic()
@@ -2133,7 +2133,7 @@ async def k8s_query_gateway(project_id: str, request: Request):
 async def project_activity_logs(project_id: str, request: Request):
     ctx = require_roles(request, USER_ROLES)
     await assert_project_tenant_access(ctx, project_id)
-    # Только базовый URL: _proxy_get уже добавляет request.url.query (иначе был бы дубликат ?limit=… → 422).
+    # Base URL only: _proxy_get already adds request.url.query (otherwise duplicate ?limit=… → 422).
     return await _proxy_get(
         f"{ADAPTER_SERVICE_URL}/api/v1/projects/{project_id}/activity-logs",
         request,
@@ -2189,7 +2189,7 @@ async def browser_artifact(project_id: str, artifact_name: str, request: Request
 
 @app.post("/api/v1/agent/ingest")
 async def agent_ingest_public(request: Request):
-    """Публичная точка для агента на сервере (авторизация — Bearer agent token)."""
+    """Public endpoint for the on-server agent (auth — Bearer agent token)."""
     return await proxy_json("POST", f"{ADAPTER_SERVICE_URL}/api/v1/agent/ingest", request)
 
 

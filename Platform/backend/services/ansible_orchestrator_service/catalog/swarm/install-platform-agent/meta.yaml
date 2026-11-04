@@ -2,8 +2,8 @@ id: install-platform-agent
 active: true
 name: Install platform metrics agent
 description: >
-  Отработанный шаблон: ставит Python-агент и systemd unit, шлёт метрики на ingest URL.
-  Агент ИИ подставляет только переменные (host, token, URLs), а не пишет playbook с нуля.
+  Proven template: installs the Python agent and systemd unit, sends metrics to the ingest URL.
+  The AI agent only fills variables (host, token, URLs) and does not write the playbook from scratch.
 tags:
   - agent
   - bootstrap

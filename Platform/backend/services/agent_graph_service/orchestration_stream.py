@@ -1,4 +1,4 @@
-"""Поток событий оркестрации (NDJSON / WebSocket): общая логика опроса Postgres."""
+"""Orchestration event stream (NDJSON / WebSocket): shared Postgres polling logic."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def derive_batch_meta(row: dict) -> dict[str, object]:
 
 
 def build_run_client_view(row: dict) -> dict[str, Any]:
-    """Полное состояние run для UI (как после merge run_meta)."""
+    """Full run state for UI (as after merging run_meta)."""
     out: dict[str, Any] = dict(row)
     out.update(derive_batch_meta(row))
     return out
@@ -56,9 +56,9 @@ async def iter_orchestration_events(
     websocket_mode: bool,
 ) -> AsyncIterator[dict[str, Any]]:
     """
-    websocket_mode=True: первое событие — snapshot (восстановление после перезагрузки страницы).
-    websocket_mode=False: без snapshot в потоке; prev_row = снимок текущего run — дальше только новые дельты
-    (клиент перед NDJSON должен один раз подтянуть run через GET/poll, см. portal).
+    websocket_mode=True: first event is a snapshot (restore after page reload).
+    websocket_mode=False: no snapshot in the stream; prev_row = current run snapshot — then only new deltas
+    (before NDJSON the client should fetch the run once via GET/poll; see portal).
     """
     initial = get_run(run_id)
     if initial is None or initial.get("project_id") != str(project_id):

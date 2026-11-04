@@ -18,8 +18,8 @@ def _strip_markdown_fence(text: str) -> str:
 
 def parse_tool_call_from_assistant_text(text: str) -> dict[str, str] | None:
     """
-    Распознать {"name": "...", "arguments": {...}} из content (как отдаёт Ollama OpenAI API).
-    Возвращает {name, arguments} где arguments — JSON-строка для OpenAI tool_calls.
+    Recognize {"name": "...", "arguments": {...}} from content (as Ollama OpenAI API returns).
+    Returns {name, arguments} where arguments is a JSON string for OpenAI tool_calls.
     """
     raw = _strip_markdown_fence(text)
     if not raw.startswith("{"):

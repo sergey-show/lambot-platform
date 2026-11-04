@@ -73,11 +73,11 @@ def _s3_meta_exists(cli, bucket: str, template_id: str) -> bool:
 
 
 def seed_from_local_catalog_if_configured() -> None:
-    """При ANSIBLE_S3_SEED_LOCAL: заливает в S3 шаблоны с диска.
+    """When ANSIBLE_S3_SEED_LOCAL: uploads on-disk templates to S3.
 
-    По умолчанию кладёт только отсутствующие в бакете (если meta.yaml уже есть — пропуск).
-    При ANSIBLE_S3_SYNC_LOCAL=1 перезаписывает meta.yaml и playbook.yml.j2 из образа для всех
-    локальных шаблонов (нужно после обновления плейбуков; иначе RustFS хранит старые версии).
+    By default only uploads missing objects (if meta.yaml already exists — skip).
+    When ANSIBLE_S3_SYNC_LOCAL=1 overwrites meta.yaml and playbook.yml.j2 from the image for all
+    local templates (needed after playbook updates; otherwise RustFS keeps old versions).
     """
     if storage_mode() != "s3":
         return

@@ -24,14 +24,14 @@ class ProjectResponse(BaseModel):
 
 
 class ProjectAdminPatchRequest(BaseModel):
-    """Изменение проекта администратором (internal / admin API)."""
+    """Project update by an administrator (internal / admin API)."""
 
     name: str | None = None
     description: str | None = None
     suspended: bool | None = None
     deleted: bool | None = Field(
         default=None,
-        description="True — мягкое удаление (deleted_at), False — восстановить",
+        description="True — soft delete (deleted_at), False — restore",
     )
 
 
@@ -71,7 +71,7 @@ class LlmGenerateRequest(BaseModel):
     temperature: float = 0.2
     purpose: Literal["default", "coding"] = Field(
         default="default",
-        description="default — общая модель из настроек; coding — модель для кода/агентов (если задана)",
+        description="default — shared model from settings; coding — model for code/agents (if set)",
     )
 
 
@@ -84,12 +84,12 @@ class LlmEmbedRequest(BaseModel):
     input: str | list[str]
     model: str | None = Field(
         default=None,
-        description="Переопределение; иначе берётся embedding_model из admin / env",
+        description="Override; otherwise embedding_model from admin / env is used",
     )
 
 
 class LlmEmbedResponse(BaseModel):
-    """Совместимо по смыслу с OpenAI embeddings: векторы по порядку input."""
+    """Compatible with OpenAI embeddings semantics: vectors in input order."""
 
     embeddings: list[list[float]]
     model: str
@@ -106,7 +106,7 @@ class LlmRerankRequest(BaseModel):
     documents: list[LlmRerankDocument] = Field(default_factory=list, max_length=64)
     model: str | None = Field(
         default=None,
-        description="Переопределение; иначе reranking_model из admin / env / default_model",
+        description="Override; otherwise reranking_model from admin / env / default_model",
     )
 
 

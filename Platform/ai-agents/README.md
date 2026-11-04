@@ -1,27 +1,27 @@
-# AI-агенты платформы Lambot
+# Lambot platform AI agents
 
-Здесь задаётся **слой мультиагентного исполнения** (планирование задач, исполнители, проверяющие). Он логически отделён от **`orchestrator-service`** в backend: тот сервис уже ведёт **конвейер статусов проекта** и события Kafka (`platform.events`). AI-оркестратор работает **внутри этапов** (например, planning, codegen, infra-подсказки) и обменивается **отдельными командами/результатами агентов**.
+This layer defines **multi-agent execution** (task planning, executors, reviewers). It is logically separate from **`orchestrator-service`** in the backend: that service already drives the **project status pipeline** and Kafka events (`platform.events`). The AI orchestrator works **inside stages** (e.g. planning, codegen, infra hints) and exchanges **separate agent commands/results**.
 
-## Роли
+## Roles
 
-| Роль | Назначение |
-|------|------------|
-| **Agent Orchestrator** | Разбивает цель на DAG задач, назначает исполнителям/ревьюерам, собирает результаты, ретраи, эскалация человеку. |
-| **Executor** | Одна атомарная задача: вызов LLM + инструменты (API gateway, Ansible catalog, git, терминал в песочнице). Пишет артефакт и статус. |
-| **Reviewer** | Проверка по рубрике: безопасность, соответствие ТЗ, стиль, тесты. Вердикт: `approve` / `reject` + комментарии; при `reject` оркестратор может переотдать задачу исполнителю. |
+| Role | Purpose |
+|------|---------|
+| **Agent Orchestrator** | Splits a goal into a task DAG, assigns executors/reviewers, aggregates results, retries, escalates to a human. |
+| **Executor** | One atomic task: LLM call + tools (API gateway, Ansible catalog, git, sandbox terminal). Writes artifact and status. |
+| **Reviewer** | Rubric check: security, requirements fit, style, tests. Verdict: `approve` / `reject` + comments; on `reject` the orchestrator may reassign the task to an executor. |
 
-## Поток данных (логический)
+## Data flow (logical)
 
 ```mermaid
 flowchart LR
   subgraph inputs
-    G[Цель / событие этапа]
+    G[Goal / stage event]
   end
   O[Agent Orchestrator]
-  Q[(Очередь задач)]
+  Q[(Task queue)]
   E[Executors]
   R[Reviewers]
-  A[Артефакты / события в platform.events]
+  A[Artifacts / events on platform.events]
 
   G --> O
   O --> Q
@@ -34,69 +34,69 @@ flowchart LR
   R --> O
 ```
 
-1. На вход оркестратору приходит **работа этапа** (из planning, из human-in-the-loop или из вашего `EventEnvelope`).
-2. Оркестратор создаёт **задачи** с типом `execute` или `review`, зависимостями и идемпотентным `task_id`.
-3. Исполнители забирают только `execute`, ревьюеры — `review` (часто после конкретного `execute` в DAG).
-4. Результаты агрегируются; при успехе оркестратор эмитит событие в общий контур (например, `codegen.completed` или кастомный `agent.batch.completed`).
+1. The orchestrator receives **stage work** (from planning, human-in-the-loop, or your `EventEnvelope`).
+2. It creates **tasks** of type `execute` or `review`, with dependencies and an idempotent `task_id`.
+3. Executors take only `execute`; reviewers take `review` (often after a specific `execute` in the DAG).
+4. Results are aggregated; on success the orchestrator emits into the shared bus (e.g. `codegen.completed` or a custom `agent.batch.completed`).
 
-## Разделение с существующим Orchestrator Service
+## Separation from Orchestrator Service
 
-- **`orchestrator-service` (backend)** — проекция статусов проекта, реакция на `PROJECT_STATUS_CHANGED`, переходы `PLAN_READY` → `INFRA_IN_PROGRESS` и т.д.
-- **Agent Orchestrator (этот репозиторий / отдельный процесс)** — **микро-оркестрация внутри этапа**: несколько LLM-вызовов, цепочки, ревью, повторы. Не подменяет state machine проекта, а **кормит её** готовыми событиями.
+- **`orchestrator-service` (backend)** — project status projection, reaction to `PROJECT_STATUS_CHANGED`, transitions `PLAN_READY` → `INFRA_IN_PROGRESS`, etc.
+- **Agent Orchestrator (this repo / separate process)** — **micro-orchestration inside a stage**: multiple LLM calls, chains, reviews, retries. It does not replace the project state machine; it **feeds it** with ready events.
 
-Так не смешиваются «оркестратор платформы» и «оркестратор агентов».
+This keeps “platform orchestrator” and “agent orchestrator” from mixing.
 
-## Транспорт (рекомендация)
+## Transport (recommendation)
 
-| Вариант | Плюсы | Минусы |
-|---------|--------|--------|
-| **Kafka topics** отдельно от `platform.events` | Масштаб, replay, уже есть Kafka в compose | Больше топиков и схем |
-| **Redis Streams / BullMQ** | Простая очередь, retry | Ещё один компонент |
-| **PostgreSQL queue** (как outbox/inbox) | Консистентность с БД | Нагрузка на БД |
+| Option | Pros | Cons |
+|--------|------|------|
+| **Kafka topics** separate from `platform.events` | Scale, replay, Kafka already in compose | More topics and schemas |
+| **Redis Streams / BullMQ** | Simple queue, retry | Another component |
+| **PostgreSQL queue** (like outbox/inbox) | Consistency with DB | DB load |
 
-Практичный старт: топики **`platform.agent.tasks`** и **`platform.agent.results`** (см. `backend/shared/kafka.py`) — реализовано в **`agent-worker-service`**. Контракты: `backend/shared/contracts/agent_task.py`.
+Practical start: topics **`platform.agent.tasks`** and **`platform.agent.results`** (see `backend/shared/kafka.py`) — implemented in **`agent-worker-service`**. Contracts: `backend/shared/contracts/agent_task.py`.
 
-## Политики
+## Policies
 
-- **Идемпотентность**: `task_id` + `idempotency_key` в теле задачи; исполнитель не дублирует побочные эффекты.
-- **Таймауты и лимиты**: на задачу и на весь DAG; при таймауте — `PIPELINE_FAILED` или частичный результат + эскалация.
-- **Секреты**: только через gateway / vault; агенты не хранят ключи в промптах.
-- **Reviewer обязателен** для merge в «опасные» действия (деплой, изменение инфраструктуры).
+- **Idempotency**: `task_id` + `idempotency_key` in the task body; executor must not duplicate side effects.
+- **Timeouts and limits**: per task and for the whole DAG; on timeout — `PIPELINE_FAILED` or partial result + escalation.
+- **Secrets**: only via gateway / vault; agents must not keep keys in prompts.
+- **Reviewer required** for merges into “dangerous” actions (deploy, infra changes).
 
-## Структура каталога
+## Directory layout
 
 ```
 ai-agents/
-  README.md           — этот документ
-  contracts/task.py   — Pydantic-модели TaskEnvelope / TaskResult (зависимость: pydantic)
-  # далее при реализации:
-  # orchestrator/     — процесс оркестратора (DAG, retry)
+  README.md           — this document
+  contracts/task.py   — Pydantic TaskEnvelope / TaskResult (depends on pydantic)
+  # later when implemented:
+  # orchestrator/     — orchestrator process (DAG, retry)
   # workers/executor/
   # workers/reviewer/
 ```
 
-Импорт моделей для прототипа: `PYTHONPATH=ai-agents python -c "from contracts.task import TaskEnvelope, TaskType"`.
+Import for a prototype: `PYTHONPATH=ai-agents python -c "from contracts.task import TaskEnvelope, TaskType"`.
 
-## Реализация воркеров (на выбор)
+## Worker implementation (options)
 
-- **Kafka consumer groups**: `agent-executors` / `agent-reviewers` читают один топик задач с фильтром по `task_type` (или два топика).
-- **Один бинарник**: оркестратор публикует в очередь; отдельные деплои executor и reviewer с разными `KAFKA_GROUP_ID` или Redis consumer name.
-- **Связка с LLM**: вызовы только через существующий **`llm-adapter-service`**, чтобы не плодить ключи и лимиты.
+- **Kafka consumer groups**: `agent-executors` / `agent-reviewers` read one task topic filtered by `task_type` (or two topics).
+- **One binary**: orchestrator publishes to the queue; separate executor and reviewer deploys with different `KAFKA_GROUP_ID` or Redis consumer names.
+- **LLM wiring**: call only the existing **`llm-adapter-service`** so keys and limits stay centralized.
 
-Следующий шаг: перенести `contracts/task.py` в `backend/shared/contracts/agent_tasks.py`, добавить топики в compose и **dry-run** executor, который только логирует `TaskEnvelope`.
+Next step: move `contracts/task.py` into `backend/shared/contracts/agent_tasks.py`, add topics in compose, and a **dry-run** executor that only logs `TaskEnvelope`.
 
-## Демо «агенты вживую» (портал)
+## Live agents demo (portal)
 
-После **GitLab** в проекте (Ansible → ресурс `GitLab агент (группа и токен)` с PAT) в UI: **Инфраструктура → «Демо агентов (GitLab)»**. Adapter вызывает LLM с ролями PM / architect / backend / devops и создаёт в группе GitLab репозиторий с `app.py`, `requirements.txt`, `.gitlab-ci.yml`. Откройте **Pipelines** в GitLab (нужен Runner). Эндпоинт: `POST /api/v1/projects/{id}/agent-demo/run`.
+After **GitLab** is set up on the project (Ansible → resource `GitLab agent (group and token)` with PAT), in the UI: **Infrastructure → “Agents demo (GitLab)”**. The adapter calls the LLM as PM / architect / backend / devops and creates a GitLab group repository with `app.py`, `requirements.txt`, `.gitlab-ci.yml`. Open **Pipelines** in GitLab (Runner required). Endpoint: `POST /api/v1/projects/{id}/agent-demo/run`.
 
-### Запуск воркфлоу платформы (ИИ bootstrap)
+### Platform workflow bootstrap (AI)
 
-Сервис **`agent-bootstrap-service`** слушает `platform.events`. При событии **`project.created`** (если `AGENT_BOOTSTRAP_AUTO_PLANNING=1`) вызывается **planning** для проекта в статусе **IDEA** → дальше срабатывает существующий **orchestrator** (PLAN_READY → INFRA_IN_PROGRESS). Повтор вручную: **Planning (bootstrap)** в UI или `POST .../agents/bootstrap-planning`.
+**`agent-bootstrap-service`** listens to `platform.events`. On **`project.created`** (if `AGENT_BOOTSTRAP_AUTO_PLANNING=1`) it calls **planning** for a project in **IDEA** → then the existing **orchestrator** runs (PLAN_READY → INFRA_IN_PROGRESS). Manual retry: **Planning (bootstrap)** in the UI or `POST .../agents/bootstrap-planning`.
 
-### Песочница (sandbox)
+### Sandbox
 
-**`sandbox-service`** выполняет Python-код через `python -c` во временном каталоге с таймаутом. Вызов с портала: **Инфраструктура → песочница** или `POST .../sandbox/python`. Токен передаётся только через api-gateway (внутренний `X-Sandbox-Token`). Это не полная изоляция ОС — для production используйте отдельные job/контейнеры.
+**`sandbox-service`** runs Python via `python -c` in a temp directory with a timeout. From the portal: **Infrastructure → sandbox** or `POST .../sandbox/python`. The token is only passed through api-gateway (internal `X-Sandbox-Token`). This is not full OS isolation — for production use separate jobs/containers.
 
 ### LangGraph + tool calling
 
-Сервис **`agent-graph-service`** (порт 8013) строит ReAct-агента через **`langgraph.prebuilt.create_react_agent`** и зарегистрированные инструменты (`langchain_core.tools`). Сейчас доступны вызовы: **development-context**, **статус проекта**, **infra resources**, **run_sandbox_python**. Конфигурация LLM совпадает с **admin / llm-adapter** (в т.ч. модель coding). Расширение: правки в `services/agent_graph_service/platform_tools.py` (новые `@tool` + добавление в список `build_platform_tools`). API: `POST /api/v1/projects/{id}/agent-graph/invoke` с телом `{"message":"..."}` (через gateway).
+**`agent-graph-service`** (port 8013) builds a ReAct agent via **`langgraph.prebuilt.create_react_agent`** and registered tools (`langchain_core.tools`). Currently available: **development-context**, **project status**, **infra resources**, **run_sandbox_python**. LLM config matches **admin / llm-adapter** (including the coding model). Extend by editing `services/agent_graph_service/platform_tools.py` (new `@tool` + add to `build_platform_tools`). API: `POST /api/v1/projects/{id}/agent-graph/invoke` with body `{"message":"..."}` (via gateway).

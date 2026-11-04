@@ -1,5 +1,5 @@
 ---
-# Шаблон роя: установка агента платформы (не генерировать с нуля — расширять meta + jinja)
+# Swarm template: install the platform agent (do not generate from scratch — extend meta + jinja)
 - name: Install Lambot platform agent
   hosts: target
   become: true
@@ -20,7 +20,7 @@
         mode: "0755"
         content: |
           #!/usr/bin/env python3
-          # Managed by platform — см. репозиторий Platform/agent/remote_agent.py
+          # Managed by platform — see Platform/agent/remote_agent.py
           import json, os, socket, time, urllib.request
           INGEST = os.environ.get("LAMBOT_INGEST_URL","{{ ingest_url }}")
           TOKEN = os.environ.get("LAMBOT_AGENT_TOKEN","{{ agent_token }}")

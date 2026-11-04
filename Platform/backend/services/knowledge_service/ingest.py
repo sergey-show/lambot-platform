@@ -1,4 +1,4 @@
-"""Чанкинг, эмбеддинг, запись в Qdrant + Postgres."""
+"""Chunking, embedding, write to Qdrant + Postgres."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def _rerank_score(*, query: str, query_tokens: set[str], vec_score: float, chunk
 
 
 def reindex_document_vectors(db: Session, document_id: UUID) -> int:
-    """Повторно залить векторы чанков в Qdrant (после enable)."""
+    """Re-upload chunk vectors to Qdrant (after enable)."""
     row = db.get(KnowledgeDocument, document_id)
     if row is None or not row.enabled:
         return 0

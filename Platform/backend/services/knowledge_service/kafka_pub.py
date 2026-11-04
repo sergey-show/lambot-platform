@@ -1,4 +1,4 @@
-"""Публикация задач индексации в Kafka."""
+"""Publish indexing tasks to Kafka."""
 
 from __future__ import annotations
 

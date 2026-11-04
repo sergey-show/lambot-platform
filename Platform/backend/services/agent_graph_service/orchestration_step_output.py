@@ -1,4 +1,4 @@
-"""Разбор структурированного ответа шага AI-команды (JSON + summary для следующих агентов)."""
+"""Parse structured AI Team step output (JSON + summary for following agents)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class StepEnvelope:
     questions_for_user: list[str] = field(default_factory=list)
     peer_queries: list[PeerQuery] = field(default_factory=list)
     pipeline_continue: bool = True
-    # True — дальше нужен режим с инструментами/инфра (оркестратор поднимает direct_answer на планах).
+    # True — tool/infra mode is needed next (orchestrator lifts direct_answer on plans).
     live_execution: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,7 +50,7 @@ def _strip_markdown_json_fence(text: str) -> str:
 
 
 def _extract_first_json_object(text: str) -> dict[str, Any] | None:
-    """Ищет первый валидный JSON-объект в строке (после необязательного преамбула)."""
+    """Finds the first valid JSON object in a string (after an optional preamble)."""
     raw = _strip_markdown_json_fence(text)
     start = raw.find("{")
     if start == -1:
@@ -65,8 +65,8 @@ def _extract_first_json_object(text: str) -> dict[str, Any] | None:
 
 def parse_step_envelope(raw_text: str) -> tuple[StepEnvelope | None, str]:
     """
-    Возвращает (envelope, fallback_plain_text).
-    Если JSON не распознан — (None, raw_text) для обратной совместимости.
+    Returns (envelope, fallback_plain_text).
+    If JSON is not recognized — (None, raw_text) for backward compatibility.
     """
     text = (raw_text or "").strip()
     if not text:

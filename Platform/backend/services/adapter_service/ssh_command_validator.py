@@ -1,4 +1,4 @@
-"""Классификация SSH-команд: безопасные / нужно подтверждение / запрещено."""
+"""SSH command classification: safe / needs confirmation / forbidden."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ Classification = Literal["blocked", "needs_confirmation", "allowed"]
 
 MAX_COMMAND_LEN = 4000
 
-# Явная блокировка (не выполнять даже с подтверждением)
+# Hard block (do not run even with confirmation)
 _BLOCKED = [
     re.compile(r"^\s*$", re.I),
     re.compile(r"rm\s+(-[rf]*\s+)*[/]\s", re.I),
@@ -23,7 +23,7 @@ _BLOCKED = [
     re.compile(r"wget\s+[^|]*\|\s*(ba)?sh", re.I),
 ]
 
-# Без подтверждения: только «читающие» короткие команды (локальные модели — смягчённый режим)
+# Without confirmation: only short read-only commands (local models — relaxed mode)
 _SAFE = [
     re.compile(r"^pwd\s*$", re.I),
     re.compile(r"^whoami\s*$", re.I),
@@ -47,21 +47,19 @@ _SAFE = [
 
 
 def classify_ssh_command(command: str) -> tuple[Classification, str]:
-    """
-    Возвращает (классификация, короткое пояснение для пользователя/лога).
-    """
+    """Returns (classification, short note for user/log)."""
     cmd = (command or "").strip()
     if len(cmd) > MAX_COMMAND_LEN:
-        return "blocked", "команда слишком длинная"
+        return "blocked", "command too long"
     if not cmd:
-        return "blocked", "пустая команда"
+        return "blocked", "empty command"
 
     for rx in _BLOCKED:
         if rx.search(cmd):
-            return "blocked", "команда отклонена политикой безопасности (опасный шаблон)"
+            return "blocked", "command rejected by security policy (dangerous pattern)"
 
     for rx in _SAFE:
         if rx.match(cmd):
-            return "allowed", "разрешённая read-only команда"
+            return "allowed", "allowed read-only command"
 
-    return "needs_confirmation", "команда может изменить систему или тянуть код из сети — нужно подтверждение пользователя"
+    return "needs_confirmation", "command may change the system or pull code from the network — user confirmation required"

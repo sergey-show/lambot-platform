@@ -17,7 +17,7 @@ class Base(DeclarativeBase):
 
 
 def _migrate_columns() -> None:
-    """Добавление колонок к существующей таблице projects (create_all не меняет схему)."""
+    """Add columns to an existing projects table (create_all does not alter schema)."""
     stmts = [
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS suspended BOOLEAN NOT NULL DEFAULT false",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",

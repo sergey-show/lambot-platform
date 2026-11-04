@@ -1,4 +1,4 @@
-"""ReAct-исполнение задач трекера."""
+"""ReAct execution of tracker tasks."""
 
 from services.agent_worker_service.tracker_react import (
     augment_tracker_prompt,
@@ -28,7 +28,7 @@ def test_collect_react_evidence_counts_tools():
 
 def test_build_tracker_result_fails_without_tools_when_required():
     result, ok = build_tracker_result(
-        output="Запустите uname -a вручную",
+        output="Run uname -a manually",
         evidence={"tool_calls_count": 0, "tool_results_count": 0, "tool_names": []},
         title="OS version",
         role="devops",
@@ -59,7 +59,7 @@ def test_build_tracker_result_ok_with_ssh_tools():
 
 
 def test_augment_tracker_prompt_idempotent():
-    base = "Задача"
+    base = "Task"
     once = augment_tracker_prompt(base)
     twice = augment_tracker_prompt(once)
     assert once == twice

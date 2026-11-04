@@ -1,5 +1,5 @@
 /**
- * Домен: сессия пользователя портала и токены (граница контекста auth).
+ * Domain: portal user session and tokens (auth context boundary).
  */
 export const LS_USER_JWT = "lambot_user_jwt";
 export const LS_SUPERADMIN_TOKEN = "lambot_superadmin_token";

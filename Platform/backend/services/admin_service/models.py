@@ -13,7 +13,7 @@ AGENT_SETTINGS_SINGLETON_ID = 1
 
 
 class LlmAdapterSettings(Base):
-    """Один ряд (id=1): конфигурация LLM для llm-adapter-service."""
+    """Single row (id=1): LLM config for llm-adapter-service."""
 
     __tablename__ = "llm_adapter_settings"
 
@@ -28,7 +28,7 @@ class LlmAdapterSettings(Base):
 
 
 class AgentPlatformSettings(Base):
-    """Публичный URL ingest для remote-агентов (должен быть доступен с пользовательских серверов)."""
+    """Public ingest URL for remote agents (must be reachable from user servers)."""
 
     __tablename__ = "agent_platform_settings"
 
@@ -38,7 +38,7 @@ class AgentPlatformSettings(Base):
 
 
 class PlatformUser(Base):
-    """Пользователь портала: один tenant на пользователя (демо-изоляция)."""
+    """Portal user: one tenant per user (demo isolation)."""
 
     __tablename__ = "platform_users"
 
@@ -52,7 +52,7 @@ class PlatformUser(Base):
 
 
 class AgentDevelopmentPrompt(Base):
-    """Системные промпты для агентов разработки по ролям (редактирует superadmin)."""
+    """System prompts for development agents by role (edited by superadmin)."""
 
     __tablename__ = "agent_development_prompts"
 
@@ -62,7 +62,7 @@ class AgentDevelopmentPrompt(Base):
 
 
 class AgentGraphBuiltinTool(Base):
-    """Встроенные инструменты LangGraph-агента (вкл/выкл из админки)."""
+    """Built-in LangGraph agent tools (on/off from admin UI)."""
 
     __tablename__ = "agent_graph_builtin_tools"
 
@@ -73,7 +73,7 @@ class AgentGraphBuiltinTool(Base):
 
 
 class AgentGraphHttpTool(Base):
-    """Пользовательские GET-инструменты: URL-шаблон с {project_id}, только доверенные хосты."""
+    """Custom GET tools: URL template with {project_id}, trusted hosts only."""
 
     __tablename__ = "agent_graph_http_tools"
 
@@ -87,7 +87,7 @@ class AgentGraphHttpTool(Base):
 
 
 class AITeamRun(Base):
-    """Состояние прогона AI-команды по проекту (оркестрация ролей + архитектура + итог)."""
+    """AI Team run state for a project (role orchestration + architecture + summary)."""
 
     __tablename__ = "ai_team_runs"
 
@@ -141,7 +141,7 @@ class AITeamStep(Base):
 
 
 class AITeamExecutionTask(Base):
-    """Структурированная задача исполнения (GitLab, CI, деплой) — отдельно от LLM-текста шагов."""
+    """Structured execution task (GitLab, CI, deploy) — separate from LLM step text."""
 
     __tablename__ = "ai_team_execution_tasks"
     __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_ai_team_exec_run_seq"),)
@@ -185,7 +185,7 @@ class AdminProjectProjection(Base):
 
 
 class TrackerItem(Base):
-    """Эпик или задача в трекере агентов (по проекту); триггер исполнения через Kafka → agent_worker."""
+    """Epic or task in the agent tracker (per project); execution trigger via Kafka → agent_worker."""
 
     __tablename__ = "tracker_items"
 
@@ -213,7 +213,7 @@ class TrackerItem(Base):
 
 
 class TrackerEvent(Base):
-    """Журнал событий по карточке трекера."""
+    """Event log for a tracker card."""
 
     __tablename__ = "tracker_events"
 

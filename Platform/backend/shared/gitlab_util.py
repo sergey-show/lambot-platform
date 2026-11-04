@@ -1,4 +1,4 @@
-"""Утилиты имён/путей GitLab для проектов платформы."""
+"""GitLab name/path utilities for platform projects."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def slugify_name(name: str, *, max_len: int = 48) -> str:
 
 
 def project_group_path(project_id: UUID, project_name: str | None = None) -> str:
-    """Относительный path группы под корневой группой платформы (без parent path)."""
+    """Relative group path under the platform root group (without parent path)."""
     short = str(project_id).replace("-", "")[:12]
     slug = slugify_name(project_name or "")
     return f"p-{short}-{slug}"[:120]

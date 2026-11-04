@@ -1,4 +1,4 @@
-"""Опционально: Redis — последний run_id по project_id для быстрых подсказок."""
+"""Optional: Redis — latest run_id by project_id for quick hints."""
 
 from __future__ import annotations
 

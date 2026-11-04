@@ -106,7 +106,7 @@ def _resolve_base_and_key(cfg: dict[str, Any] | None) -> tuple[str, str | None]:
 
 
 def _get_langfuse_client():
-    """Ленивая и опциональная инициализация Langfuse SDK для трассировки llm-adapter."""
+    """Lazy optional Langfuse SDK init for llm-adapter tracing."""
     if not langfuse_tracing.enabled():
         return None
     try:
@@ -170,7 +170,7 @@ def _parse_sse_assistant_text(sse_raw: str) -> str:
 
 
 def _upstream_timeout_sec(body: dict[str, Any]) -> float:
-    """Короткие ответы (intake, классификаторы) — не держать upstream 15 минут."""
+    """Short replies (intake, classifiers) — do not keep upstream for 15 minutes."""
     default = float(os.getenv("LLM_ADAPTER_UPSTREAM_TIMEOUT_SEC", "900"))
     short = float(os.getenv("LLM_ADAPTER_SHORT_UPSTREAM_TIMEOUT_SEC", "90"))
     threshold = int(os.getenv("LLM_ADAPTER_SHORT_MAX_TOKENS_THRESHOLD", "256"))
@@ -182,7 +182,7 @@ def _upstream_timeout_sec(body: dict[str, Any]) -> float:
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
-    """Прокси OpenAI chat.completions для LangChain ChatOpenAI: каждый вызов пишется в Langfuse (input/output)."""
+    """OpenAI chat.completions proxy for LangChain ChatOpenAI: every call is written to Langfuse (input/output)."""
     try:
         body = await request.json()
     except Exception:
@@ -241,7 +241,7 @@ async def openai_chat_completions(request: Request):
 
     request_had_tools = bool(body.get("tools"))
     stream = bool(body.get("stream"))
-    # Ollama OpenAI API отдаёт tool call в content; LangChain ждёт message.tool_calls.
+    # Ollama OpenAI API returns the tool call in content; LangChain expects message.tool_calls.
     if request_had_tools and stream and _coerce_tool_calls_enabled():
         body = {**body, "stream": False}
         stream = False
@@ -373,7 +373,7 @@ def generate(request: LlmGenerateRequest) -> LlmGenerateResponse:
     base_url, api_key = _resolve_base_and_key(cfg)
     model = _resolve_chat_model(cfg, request)
     lf = _get_langfuse_client()
-    # start_as_current_observation возвращает context manager; .update() только у результата __enter__().
+    # start_as_current_observation returns a context manager; .update() only on the __enter__() result.
     lf_obs_cm: Any | None = None
     observation: Any | None = None
     if lf is not None:

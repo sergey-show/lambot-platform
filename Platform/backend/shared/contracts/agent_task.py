@@ -1,4 +1,4 @@
-"""Контракты задач агентов (Kafka topic platform.agent.tasks)."""
+"""Agent task contracts (Kafka topic platform.agent.tasks)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-/** Общие утилиты представления. */
+/** Shared presentation utilities. */
 
 export function escapeHtml(s: string): string {
   return s

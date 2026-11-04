@@ -1,5 +1,5 @@
 ---
-# GitLab Omnibus: robertdebock.gitlab + bootstrap группы/PAT (как provision-gitlab, без Docker).
+# GitLab Omnibus: robertdebock.gitlab + group/PAT bootstrap (like provision-gitlab, without Docker).
 - name: GitLab CE Omnibus via robertdebock.gitlab
   hosts: target
   become: true
@@ -13,8 +13,8 @@
   roles:
     - role: robertdebock.gitlab
       vars:
-        # Роль по умолчанию тянет 16.0.3 — для Ubuntu 24.04 (noble) в repo GitLab пакетов часто недоступен.
-        # Подберите версию, которая есть для вашего дистрибутива: https://packages.gitlab.com/gitlab/gitlab-ce
+        # Default role pulls 16.0.3 — often unavailable for Ubuntu 24.04 (noble) in the GitLab package repo.
+        # Pick a version available for your distro: https://packages.gitlab.com/gitlab/gitlab-ce
         gitlab_version: "17.6.4"
         gitlab_release: 0
         gitlab_external_url: "{{ gitlab_external_url }}"

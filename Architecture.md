@@ -1,16 +1,16 @@
-# Lambot Platform — архитектура (обзор)
+# Lambot Platform — Architecture Overview
 
-Платформа заменяет IT-команду для основателя: проекты, планирование продукта, **AI-команда** (роли SA/PM/архитектор/DevOps/Backend/Frontend/QA), исполнение на инфраструктуре пользователя (SSH, K8s, Ansible), GitLab, wiki/документы и базы знаний.
+The platform replaces an IT team for a founder: projects, product planning, an **AI team** (SA/PM/architect/DevOps/Backend/Frontend/QA roles), execution on the user’s infrastructure (SSH, K8s, Ansible), GitLab, wiki/documents, and knowledge bases.
 
-Стек развёртывания по умолчанию: `Platform/docker-compose.yml` (микросервисы Python/FastAPI + SPA + Kafka + несколько PostgreSQL).
+Default deployment stack: `Platform/docker-compose.yml` (Python/FastAPI microservices + SPA + Kafka + several PostgreSQL instances).
 
 ---
 
-## Архитектурная схема: агенты и компоненты (для презентации)
+## Architecture diagram: agents and components (for presentations)
 
-Ниже — схемы для слайдов и обсуждения с архитекторами: **виртуальная IT-команда (агенты)**, **движок оркестрации**, **платформенные сервисы** и **плоскость инструментов**.
+Below are diagrams for slides and discussions with architects: the **virtual IT team (agents)**, the **orchestration engine**, **platform services**, and the **tool plane**.
 
-### 1. Компоненты платформы и место агентов
+### 1. Platform components and where agents sit
 
 ```mermaid
 flowchart TB
@@ -28,16 +28,16 @@ flowchart TB
     GW["api-gateway<br/>JWT · ACL · REST · WebSocket"]
   end
 
-  subgraph DOMAIN["Domain & Control — микросервисы"]
+  subgraph DOMAIN["Domain & Control — microservices"]
     PRJ["project-service"]
     PLN["planning-service"]
     CAT["catalog-service"]
     ADM["admin-service<br/>runs · tracker · prompts · LLM config"]
-    ORC["orchestrator-service<br/>статус проекта"]
+    ORC["orchestrator-service<br/>project status"]
     BOOT["agent-bootstrap"]
   end
 
-  subgraph AIENG["AI Engine — один runtime, много ролей"]
+  subgraph AIENG["AI Engine — one runtime, many roles"]
     AG["agent-graph-service"]:::engine
     LLM["llm-adapter-service"]:::engine
     WRK["agent-worker-service"]:::engine
@@ -45,7 +45,7 @@ flowchart TB
     KB["knowledge-service"]
   end
 
-  subgraph AGENTS["Virtual IT Team — роли-агенты (промпты + шаги пайплайна)"]
+  subgraph AGENTS["Virtual IT Team — role agents (prompts + pipeline steps)"]
     direction TB
     A_SA["SA<br/>Systems Analyst"]:::agent
     A_PM["PM<br/>Product Manager"]:::agent
@@ -56,8 +56,8 @@ flowchart TB
     A_QA["QA"]:::agent
   end
 
-  subgraph TOOLS["Tool Plane — capabilities через LangGraph tools"]
-    T_CTX["Контекст · статус · метрики"]
+  subgraph TOOLS["Tool Plane — capabilities via LangGraph tools"]
+    T_CTX["Context · status · metrics"]
     T_INFRA["SSH · K8s · Ansible"]
     T_CODE["GitLab · repo · code search"]
     T_DOC["Wiki · Knowledge RAG · Tracker"]
@@ -106,20 +106,20 @@ flowchart TB
   AG --> LF
 ```
 
-### 2. Мультиагентная команда: пайплайн и режимы
+### 2. Multi-agent team: pipeline and modes
 
 ```mermaid
 flowchart LR
   classDef step fill:#e3f2fd,stroke:#1976d2
   classDef gate fill:#fff8e1,stroke:#f9a825
 
-  REQ["Запрос пользователя"] --> INTAKE["Intake<br/>маршрут full / direct<br/>live_execution"]:::gate
+  REQ["User request"] --> INTAKE["Intake<br/>route full / direct<br/>live_execution"]:::gate
 
   INTAKE -->|full pipeline| SA["SA"]:::step
   SA --> PM["PM"]:::step
   PM --> AR["Architect"]:::step
 
-  AR --> PAR["Параллельно"]
+  AR --> PAR["In parallel"]
   PAR --> DO["DevOps plan"]:::step
   PAR --> BE["Backend plan"]:::step
   PAR --> FE["Frontend plan"]:::step
@@ -133,45 +133,45 @@ flowchart LR
   DEP --> QA["QA validation"]:::step
   QA --> SUM["pm_summary"]:::step
 
-  INTAKE -->|direct + 1 роль| DIR["Один агент<br/>ReAct"]:::step
+  INTAKE -->|direct + 1 role| DIR["Single agent<br/>ReAct"]:::step
   DIR --> SUM2["pm_summary"]
-  INTAKE -->|direct consultative| DIR2["ReAct без execution tail"]:::step
+  INTAKE -->|direct consultative| DIR2["ReAct without execution tail"]:::step
   DIR2 --> SUM2
 ```
 
-**Режимы intake (решение LLM, не keyword-эвристика):**
+**Intake modes (LLM decision, not keyword heuristics):**
 
-| Режим | Агенты | Исполнение |
-|--------|--------|------------|
-| `full` | SA → PM → Architect → планы → execution | DAG + worker tasks |
-| `direct` + `live_execution: false` | Одна роль | ReAct, факты с сервера / консультация |
-| `direct` + `live_execution: true` | Одна роль + execution tail | ReAct + execution_plan → deploy |
+| Mode | Agents | Execution |
+|------|--------|-----------|
+| `full` | SA → PM → Architect → plans → execution | DAG + worker tasks |
+| `direct` + `live_execution: false` | One role | ReAct, facts from the server / consultation |
+| `direct` + `live_execution: true` | One role + execution tail | ReAct + execution_plan → deploy |
 
-### 3. Агенты: зона ответственности и инструменты
+### 3. Agents: responsibility zones and tools
 
-| Агент | Шаги пайплайна | Зона | Типичные tools |
-|--------|----------------|------|----------------|
-| **SA** | `sa` | ТЗ, глоссарий, traceability, эпики/задачи в трекере | `upsert_project_document`, `tracker_create_*`, `tracker_list_items` |
-| **PM** | `pm`, `pm_summary` | Scope, KPI, итог для стейкхолдера | контекст, wiki, `get_project_status` |
-| **Architect** | `architect` | Стек, HLD, границы сервисов | wiki, контекст, peer consult |
+| Agent | Pipeline steps | Zone | Typical tools |
+|-------|----------------|------|---------------|
+| **SA** | `sa` | Spec, glossary, traceability, epics/tasks in the tracker | `upsert_project_document`, `tracker_create_*`, `tracker_list_items` |
+| **PM** | `pm`, `pm_summary` | Scope, KPI, stakeholder summary | context, wiki, `get_project_status` |
+| **Architect** | `architect` | Stack, HLD, service boundaries | wiki, context, peer consult |
 | **DevOps** | `devops_plan`, `execution_plan`, `implementation`, `deploy` | CI/CD, SSH, Ansible, K8s | `ssh_run_command`, `ansible_run_template`, `kubernetes_query`, GitLab |
-| **Backend** | `backend_plan` | API, сервисы, БД | `search_codebase`, `repo_*`, контекст |
-| **Frontend** | `frontend_plan` | UI, веб, графики | `repo_write_commit_push`, `browser_session`, контекст |
-| **QA** | `qa_validation` | Smoke, GO/NO_GO | `browser_session`, SSH, метрики |
+| **Backend** | `backend_plan` | API, services, DB | `search_codebase`, `repo_*`, context |
+| **Frontend** | `frontend_plan` | UI, web, charts | `repo_write_commit_push`, `browser_session`, context |
+| **QA** | `qa_validation` | Smoke, GO/NO_GO | `browser_session`, SSH, metrics |
 
-Все роли на шагах с tools используют **один LangGraph ReAct runtime** (`agent-graph`) и **общий каталог platform tools** (политика `tool_policy` по проекту).
+On tool-enabled steps, all roles use **one LangGraph ReAct runtime** (`agent-graph`) and a **shared platform tools catalog** (`tool_policy` per project).
 
-### 4. Runtime агента: ReAct + оркестратор
+### 4. Agent runtime: ReAct + orchestrator
 
 ```mermaid
 flowchart TB
   subgraph RUNTIME["agent-graph-service"]
-    ORCH["orchestration_runner<br/>шаги · DoD · stream"]
+    ORCH["orchestration_runner<br/>steps · DoD · stream"]
     ROUTE["intake JSON<br/>orchestration_route"]
     GRAPH["LangGraph ReAct<br/>create_react_agent"]
-    PT["platform_tools<br/>~25 инструментов"]
+    PT["platform_tools<br/>~25 tools"]
     ORCH --> ROUTE
-    ORCH -->|шаг / invoke / tracker| GRAPH
+    ORCH -->|step / invoke / tracker| GRAPH
     GRAPH --> PT
   end
 
@@ -203,24 +203,24 @@ flowchart TB
   TRK --> W_TRK
 ```
 
-### 5. Три канала взаимодействия с агентами
+### 5. Three channels for interacting with agents
 
 ```mermaid
 flowchart LR
-  U((Пользователь))
+  U((User))
 
-  subgraph C1["① Чат / Copilot"]
+  subgraph C1["① Chat / Copilot"]
     C1A["agent-graph /invoke"]
     C1B["ReAct + tools"]
   end
 
-  subgraph C2["② AI-команда"]
+  subgraph C2["② AI team"]
     C2A["orchestrate/start"]
-    C2B["DAG ролей + DoD"]
+    C2B["Role DAG + DoD"]
     C2C["execution_tasks → worker"]
   end
 
-  subgraph C3["③ Трекер задач"]
+  subgraph C3["③ Task tracker"]
     C3A["admin dispatch"]
     C3B["Kafka → worker"]
     C3C["worker → /invoke"]
@@ -235,36 +235,36 @@ flowchart LR
   C3 --> C3B --> C3C --> C1B
 ```
 
-### 6. Плоскость инструментов (группы capabilities)
+### 6. Tool plane (capability groups)
 
 ```mermaid
 mindmap
   root((Platform Tools))
-    Контекст
+    Context
       get_development_context
       get_project_status
       list_infra_resources
       get_activity_logs
       get_agent_metrics
-    Инфраструктура
+    Infrastructure
       ssh_run_command
       kubernetes_query
       ansible_run_template
-    Код и Git
+    Code and Git
       gitlab_*
       repo_clone_or_sync
       repo_read_file
       repo_write_commit_push
       search_codebase
-    Знания
+    Knowledge
       get_project_docs_context
       upsert_project_document
       search_knowledge
-    Продукт
+    Product
       run_product_planning
       tracker_create_epic
       tracker_create_task
-    Вспомогательные
+    Auxiliary
       run_sandbox_python
       browser_session
       http_request
@@ -272,11 +272,11 @@ mindmap
 
 ---
 
-## Как общаются агенты между собой
+## How agents communicate with each other
 
-Агенты **не ведут постоянный групповой чат** и **не вызывают друг друга как отдельные LangGraph-инстансы**. Связь идёт через **оркестратор** и **общее состояние прогона** (паттерн «blackboard»).
+Agents **do not maintain a persistent group chat** and **do not call each other as separate LangGraph instances**. Coordination goes through the **orchestrator** and **shared run state** (a “blackboard” pattern).
 
-### Оркестрация с общим state и failback-контролем
+### Orchestration with shared state and failback control
 
 ```mermaid
 flowchart TB
@@ -285,12 +285,12 @@ flowchart TB
   classDef agent fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
   classDef fail fill:#ffebee,stroke:#c62828,stroke-width:2px
 
-  USER["Запрос пользователя"]
+  USER["User request"]
   INTAKE["Intake + policy<br/>route/full/direct · live_execution"]:::control
   ORCH["orchestration_runner"]:::control
   STATE[("Shared Run State<br/>AITeamRun + steps + execution_tasks<br/>status · retries · evidence · gates")]:::state
 
-  subgraph TEAM["Роли-агенты"]
+  subgraph TEAM["Role agents"]
     SA["SA"]:::agent
     PM["PM"]:::agent
     AR["Architect"]:::agent
@@ -306,8 +306,8 @@ flowchart TB
 
   FB["Failback controller<br/>DoD gate · retry policy · rollback policy"]:::fail
   RETRY["Auto retry with debug_hint<br/>exp backoff · max attempts"]:::fail
-  ROLLBACK["Compensation / rollback task<br/>если side effects уже применены"]:::fail
-  ESC["Escalation: questions_for_user<br/>или manual approve gate"]:::fail
+  ROLLBACK["Compensation / rollback task<br/>if side effects were already applied"]:::fail
+  ESC["Escalation: questions_for_user<br/>or manual approve gate"]:::fail
   DONE["Run done / pm_summary"]:::state
 
   USER --> INTAKE --> ORCH
@@ -333,103 +333,103 @@ flowchart TB
   ESC --> ORCH
 ```
 
-**Как читать схему:**
+**How to read the diagram:**
 
-- Все агенты читают и пишут единый `Shared Run State` (blackboard): это источник истины по шагам, артефактам, execution tasks, evidence, retry count.
-- Оркестратор принимает решения только через policy + state (а не локальные эвристики агента): запуск шага, переход, пауза, завершение.
-- Failback-контур встроен в каждый шаг: `DoD gate` -> retry -> rollback/compensation -> escalation к пользователю.
-- Контроль исполнения задач в worker идёт через `execution_tasks` со статусами (`queued/running/done/failed`) и подтверждением `tool_verified`.
-- После исчерпания retry либо при рискованных изменениях включается `manual approve gate` (continue от пользователя), затем run продолжается из того же state.
+- All agents read and write a single `Shared Run State` (blackboard): the source of truth for steps, artifacts, execution tasks, evidence, and retry counts.
+- The orchestrator makes decisions only via policy + state (not local agent heuristics): start a step, transition, pause, finish.
+- A failback loop is built into every step: `DoD gate` → retry → rollback/compensation → escalation to the user.
+- Worker task execution is controlled via `execution_tasks` with statuses (`queued/running/done/failed`) and `tool_verified` confirmation.
+- After retries are exhausted or for high-risk changes, a `manual approve gate` is enabled (user continue), then the run resumes from the same state.
 
-### Способы «общения»
+### Ways of “communication”
 
-| Способ | Когда | Как |
-|--------|--------|-----|
-| **1. Накопленный контекст** | Каждый следующий шаг пайплайна | В system prompt попадает `### PM`, `### Architect`, … — выводы всех завершённых шагов (`accumulated`) |
-| **2. Peer queries** | Шаг вернул `peer_queries` в JSON | Оркестратор синхронно спрашивает «коллегу» (отдельный LLM-вызов с ролью peer) и дописывает ответ в `summary_md` |
-| **3. Параллельные планы** | devops / backend / frontend одновременно | Стартуют с **одним снимком** `accumulated`; при ошибке retry — `debug_hint` с выводами уже сделавших коллег |
-| **4. Артефакты** | SA, wiki, трекер | Документы wiki, эпики/задачи в трекере с `assignee_role` — **асинхронная** передача работы другой роли |
-| **5. Execution tasks** | После `execution_plan` | Общий список задач в `AITeamRun.execution_tasks` — воркеры исполняют, статусы видят все шаги |
-| **6. ReAct tools** | Внутри одного вызова `/invoke` | Один агент может вызвать `tracker_list_items`, `get_project_docs_context` — это доступ к **данным**, не диалог с другим агентом |
+| Method | When | How |
+|--------|------|-----|
+| **1. Accumulated context** | Every next pipeline step | The system prompt includes `### PM`, `### Architect`, … — outputs of all completed steps (`accumulated`) |
+| **2. Peer queries** | A step returned `peer_queries` in JSON | The orchestrator synchronously asks a “colleague” (a separate LLM call with the peer role) and appends the answer to `summary_md` |
+| **3. Parallel plans** | devops / backend / frontend at once | They start from **one snapshot** of `accumulated`; on retry failure — a `debug_hint` with outputs from peers that already finished |
+| **4. Artifacts** | SA, wiki, tracker | Wiki documents, epics/tasks in the tracker with `assignee_role` — **asynchronous** handoff of work to another role |
+| **5. Execution tasks** | After `execution_plan` | Shared task list in `AITeamRun.execution_tasks` — workers execute; all steps can see statuses |
+| **6. ReAct tools** | Inside a single `/invoke` call | One agent may call `tracker_list_items`, `get_project_docs_context` — this is access to **data**, not a dialog with another agent |
 
-**Нет:** прямых message-passing между двумя ReAct-графами, shared memory между параллельными шагами в реальном времени, отдельного «менеджера агентов»-LLM.
+**There is no:** direct message-passing between two ReAct graphs, shared memory between parallel steps in real time, or a separate “agent manager” LLM.
 
-### Схема обмена в AI-команде
+### Exchange flow in the AI team
 
 ```mermaid
 sequenceDiagram
   participant O as orchestration_runner
-  participant A as Агент шага N
-  participant B as Агент роли peer
+  participant A as Step N agent
+  participant B as Peer role agent
   participant DB as admin Postgres
   participant W as agent-worker
 
-  O->>DB: шаги 1..N-1 done
-  O->>A: system + accumulated + промпт роли
+  O->>DB: steps 1..N-1 done
+  O->>A: system + accumulated + role prompt
   A-->>O: JSON envelope summary_md peer_queries
-  alt peer_queries не пусто
-    loop до MAX_PEER_QUERIES
+  alt peer_queries is not empty
+    loop up to MAX_PEER_QUERIES
       O->>B: _consult_peer(role, question)
-      B-->>O: ответ коллеге (не пользователю)
-      O->>O: дописать в summary_md
+      B-->>O: reply to colleague (not to user)
+      O->>O: append to summary_md
     end
   end
   O->>DB: PATCH step N
-  O->>A: следующий шаг N+1 видит accumulated
+  O->>A: next step N+1 sees accumulated
 
   Note over O,W: execution_plan
   O->>DB: execution_tasks
   O->>W: Kafka
-  W-->>DB: статусы задач
-  O->>A: implementation/deploy читают execution_tasks
+  W-->>DB: task statuses
+  O->>A: implementation/deploy read execution_tasks
 ```
 
-### Peer sync (деталь)
+### Peer sync (detail)
 
-В JSON шага агент может указать:
+In step JSON an agent may specify:
 
 ```json
-"peer_queries": [{"role": "backend", "question": "Какие эндпоинты уже есть в API?"}]
+"peer_queries": [{"role": "backend", "question": "Which endpoints already exist in the API?"}]
 ```
 
-Оркестратор вызывает `_consult_peer`: отдельный chat с **промптом роли backend**, тем же **project context** и **накопленными шагами**, инструкцией «ответь коллеге, не пользователю». Ответ вставляется в блок «Синхронизация с командой (авто)» в итоге шага.
+The orchestrator calls `_consult_peer`: a separate chat with the **backend role prompt**, the same **project context** and **accumulated steps**, and the instruction “answer a colleague, not the user.” The reply is inserted into a “Team sync (auto)” block in the step result.
 
-Роли для peer: `pm`, `architect`, `devops`, `backend`, `frontend` (не `qa` / `sa` в маппинге `PRIMARY_ROLE_TO_STEP`).
+Peer roles: `pm`, `architect`, `devops`, `backend`, `frontend` (not `qa` / `sa` in the `PRIMARY_ROLE_TO_STEP` mapping).
 
-### Параллельные планы
+### Parallel plans
 
 ```mermaid
 flowchart LR
-  ACC[accumulated snapshot<br/>на момент architect done]
+  ACC[accumulated snapshot<br/>at architect done]
   ACC --> D[devops_plan]
   ACC --> B[backend_plan]
   ACC --> F[frontend_plan]
-  D --> MERGE[следующий шаг видит<br/>все три summary]
+  D --> MERGE[next step sees<br/>all three summaries]
   B --> MERGE
   F --> MERGE
 ```
 
-Пока планы идут параллельно, **друг о друге в процессе не узнают** — только после записи в `accumulated`.
+While plans run in parallel, they **do not learn about each other mid-flight** — only after write-back into `accumulated`.
 
-### Трекер vs AI-команда
+### Tracker vs AI team
 
-| Канал | Смысл |
-|-------|--------|
-| **AI-команда** | Один run, один поток шагов, общий `run_id` |
-| **Трекер** | SA (или пользователь) создаёт задачи с `assignee_role`; исполнение — **отдельный** Kafka → worker → ReAct; связь с run только через `meta_json` / описание, не live-chat между агентами |
+| Channel | Meaning |
+|---------|---------|
+| **AI team** | One run, one step stream, shared `run_id` |
+| **Tracker** | SA (or the user) creates tasks with `assignee_role`; execution is a **separate** Kafka → worker → ReAct path; linkage to a run is only via `meta_json` / description, not live chat between agents |
 
-### С пользователем (не между агентами, но важно)
+### With the user (not between agents, but important)
 
-- `questions_for_user` + `pipeline_continue: false` → пауза run, ответ пользователя в `orchestrate/continue`.
-- Подтверждение tool-calling («да, выполняй») → снимает gate, не peer-диалог.
+- `questions_for_user` + `pipeline_continue: false` → pause the run; the user’s answer goes to `orchestrate/continue`.
+- Tool-calling confirmation (“yes, execute”) → clears a gate; it is not a peer dialog.
 
 ---
 
-## Функциональная схема платформы
+## Functional platform diagram
 
-Функциональный взгляд: **что делает платформа для бизнеса**, кто потребитель функции и **какие сквозные сценарии** связывают блоки (без привязки к портам и именам сервисов).
+Functional view: **what the platform does for the business**, who consumes each function, and **which end-to-end scenarios** connect the blocks (without tying to ports and service names).
 
-### F1. Карта функций (верхний уровень)
+### F1. Function map (top level)
 
 ```mermaid
 flowchart TB
@@ -439,57 +439,57 @@ flowchart TB
   classDef ops fill:#fff3e0,stroke:#e65100
   classDef know fill:#f3e5f5,stroke:#6a1b9a
 
-  LP["Lambot Platform<br/>виртуальная IT-команда для основателя"]
+  LP["Lambot Platform<br/>virtual IT team for the founder"]
 
-  LP --> GOV["Управление платформой"]:::gov
-  LP --> PROD["Продукт и проект"]:::prod
-  LP --> ENG["Инженерия с AI-агентами"]:::eng
-  LP --> OPS["Эксплуатация и инфраструктура"]:::ops
-  LP --> KNOW["Знания и артефакты"]:::know
+  LP --> GOV["Platform governance"]:::gov
+  LP --> PROD["Product and project"]:::prod
+  LP --> ENG["Engineering with AI agents"]:::eng
+  LP --> OPS["Operations and infrastructure"]:::ops
+  LP --> KNOW["Knowledge and artifacts"]:::know
 
-  GOV --> GOV1["Пользователи · роли · тенанты"]
-  GOV --> GOV2["Настройки LLM и промптов агентов"]
-  GOV --> GOV3["Политики tools · superadmin"]
+  GOV --> GOV1["Users · roles · tenants"]
+  GOV --> GOV2["LLM settings and agent prompts"]
+  GOV --> GOV3["Tool policies · superadmin"]
 
-  PROD --> PROD1["Создание проекта · каталог стеков"]
+  PROD --> PROD1["Project creation · stack catalog"]
   PROD --> PROD2["Product planning IDEA → PLAN"]
-  PROD --> PROD3["Статус жизненного цикла проекта"]
+  PROD --> PROD3["Project lifecycle status"]
 
-  ENG --> ENG1["Маршрутизация запроса intake"]
-  ENG --> ENG2["Формальная спецификация SA"]
-  ENG --> ENG3["Архитектура и планы ролей"]
-  ENG --> ENG4["Реализация кода GitLab"]
-  ENG --> ENG5["Сквозной прогон AI-команды"]
-  ENG --> ENG6["Интерактивный copilot ReAct"]
+  ENG --> ENG1["Request intake routing"]
+  ENG --> ENG2["Formal SA specification"]
+  ENG --> ENG3["Architecture and role plans"]
+  ENG --> ENG4["Code implementation in GitLab"]
+  ENG --> ENG5["End-to-end AI-team run"]
+  ENG --> ENG6["Interactive ReAct copilot"]
 
-  OPS --> OPS1["Деплой и изменения на серверах"]
-  OPS --> OPS2["Диагностика SSH / K8s"]
+  OPS --> OPS1["Deploy and changes on servers"]
+  OPS --> OPS2["SSH / K8s diagnostics"]
   OPS --> OPS3["Ansible marketplace"]
-  OPS --> OPS4["Метрики и логи агентов"]
-  OPS --> OPS5["Постановка и исполнение задач трекера"]
+  OPS --> OPS4["Agent metrics and logs"]
+  OPS --> OPS5["Tracker task enqueue and execution"]
 
-  KNOW --> KNOW1["Wiki проекта"]
+  KNOW --> KNOW1["Project wiki"]
   KNOW --> KNOW2["Knowledge base RAG"]
-  KNOW --> KNOW3["Трекер эпиков и задач"]
-  KNOW --> KNOW4["Поиск по кодовой базе"]
+  KNOW --> KNOW3["Epic and task tracker"]
+  KNOW --> KNOW4["Codebase search"]
 ```
 
-### F2. Акторы и функции
+### F2. Actors and functions
 
 ```mermaid
 flowchart LR
-  subgraph ACTORS["Акторы"]
+  subgraph ACTORS["Actors"]
     F((Founder / Owner))
     M((Member / Viewer))
     S((Superadmin))
   end
 
-  subgraph FUN["Ключевые функции"]
-    P1["Проект и планирование"]
-    P2["AI-команда · чат"]
-    P3["Трекер агентов"]
-    P4["Инфра · Git · деплой"]
-    P5["Администрирование"]
+  subgraph FUN["Key functions"]
+    P1["Project and planning"]
+    P2["AI team · chat"]
+    P3["Agent tracker"]
+    P4["Infra · Git · deploy"]
+    P5["Administration"]
   end
 
   F --> P1
@@ -502,66 +502,66 @@ flowchart LR
   S --> P2
 ```
 
-| Функция | Founder | Member | Superadmin | Реализация в UI |
-|---------|:-------:|:------:|:----------:|-----------------|
-| Создать проект, выбрать стек | ✓ | — | ✓ | Portal → проекты |
-| Product planning | ✓ | просмотр | ✓ | Planning |
-| Запуск AI-команды, stream прогона | ✓ | ✓ | ✓ | AI-team |
-| Copilot / разовый ReAct | ✓ | ✓ | — | Agent graph chat |
-| Трекер: эпики, задачи, dispatch | ✓ | ✓ | — | Задачи агентов |
-| SSH targets, GitLab, контекст | ✓ | огранич. | ✓ | Настройки проекта |
-| Промпты агентов, LLM, tools policy | — | — | ✓ | Superadmin |
+| Function | Founder | Member | Superadmin | UI implementation |
+|----------|:-------:|:------:|:----------:|-------------------|
+| Create project, choose stack | ✓ | — | ✓ | Portal → projects |
+| Product planning | ✓ | view | ✓ | Planning |
+| Start AI team, stream the run | ✓ | ✓ | ✓ | AI-team |
+| Copilot / one-shot ReAct | ✓ | ✓ | — | Agent graph chat |
+| Tracker: epics, tasks, dispatch | ✓ | ✓ | — | Agent tasks |
+| SSH targets, GitLab, context | ✓ | limited | ✓ | Project settings |
+| Agent prompts, LLM, tools policy | — | — | ✓ | Superadmin |
 
-### F3. Сквозные функциональные сценарии
+### F3. End-to-end functional scenarios
 
 ```mermaid
 flowchart TB
   classDef user fill:#bbdefb
   classDef func fill:#c8e6c9
 
-  subgraph S1["Сценарий A — Новый продукт с нуля"]
-    U1["Идея продукта"]:::user --> F1A["Planning: структура MVP"]:::func
-    F1A --> F1B["Создание проекта + bootstrap"]
-    F1B --> F1C["AI-команда full: SA → … → pm_summary"]
-    F1C --> F1D["Артефакты: wiki · трекер · Git · деплой"]
+  subgraph S1["Scenario A — New product from scratch"]
+    U1["Product idea"]:::user --> F1A["Planning: MVP structure"]:::func
+    F1A --> F1B["Project creation + bootstrap"]
+    F1B --> F1C["AI team full: SA → … → pm_summary"]
+    F1C --> F1D["Artifacts: wiki · tracker · Git · deploy"]
   end
 
-  subgraph S2["Сценарий B — Операционный вопрос"]
-    U2["Сколько места / uptime / версия ОС?"]:::user --> F2A["Intake: direct · live_execution=false"]
+  subgraph S2["Scenario B — Operational question"]
+    U2["How much disk / uptime / OS version?"]:::user --> F2A["Intake: direct · live_execution=false"]
     F2A --> F2B["DevOps ReAct: context + SSH"]
-    F2B --> F2C["Ответ по фактам · без лишнего deploy"]
+    F2B --> F2C["Fact-based answer · no extra deploy"]
   end
 
-  subgraph S3["Сценарий C — Задача в трекере"]
-    U3["Карточка с assignee_role"]:::user --> F3A["Dispatch в очередь"]
+  subgraph S3["Scenario C — Tracker task"]
+    U3["Card with assignee_role"]:::user --> F3A["Dispatch to queue"]
     F3A --> F3B["Worker → ReAct /invoke"]
     F3B --> F3C["DoD: tool_verified"]
-    F3C --> F3D["DONE / FAILED в UI"]
+    F3C --> F3D["DONE / FAILED in UI"]
   end
 
-  subgraph S4["Сценарий D — Изменение и релиз"]
-    U4["Сделай сайт / задеплой / hotfix"]:::user --> F4A["Intake: full или direct + live_execution"]
-    F4A --> F4B["Планы · execution_plan"]
+  subgraph S4["Scenario D — Change and release"]
+    U4["Build the site / deploy / hotfix"]:::user --> F4A["Intake: full or direct + live_execution"]
+    F4A --> F4B["Plans · execution_plan"]
     F4B --> F4C["Worker: SSH · Ansible · Git"]
     F4C --> F4D["QA GO/NO_GO · pm_summary"]
   end
 ```
 
-### F4. Функции ↔ агенты (матрица ответственности)
+### F4. Functions ↔ agents (responsibility matrix)
 
 ```mermaid
 flowchart LR
-  subgraph FN["Функциональные блоки"]
+  subgraph FN["Functional blocks"]
     direction TB
-    f_spec["Спецификация"]
-    f_arch["Архитектура"]
-    f_code["Код"]
-    f_infra["Инфра · деплой"]
-    f_qa["Приёмка"]
-    f_prod["Продукт · итог"]
+    f_spec["Specification"]
+    f_arch["Architecture"]
+    f_code["Code"]
+    f_infra["Infra · deploy"]
+    f_qa["Acceptance"]
+    f_prod["Product · summary"]
   end
 
-  subgraph AG["Агенты"]
+  subgraph AG["Agents"]
     direction TB
     a_sa[SA]
     a_ar[Architect]
@@ -587,39 +587,39 @@ flowchart LR
   f_qa --> f_prod
 ```
 
-| Функциональный блок | Ведущий агент | Поддержка | Выход для пользователя |
-|---------------------|---------------|-----------|-------------------------|
-| ТЗ, traceability, задачи в трекере | SA | PM | Документы wiki, карточки трекера |
-| Стек, границы системы | Architect | SA, PM | Архитектурный doc |
-| API и backend | Backend | Architect, DevOps | План + коммиты |
-| UI и frontend | Frontend | Architect | План + коммиты + browser smoke |
-| CI/CD, серверы, K8s | DevOps | Architect | execution_tasks, деплой |
-| Проверка релиза | QA | DevOps | GO / NO_GO |
-| Отчёт стейкхолдеру | PM | все шаги | pm_summary |
+| Functional block | Lead agent | Support | User-facing output |
+|------------------|------------|---------|--------------------|
+| Spec, traceability, tracker tasks | SA | PM | Wiki documents, tracker cards |
+| Stack, system boundaries | Architect | SA, PM | Architecture doc |
+| API and backend | Backend | Architect, DevOps | Plan + commits |
+| UI and frontend | Frontend | Architect | Plan + commits + browser smoke |
+| CI/CD, servers, K8s | DevOps | Architect | execution_tasks, deploy |
+| Release verification | QA | DevOps | GO / NO_GO |
+| Stakeholder report | PM | all steps | pm_summary |
 
-### F5. Потоки данных по функциям (упрощённо)
+### F5. Data flows by function (simplified)
 
 ```mermaid
 flowchart LR
-  subgraph IN["Ввод"]
-    I1[Текст запроса]
-    I2[Файлы KB]
-    I3[Конфиг проекта SSH GitLab]
+  subgraph IN["Input"]
+    I1[Request text]
+    I2[KB files]
+    I3[Project config SSH GitLab]
   end
 
-  subgraph PROC["Обработка"]
-    P1[Маршрутизация intake]
-    P2[Ролевые шаги + ReAct]
-    P3[План исполнения JSON]
-    P4[Воркеры исполнения]
+  subgraph PROC["Processing"]
+    P1[Intake routing]
+    P2[Role steps + ReAct]
+    P3[Execution plan JSON]
+    P4[Execution workers]
   end
 
-  subgraph OUT["Выход"]
-    O1[Ответ в чат / stream]
-    O2[Wiki · трекер]
-    O3[Git репозиторий]
-    O4[Состояние серверов]
-    O5[Метрики Langfuse]
+  subgraph OUT["Output"]
+    O1[Chat / stream reply]
+    O2[Wiki · tracker]
+    O3[Git repository]
+    O4[Server state]
+    O5[Langfuse metrics]
   end
 
   I1 --> P1 --> P2
@@ -633,51 +633,51 @@ flowchart LR
   P2 --> O5
 ```
 
-### F6. Границы функций: что внутри / что снаружи
+### F6. Function boundaries: inside / outside
 
-| Внутри платформы | Снаружи (ответственность пользователя) |
-|------------------|----------------------------------------|
-| Оркестрация агентов, LLM, DoD, трекер | Бизнес-решения, приоритеты продукта |
-| Вызов SSH/K8s/Ansible через adapter | Сами серверы, сеть, firewall, kubeconfig |
-| GitLab provision, clone, commit | Содержимое prod GitLab, code review людьми |
-| Хранение wiki, KB, runs в Postgres | Юридическое соответствие данных в облаке пользователя |
-| Product planning как черновик плана | Утверждение scope и бюджета |
+| Inside the platform | Outside (user responsibility) |
+|---------------------|-------------------------------|
+| Agent orchestration, LLM, DoD, tracker | Business decisions, product priorities |
+| SSH/K8s/Ansible calls via adapter | The servers themselves, network, firewall, kubeconfig |
+| GitLab provision, clone, commit | Prod GitLab contents, human code review |
+| Wiki, KB, runs storage in Postgres | Legal compliance for data in the user’s cloud |
+| Product planning as a draft plan | Approving scope and budget |
 
 ---
 
-## Верхнеуровневая схема (слои)
+## High-level diagram (layers)
 
 ```mermaid
 flowchart TB
-  subgraph L0["Пользователи"]
-    U[Founder / команда / superadmin]
+  subgraph L0["Users"]
+    U[Founder / team / superadmin]
   end
 
-  subgraph L1["Край"]
+  subgraph L1["Edge"]
     UI[frontend SPA]
-    GW[api-gateway JWT + прокси]
+    GW[api-gateway JWT + proxy]
   end
 
-  subgraph L2["Домен платформы"]
-    DOM[project · planning · catalog · admin<br/>трекер · AI-team runs · LLM settings]
-    ORC[orchestrator — статус проекта по событиям]
+  subgraph L2["Platform domain"]
+    DOM[project · planning · catalog · admin<br/>tracker · AI-team runs · LLM settings]
+    ORC[orchestrator — project status from events]
   end
 
-  subgraph L3["Интеллект"]
-    AG[agent-graph — оркестрация команды + ReAct tools]
-    LLM[llm-adapter — модели + Langfuse]
-    WRK[agent-worker — Kafka-исполнение]
+  subgraph L3["Intelligence"]
+    AG[agent-graph — team orchestration + ReAct tools]
+    LLM[llm-adapter — models + Langfuse]
+    WRK[agent-worker — Kafka execution]
     KB[documents · knowledge RAG]
   end
 
-  subgraph L4["Действия на инфраструктуре"]
-    ADP[adapter SSH / HTTP / метрики]
+  subgraph L4["Infrastructure actions"]
+    ADP[adapter SSH / HTTP / metrics]
     GIT[gitlab + repo-workspace + code-index]
     ANS[ansible-orchestrator]
     SBX[sandbox · browser Playwright]
   end
 
-  subgraph L5["Шина и данные"]
+  subgraph L5["Bus and data"]
     KF[(Kafka)]
     PG[(PostgreSQL × N)]
     VEC[(Qdrant · S3 · ClickHouse)]
@@ -705,40 +705,40 @@ flowchart TB
   AG --> PG
 ```
 
-**Три входа для агентов:**
+**Three entry points for agents:**
 
-| Вход | Путь | Результат |
-|------|------|-----------|
-| **Чат / ReAct** | UI → gateway → `agent-graph` `/invoke` | Один прогон LangGraph + tools |
-| **AI-команда** | UI → `agent-graph` `/orchestrate` ↔ `admin` runs | Многошаговый DAG ролей + execution tasks |
-| **Трекер** | UI → `admin` dispatch → Kafka → `agent-worker` → `agent-graph` `/invoke` | Карточка задачи с проверкой tool-calling |
+| Entry | Path | Result |
+|-------|------|--------|
+| **Chat / ReAct** | UI → gateway → `agent-graph` `/invoke` | One LangGraph run + tools |
+| **AI team** | UI → `agent-graph` `/orchestrate` ↔ `admin` runs | Multi-step role DAG + execution tasks |
+| **Tracker** | UI → `admin` dispatch → Kafka → `agent-worker` → `agent-graph` `/invoke` | Task card with tool-calling verification |
 
 ---
 
-## Схема платформы (детально)
+## Platform diagram (detailed)
 
 ```mermaid
 flowchart TB
-  subgraph users["Пользователи"]
+  subgraph users["Users"]
     U[Founder / Owner / Admin / Viewer]
     SA_UI[Superadmin]
   end
 
-  subgraph edge["Край"]
+  subgraph edge["Edge"]
     FE[frontend :5173<br/>SPA + nginx]
-    GW[api-gateway :8000<br/>JWT, маршрутизация API]
+    GW[api-gateway :8000<br/>JWT, API routing]
   end
 
   U --> FE
   SA_UI --> FE
   FE -->|/api/* REST + WS| GW
 
-  subgraph control["Управление и домен"]
-    ADM[admin-service :8006<br/>пользователи, AI-team runs, LLM, трекер]
-    PRJ[project-service :8001<br/>проекты, тенанты]
-    PLN[planning-service :8002<br/>IDEA → план продукта]
-    ORC[orchestrator-service :8003<br/>статусы проекта по Kafka]
-    CAT[catalog-service :8004<br/>стеки и blueprints]
+  subgraph control["Control and domain"]
+    ADM[admin-service :8006<br/>users, AI-team runs, LLM, tracker]
+    PRJ[project-service :8001<br/>projects, tenants]
+    PLN[planning-service :8002<br/>IDEA → product plan]
+    ORC[orchestrator-service :8003<br/>project statuses via Kafka]
+    CAT[catalog-service :8004<br/>stacks and blueprints]
   end
 
   GW --> ADM
@@ -747,13 +747,13 @@ flowchart TB
   GW --> ORC
   GW --> CAT
 
-  subgraph ai["AI и оркестрация команды"]
-    AG[agent-graph-service :8013<br/>пайплайн AI-команды, LangGraph ReAct]
+  subgraph ai["AI and team orchestration"]
+    AG[agent-graph-service :8013<br/>AI-team pipeline, LangGraph ReAct]
     LLM[llm-adapter-service :8005<br/>OpenAI-compatible + Langfuse]
-    DOC[documents-service :8015<br/>wiki проекта]
+    DOC[documents-service :8015<br/>project wiki]
     KB[knowledge-service :8019<br/>KB, RAG, ingest]
-    BOOT[agent-bootstrap-service :8011<br/>авто-planning при создании проекта]
-    WRK[agent-worker-service :8010<br/>Kafka: задачи агентов]
+    BOOT[agent-bootstrap-service :8011<br/>auto-planning on project create]
+    WRK[agent-worker-service :8010<br/>Kafka: agent tasks]
   end
 
   GW --> AG
@@ -767,14 +767,14 @@ flowchart TB
   BOOT --> PRJ
   BOOT --> PLN
 
-  subgraph exec["Исполнение и инструменты"]
-    ADP[adapter-service :8008<br/>SSH, HTTP executor, ingest метрик]
-    ANS[ansible-orchestrator-service :8007<br/>каталог Ansible в S3]
+  subgraph exec["Execution and tools"]
+    ADP[adapter-service :8008<br/>SSH, HTTP executor, metrics ingest]
+    ANS[ansible-orchestrator-service :8007<br/>Ansible catalog in S3]
     SBX[sandbox-service :8012<br/>Python sandbox]
     BR[browser-tool-service :8014<br/>Playwright]
-    GL[gitlab-service :8016<br/>репозитории, provision]
+    GL[gitlab-service :8016<br/>repositories, provision]
     RWS[repo-workspace-service :8018<br/>clone/commit/push]
-    IDX[code-index-service :8017<br/>поиск по коду, Qdrant]
+    IDX[code-index-service :8017<br/>code search, Qdrant]
   end
 
   AG --> ADP
@@ -792,7 +792,7 @@ flowchart TB
   IDX --> RWS
   ADP --> ANS
 
-  subgraph bus["События и очереди"]
+  subgraph bus["Events and queues"]
     KF[Kafka]
     RD[Redis]
   end
@@ -806,11 +806,11 @@ flowchart TB
   KB --> KF
   AG --> RD
 
-  subgraph data["Хранилища"]
-    PG[(PostgreSQL<br/>отдельная БД на сервис)]
-    QD[(Qdrant<br/>векторы KB + code)]
-    S3[(RustFS S3<br/>Ansible, KB файлы)]
-    CH[(ClickHouse<br/>метрики/логи агентов)]
+  subgraph data["Stores"]
+    PG[(PostgreSQL<br/>separate DB per service)]
+    QD[(Qdrant<br/>KB + code vectors)]
+    S3[(RustFS S3<br/>Ansible, KB files)]
+    CH[(ClickHouse<br/>agent metrics/logs)]
   end
 
   PRJ --> PG
@@ -823,21 +823,21 @@ flowchart TB
   ANS --> S3
   ADP --> CH
 
-  subgraph observe["Наблюдаемость"]
+  subgraph observe["Observability"]
     LF[Langfuse<br/>web + worker]
   end
 
   LLM --> LF
   AG --> LF
 
-  subgraph optional["Опционально"]
+  subgraph optional["Optional"]
     GCE[gitlab-ce<br/>profile gitlab]
   end
 
   GL --> GCE
 ```
 
-### Типовой сценарий: запрос в AI-команду
+### Typical scenario: request to the AI team
 
 ```mermaid
 sequenceDiagram
@@ -849,20 +849,20 @@ sequenceDiagram
   participant ADP as adapter-service
 
   UI->>GW: POST agent-orchestrate/start
-  GW->>AG: старт прогона
-  AG->>ADM: создать/обновить AITeamRun + шаги
-  loop intake → роли → execution_plan
+  GW->>AG: start run
+  AG->>ADM: create/update AITeamRun + steps
+  loop intake → roles → execution_plan
     AG->>LLM: chat / structured JSON
     AG->>AG: LangGraph ReAct + tools
     AG->>ADP: SSH / K8s / Ansible / HTTP
-    AG->>ADM: PATCH шаги, execution_tasks
+    AG->>ADM: PATCH steps, execution_tasks
   end
-  UI->>GW: WS или NDJSON stream
-  GW->>AG: события прогона
-  AG-->>UI: дельты шагов и статуса
+  UI->>GW: WS or NDJSON stream
+  GW->>AG: run events
+  AG-->>UI: step and status deltas
 ```
 
-### Типовой сценарий: задача в трекере
+### Typical scenario: tracker task
 
 ```mermaid
 sequenceDiagram
@@ -879,119 +879,119 @@ sequenceDiagram
   WRK->>AG: POST /invoke ReAct
   AG->>ADP: ssh_run_command / context
   AG-->>WRK: final_message + tool evidence
-  WRK->>ADM: PATCH execution (DONE / FAILED по tools)
+  WRK->>ADM: PATCH execution (DONE / FAILED by tools)
 ```
 
 ---
 
-## Слои и принципы
+## Layers and principles
 
-| Слой | Назначение |
-|------|------------|
-| **Край** | Единая точка входа для браузера: статика UI + прокси `/api` на gateway (в т.ч. WebSocket). |
-| **API Gateway** | Авторизация (JWT), tenant/project ACL, проксирование к внутренним сервисам. |
-| **Домен** | Проекты, планирование, каталог, проекция админки, машина статусов проекта. |
-| **AI-команда** | Многошаговый пайплайн ролей, LangGraph с tool calling, публикация задач на исполнение. |
-| **Исполнение** | Безопасные адаптеры к SSH, Ansible, Git, браузеру, песочнице. |
-| **Данные** | Изоляция: у каждого сервиса своя PostgreSQL; асинхронность через Kafka (outbox/inbox). |
-
----
-
-## Компоненты
-
-### Пользовательский интерфейс
-
-| Компонент | Порт | Что делает |
-|-----------|------|------------|
-| **frontend** | 5173 → 80 | SPA (портал пользователя `#/portal`, superadmin `#/superadmin`). В prod nginx отдаёт статику и проксирует `/api` на gateway. |
-| **api-gateway** | 8000 | Единый REST/WS API: проекты, planning, оркестрация AI-команды, adapter, admin, knowledge, browser logs и др. |
-
-### Управление платформой и домен
-
-| Компонент | Порт | Что делает |
-|-----------|------|------------|
-| **admin-service** | 8006 | Пользователи и роли, настройки LLM/агентов, **прогоны AI-команды** (runs/steps/execution_tasks), трекер (эпики/задачи), промпты ролей, внутренние API для agent-graph. |
-| **project-service** | 8001 | Жизненный цикл проектов, тенанты, outbox событий в Kafka. |
-| **planning-service** | 8002 | Прогон product planning (идея → структурированный план), вызов LLM. |
-| **orchestrator-service** | 8003 | **Не путать с AI-orchestrate:** консьюмер Kafka, проекция **статуса проекта** (workflow платформы). |
-| **catalog-service** | 8004 | Справочник стеков и blueprints для проектов. |
-| **agent-bootstrap-service** | 8011 | Слушает события создания проекта → при необходимости автоматически запускает planning. |
-
-### AI-команда и LLM
-
-| Компонент | Порт | Что делает |
-|-----------|------|------------|
-| **agent-graph-service** | 8013 | Ядро **AI-команды**: intake (full/direct), шаги SA/PM/архитектор/планы/implementation/deploy/QA, `execution_plan` → задачи воркерам; LangGraph ReAct с platform tools; stream/WS событий. |
-| **llm-adapter-service** | 8005 | Прокси к OpenAI-compatible API; настройки моделей из admin; трейсинг в Langfuse. |
-| **agent-worker-service** | 8010 | Kafka `platform.agent.tasks`: **трекер** → ReAct через `agent-graph` `/invoke`; **AI-team execution** → SSH/K8s/Ansible через adapter. |
-| **documents-service** | 8015 | Wiki/документы проекта (architecture, guides), контекст для агентов. |
-| **knowledge-service** | 8019 | Базы знаний (платформа + проект): загрузка файлов, ingest (Kafka), чанки в Qdrant, `search_knowledge` для агентов. |
-
-Роли в пайплайне (упрощённо): **intake** → маршрут full/direct → **SA** (формальные артефакты, трекер) → **PM / architect / devops / backend / frontend** → **execution_plan** → **implementation / deploy / QA / pm_summary**. В режиме `direct` часть шагов пропускается, ответ одной роли через ReAct.
-
-### Исполнение и DevTools
-
-| Компонент | Порт | Что делает |
-|-----------|------|------------|
-| **adapter-service** | 8008 | SSH targets, выполнение команд, подтверждения, HTTP executor, ingest метрик агента; связь с Ansible и ClickHouse. |
-| **ansible-orchestrator-service** | 8007 | Marketplace Ansible-ролей (шаблоны в S3/RustFS), запуск плейбуков по запросу adapter/агентов. |
-| **sandbox-service** | 8012 | Ограниченное выполнение Python для агентов. |
-| **browser-tool-service** | 8014 | Playwright-сессии: навигация, снимки UI, smoke веб-приложений. |
-| **gitlab-service** | 8016 | Provision групп/репозиториев, токены, интеграция с GitLab CE (опционально). |
-| **repo-workspace-service** | 8018 | Локальные git-workspace: clone, read/write, commit, push. |
-| **code-index-service** | 8017 | Индексация кода из workspace, семантический поиск (Qdrant). |
-
-### Инфраструктура данных
-
-| Компонент | Назначение |
-|-----------|------------|
-| **Kafka** | События домена (`platform.events`), задачи агентов (`platform.agent.tasks`), ingest knowledge. Паттерны outbox/inbox в сервисах. |
-| **Redis** | Кэш/координация в agent-graph (например, последний run проекта). |
-| **PostgreSQL** | Отдельный инстанс на сервис: `project`, `planning`, `admin`, `orchestrator`, `adapter`, `documents`, `knowledge`, `gitlab`, `repo-workspace`, `code-index`. |
-| **Qdrant** | Векторные коллекции: чанки knowledge-base и code-index. |
-| **RustFS (S3)** | Объектное хранилище: Ansible-шаблоны, файлы knowledge-base. |
-| **ClickHouse** | Хранение метрик и логов с агентов на серверах пользователя. |
-
-### Наблюдаемость и опции
-
-| Компонент | Назначение |
-|-----------|------------|
-| **Langfuse** (web, worker, postgres, redis, clickhouse, minio) | Трейсы LLM-вызовов (llm-adapter, agent-graph). |
-| **gitlab-ce** (profile `gitlab`) | Локальный GitLab CE для разработки; **gitlab-service** ходит в него по API. |
+| Layer | Purpose |
+|-------|---------|
+| **Edge** | Single browser entry point: UI static assets + `/api` proxy to the gateway (including WebSocket). |
+| **API Gateway** | Auth (JWT), tenant/project ACL, proxying to internal services. |
+| **Domain** | Projects, planning, catalog, admin projection, project status machine. |
+| **AI team** | Multi-step role pipeline, LangGraph with tool calling, publishing execution tasks. |
+| **Execution** | Safe adapters to SSH, Ansible, Git, browser, sandbox. |
+| **Data** | Isolation: each service has its own PostgreSQL; async via Kafka (outbox/inbox). |
 
 ---
 
-## Два вида «оркестрации»
+## Components
 
-| Термин | Сервис | Смысл |
-|--------|--------|--------|
-| **Project orchestration** | `orchestrator-service` | Статусы жизненного цикла **проекта** по событиям Kafka. |
-| **AI-team orchestration** | `agent-graph-service` + `admin-service` | Прогон **запроса пользователя** через роли команды, задачи исполнения, stream в UI. |
+### User interface
+
+| Component | Port | What it does |
+|-----------|------|--------------|
+| **frontend** | 5173 → 80 | SPA (user portal `#/portal`, superadmin `#/superadmin`). In prod, nginx serves static assets and proxies `/api` to the gateway. |
+| **api-gateway** | 8000 | Unified REST/WS API: projects, planning, AI-team orchestration, adapter, admin, knowledge, browser logs, etc. |
+
+### Platform control and domain
+
+| Component | Port | What it does |
+|-----------|------|--------------|
+| **admin-service** | 8006 | Users and roles, LLM/agent settings, **AI-team runs** (runs/steps/execution_tasks), tracker (epics/tasks), role prompts, internal APIs for agent-graph. |
+| **project-service** | 8001 | Project lifecycle, tenants, Kafka event outbox. |
+| **planning-service** | 8002 | Product planning run (idea → structured plan), LLM calls. |
+| **orchestrator-service** | 8003 | **Do not confuse with AI-orchestrate:** Kafka consumer, projection of **project status** (platform workflow). |
+| **catalog-service** | 8004 | Stack and blueprint catalog for projects. |
+| **agent-bootstrap-service** | 8011 | Listens for project-created events → starts planning automatically when needed. |
+
+### AI team and LLM
+
+| Component | Port | What it does |
+|-----------|------|--------------|
+| **agent-graph-service** | 8013 | **AI-team** core: intake (full/direct), SA/PM/architect/plans/implementation/deploy/QA steps, `execution_plan` → worker tasks; LangGraph ReAct with platform tools; event stream/WS. |
+| **llm-adapter-service** | 8005 | Proxy to OpenAI-compatible APIs; model settings from admin; Langfuse tracing. |
+| **agent-worker-service** | 8010 | Kafka `platform.agent.tasks`: **tracker** → ReAct via `agent-graph` `/invoke`; **AI-team execution** → SSH/K8s/Ansible via adapter. |
+| **documents-service** | 8015 | Project wiki/documents (architecture, guides), context for agents. |
+| **knowledge-service** | 8019 | Knowledge bases (platform + project): file upload, ingest (Kafka), chunks in Qdrant, `search_knowledge` for agents. |
+
+Pipeline roles (simplified): **intake** → full/direct route → **SA** (formal artifacts, tracker) → **PM / architect / devops / backend / frontend** → **execution_plan** → **implementation / deploy / QA / pm_summary**. In `direct` mode some steps are skipped; one role answers via ReAct.
+
+### Execution and DevTools
+
+| Component | Port | What it does |
+|-----------|------|--------------|
+| **adapter-service** | 8008 | SSH targets, command execution, confirmations, HTTP executor, agent metrics ingest; links to Ansible and ClickHouse. |
+| **ansible-orchestrator-service** | 8007 | Ansible role marketplace (templates in S3/RustFS), playbook runs on request from adapter/agents. |
+| **sandbox-service** | 8012 | Restricted Python execution for agents. |
+| **browser-tool-service** | 8014 | Playwright sessions: navigation, UI snapshots, web app smoke. |
+| **gitlab-service** | 8016 | Group/repo provision, tokens, GitLab CE integration (optional). |
+| **repo-workspace-service** | 8018 | Local git workspaces: clone, read/write, commit, push. |
+| **code-index-service** | 8017 | Code indexing from workspace, semantic search (Qdrant). |
+
+### Data infrastructure
+
+| Component | Purpose |
+|-----------|---------|
+| **Kafka** | Domain events (`platform.events`), agent tasks (`platform.agent.tasks`), knowledge ingest. Outbox/inbox patterns in services. |
+| **Redis** | Cache/coordination in agent-graph (e.g. last project run). |
+| **PostgreSQL** | Separate instance per service: `project`, `planning`, `admin`, `orchestrator`, `adapter`, `documents`, `knowledge`, `gitlab`, `repo-workspace`, `code-index`. |
+| **Qdrant** | Vector collections: knowledge-base and code-index chunks. |
+| **RustFS (S3)** | Object storage: Ansible templates, knowledge-base files. |
+| **ClickHouse** | Metrics and logs from agents on the user’s servers. |
+
+### Observability and options
+
+| Component | Purpose |
+|-----------|---------|
+| **Langfuse** (web, worker, postgres, redis, clickhouse, minio) | LLM call traces (llm-adapter, agent-graph). |
+| **gitlab-ce** (profile `gitlab`) | Local GitLab CE for development; **gitlab-service** talks to it via API. |
 
 ---
 
-## Потоки данных (кратко)
+## Two kinds of “orchestration”
 
-1. **Создание проекта** → `project-service` → Kafka → `agent-bootstrap` / `orchestrator` / проекция в `admin`.
-2. **Product planning** → UI → gateway → `planning-service` → LLM → результат в planning DB.
-3. **AI-команда** → gateway → `agent-graph` ↔ `admin` (runs) ↔ tools → `adapter` / Git / docs / knowledge → Kafka tasks → `agent-worker`.
-4. **Knowledge upload** → gateway → `knowledge-service` → S3 + Kafka ingest → Qdrant; агенты ищут через tool `search_knowledge`.
-5. **Код** → `gitlab-service` + `repo-workspace` + `code-index` (clone → правки → push → поиск).
-
----
-
-## Репозиторий
-
-| Путь | Содержимое |
-|------|------------|
-| `Platform/backend` | Все микросервисы (`services/*`), общие контракты, тесты. |
-| `Platform/frontend` | TypeScript SPA, nginx для prod. |
-| `Platform/docs` | Тематические заметки (GitLab, knowledge, code-index). |
-| `schema.md` | Упрощённая схема только пайплайна AI-команды. |
+| Term | Service | Meaning |
+|------|---------|---------|
+| **Project orchestration** | `orchestrator-service` | **Project** lifecycle statuses from Kafka events. |
+| **AI-team orchestration** | `agent-graph-service` + `admin-service` | Running a **user request** through team roles, execution tasks, UI stream. |
 
 ---
 
-## Локальный запуск
+## Data flows (brief)
+
+1. **Project creation** → `project-service` → Kafka → `agent-bootstrap` / `orchestrator` / projection into `admin`.
+2. **Product planning** → UI → gateway → `planning-service` → LLM → result in planning DB.
+3. **AI team** → gateway → `agent-graph` ↔ `admin` (runs) ↔ tools → `adapter` / Git / docs / knowledge → Kafka tasks → `agent-worker`.
+4. **Knowledge upload** → gateway → `knowledge-service` → S3 + Kafka ingest → Qdrant; agents search via the `search_knowledge` tool.
+5. **Code** → `gitlab-service` + `repo-workspace` + `code-index` (clone → edits → push → search).
+
+---
+
+## Repository
+
+| Path | Contents |
+|------|----------|
+| `Platform/backend` | All microservices (`services/*`), shared contracts, tests. |
+| `Platform/frontend` | TypeScript SPA, nginx for prod. |
+| `Platform/docs` | Topic notes (GitLab, knowledge, code-index). |
+| `schema.md` | Simplified diagram of the AI-team pipeline only. |
+
+---
+
+## Local run
 
 ```bash
 cd Platform
@@ -1000,6 +1000,6 @@ docker compose up -d --build
 
 - UI: http://localhost:5173  
 - API: http://localhost:8000  
-- Подробнее: `Platform/README.md`
+- Details: `Platform/README.md`
 
-Для тяжёлого GitLab CE: `docker compose --profile gitlab up -d`.
+For heavy GitLab CE: `docker compose --profile gitlab up -d`.

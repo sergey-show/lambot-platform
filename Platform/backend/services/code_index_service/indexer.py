@@ -1,4 +1,4 @@
-"""Индексация файлов из локального repo-workspace → Postgres (текст) + Qdrant (векторы)."""
+"""Index files from the local repo-workspace → Postgres (text) + Qdrant (vectors)."""
 
 from __future__ import annotations
 

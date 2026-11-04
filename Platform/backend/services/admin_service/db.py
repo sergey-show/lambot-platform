@@ -50,37 +50,37 @@ def _seed_agent_development_prompts() -> None:
 
     defaults = {
         "pm": (
-            """Ты продакт-менеджер / PM проекта в Lambot. Формулируй цели MVP, приоритеты бэклога, критерии готовности. 
-            Согласовывай ожидания с архитектурой и разработкой; не придумывай цифры и сроки без оснований."""
+            """You are a product manager / PM for a Lambot project. State MVP goals, backlog priorities, readiness criteria.
+            Align expectations with architecture and engineering; do not invent numbers or deadlines without basis."""
         ),
         "architect": (
-            """Ты архитектор решения в Lambot. Предлагаешь границы системы, сервисы, интеграции, данные и риски. 
-            Опирайся на контекст проекта и инфраструктуры (репозиторий, CI/CD, деплой, наблюдаемость); 
-            если конкретных сервисов нет — не подставляй их. Давай практичные, проверяемые решения."""
+            """You are a solution architect in Lambot. Propose system boundaries, services, integrations, data, and risks.
+            Build on project and infrastructure context (repo, CI/CD, deploy, observability);
+            if specific services are missing — do not invent them. Give practical, verifiable solutions."""
         ),
         "devops": (
-            """Ты DevOps-инженер проекта. Помогаешь с CI/CD, инфраструктурой, Ansible, Docker, 
-            деплоем и observability. Опирайся на сводку ресурсов проекта (доступные URL, учётки, registry/репозиторий и др.)
-            из контекста платформы; если GitLab/Nexus отсутствуют — не считай их обязательными.
-            Не выдумывай секреты — проси уточнить, если данных нет."""
+            """You are the project DevOps engineer. Help with CI/CD, infrastructure, Ansible, Docker,
+            deploy, and observability. Build on the project resource summary (available URLs, accounts, registry/repo, etc.)
+            from platform context; if GitLab/Nexus are missing — do not treat them as required.
+            Do not invent secrets — ask for clarification when data is missing."""
         ),
         "backend": (
-            """Ты backend-разработчик проекта. Пишешь и ревьюишь серверный код, API, БД, интеграции. 
-            Используй данные из контекста проекта (репозитории, окружения); согласовывай контракты с frontend."""
+            """You are the project backend developer. Write and review server code, APIs, DBs, integrations.
+            Use project context (repos, environments); align contracts with frontend."""
         ),
         "frontend": (
-            """Ты frontend-разработчик проекта. Пишешь UI, доступность, состояние, интеграцию с API. 
-            Используй контекст проекта (URL сервисов, стили); согласовывай с backend."""
+            """You are the project frontend developer. Write UI, accessibility, state, API integration.
+            Use project context (service URLs, styles); align with backend."""
         ),
         "qa": (
-            "Ты QA-инженер проекта. Формируешь тест-план, проверяешь риски релиза, "
-            "даёшь решение GO/NO_GO на основе фактов исполнения и доступных интеграций. "
-            "Не выдумывай прохождение тестов — фиксируй только проверенные результаты."
+            "You are the project QA engineer. Form a test plan, check release risks,"
+            "give a GO/NO_GO decision based on execution facts and available integrations."
+            "Do not invent passing tests — record only verified results."
         ),
         "sa": (
-            "Ты системный аналитик проекта в Lambot. Формализуешь требования: ТЗ (spec), глоссарий, "
-            "traceability, диаграммы (mermaid в wiki). Создаёшь эпики и задачи в трекере с assignee_role "
-            "для DevOps/Backend/Frontend/QA/Architect. Не подменяешь PM (приоритеты релиза) и архитектора (стек)."
+            "You are the project systems analyst in Lambot. Formalize requirements: spec, glossary,"
+            "traceability, diagrams (mermaid in wiki). Create epics and tasks in the tracker with assignee_role"
+            "for DevOps/Backend/Frontend/QA/Architect. Do not replace the PM (release priorities) or architect (stack)."
         ),
     }
     try:
@@ -104,32 +104,32 @@ def _seed_agent_graph_builtin_tools() -> None:
     from services.admin_service.models import AgentGraphBuiltinTool
 
     defaults = {
-        "get_development_context": "Контекст разработки (targets, инфра, промпты)",
-        "get_project_status": "Статус workflow проекта",
-        "list_infra_resources": "Ресурсы инфраструктуры проекта",
-        "run_product_planning": "Планирование продукта (MVP, IDEA→PLAN)",
-        "get_activity_logs": "Журнал действий (Ansible, операции)",
-        "get_agent_metrics": "Метрики удалённых агентов",
-        "ssh_run_command": "SSH: команда на сервере (с подтверждением опасных)",
-        "kubernetes_query": "Kubernetes: kubectl по kubeconfig (проект)",
-        "run_sandbox_python": "Песочница Python",
-        "http_request": "Универсальный HTTP инструмент (alias/method/path/body)",
-        "browser_session": "Браузерный Playwright инструмент (сессии, действия, скриншоты)",
-        "ansible_run_template": "Ansible marketplace: запуск шаблона роли на SSH target (с fallback)",
-        "get_project_docs_context": "RAG-контекст документации проекта (wiki)",
-        "upsert_project_document": "Создать/обновить документ проекта (wiki + версии)",
-        "list_project_documents": "Список документов проекта (wiki)",
-        "gitlab_provision_status": "Статус GitLab-группы проекта (платформа)",
-        "gitlab_create_repository": "Создать репозиторий в GitLab-группе проекта",
-        "list_project_repos": "Список локальных repo workspace",
-        "repo_clone_or_sync": "Клон/update workspace; feature_branch для работы",
-        "repo_read_file": "Чтение файла из workspace",
-        "repo_write_commit_push": "Запись файлов, commit, push",
-        "search_codebase": "Семантический поиск по индексу кода",
-        "tracker_list_items": "Трекер: список эпиков и задач проекта",
-        "tracker_create_epic": "Трекер: создать эпик (backlog)",
-        "tracker_create_task": "Трекер: создать задачу под эпиком с ролью агента",
-        "search_knowledge": "Поиск по базам знаний (Qdrant, платформа + проект)",
+        "get_development_context": "Development context (targets, infra, prompts)",
+        "get_project_status": "Project workflow status",
+        "list_infra_resources": "Project infrastructure resources",
+        "run_product_planning": "Product planning (MVP, IDEA→PLAN)",
+        "get_activity_logs": "Activity log (Ansible, operations)",
+        "get_agent_metrics": "Remote agent metrics",
+        "ssh_run_command": "SSH: server command (with confirmation for dangerous ones)",
+        "kubernetes_query": "Kubernetes: kubectl via kubeconfig (project)",
+        "run_sandbox_python": "Python sandbox",
+        "http_request": "Universal HTTP tool (alias/method/path/body)",
+        "browser_session": "Playwright browser tool (sessions, actions, screenshots)",
+        "ansible_run_template": "Ansible marketplace: run a role template on an SSH target (with fallback)",
+        "get_project_docs_context": "RAG context for project documentation (wiki)",
+        "upsert_project_document": "Create/update a project document (wiki + versions)",
+        "list_project_documents": "List project documents (wiki)",
+        "gitlab_provision_status": "Project GitLab group status (platform)",
+        "gitlab_create_repository": "Create a repository in the project GitLab group",
+        "list_project_repos": "List local repo workspaces",
+        "repo_clone_or_sync": "Clone/update workspace; feature_branch for work",
+        "repo_read_file": "Read a file from the workspace",
+        "repo_write_commit_push": "Write files, commit, push",
+        "search_codebase": "Semantic search over the code index",
+        "tracker_list_items": "Tracker: list project epics and tasks",
+        "tracker_create_epic": "Tracker: create an epic (backlog)",
+        "tracker_create_task": "Tracker: create a task under an epic with an agent role",
+        "search_knowledge": "Search knowledge bases (Qdrant, platform + project)",
     }
     try:
         with SessionLocal() as db:

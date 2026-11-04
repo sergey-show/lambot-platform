@@ -1,4 +1,4 @@
-"""Удаление баз/документов и enable/disable (Qdrant + S3)."""
+"""Delete bases/documents and enable/disable (Qdrant + S3)."""
 
 from __future__ import annotations
 

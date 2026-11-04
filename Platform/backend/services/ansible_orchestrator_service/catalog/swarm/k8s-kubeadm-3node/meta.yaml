@@ -1,11 +1,11 @@
 id: k8s-kubeadm-3node
 active: true
-name: Kubernetes (kubeadm, 3 ноды)
+name: Kubernetes (kubeadm, 3 nodes)
 description: >
-  Устанавливает containerd, kubeadm, kubelet и kubectl на трёх хостах Debian/Ubuntu:
-  одна control plane и два worker. Pod network — Flannel (по умолчанию 10.244.0.0/16).
-  Inventory с группами masters/workers и pod_network_cidr задаётся при запуске с платформы
-  (три SSH-таргета с одинаковым пользователем и тем же ключом или паролем).
+  Installs containerd, kubeadm, kubelet, and kubectl on three Debian/Ubuntu hosts:
+  one control plane and two workers. Pod network — Flannel (default 10.244.0.0/16).
+  Inventory with masters/workers groups and pod_network_cidr is set at launch from the platform
+  (three SSH targets with the same user and the same key or password).
 tags:
   - kubernetes
   - kubeadm

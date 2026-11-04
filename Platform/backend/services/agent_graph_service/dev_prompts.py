@@ -1,4 +1,4 @@
-"""Загрузка системных промптов ролей из admin-service."""
+"""Load role system prompts from admin-service."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://admin-service:8006")
 INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 
 _DEFAULTS: dict[str, str] = {
-    "pm": "Ты PM: цели MVP и приоритеты.",
-    "architect": "Ты архитектор: границы системы и риски.",
-    "devops": "Ты DevOps: CI/CD и инфраструктура.",
-    "backend": "Ты backend-разработчик: API и сервисы.",
-    "frontend": "Ты frontend-разработчик: UI и интеграции.",
-    "qa": "Ты QA-инженер: тест-план, проверка качества и GO/NO_GO.",
+    "pm": "You are a PM: MVP goals and priorities.",
+    "architect": "You are an architect: system boundaries and risks.",
+    "devops": "You are DevOps: CI/CD and infrastructure.",
+    "backend": "You are a backend developer: APIs and services.",
+    "frontend": "You are a frontend developer: UI and integrations.",
+    "qa": "You are a QA engineer: test plan, quality checks, and GO/NO_GO.",
 }
 
 
@@ -40,7 +40,7 @@ def fetch_development_prompts() -> dict[str, str]:
 
 
 def fetch_development_context_summary(project_id: str, max_chars: int = 12000) -> str:
-    """Краткая сводка development-context для оркестрации (adapter GET)."""
+    """Short development-context summary for orchestration (adapter GET)."""
     adapter = os.getenv("ADAPTER_SERVICE_URL", "http://adapter-service:8008")
     try:
         r = httpx.get(
@@ -58,7 +58,7 @@ def fetch_development_context_summary(project_id: str, max_chars: int = 12000) -
 
 
 def fetch_documents_context_summary(project_id: str, query: str = "", max_chars: int = 12000) -> str:
-    """RAG-сводка wiki-документации проекта (documents-service)."""
+    """RAG summary of project wiki docs (documents-service)."""
     docs = os.getenv("DOCUMENTS_SERVICE_URL", "http://documents-service:8015")
     payload = {"query": (query or "").strip(), "doc_types": [], "top_k": 10}
     try:

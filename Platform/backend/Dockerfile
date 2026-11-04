@@ -20,7 +20,7 @@ RUN if [ "$INSTALL_SYSTEM_DEPS" = "1" ]; then \
 
 RUN pip install --no-cache-dir -e .
 
-# Chromium для browser-tool-service (Playwright) — опционально, только где нужно.
+# Chromium for browser-tool-service (Playwright) — optional, only where needed.
 ARG INSTALL_PLAYWRIGHT=0
 ARG PLAYWRIGHT_INSTALL_DEPS=0
 RUN if [ "$INSTALL_PLAYWRIGHT" = "1" ]; then \
@@ -31,9 +31,9 @@ RUN if [ "$INSTALL_PLAYWRIGHT" = "1" ]; then \
       fi; \
     fi
 
-# Роли/коллекции Ansible Galaxy для prepare-stack (robertdebock.gitlab, cloudkrafter.nexus).
-# ANSIBLE_CONFIG до RUN — чтобы ansible-galaxy читал [galaxy] timeout из ansible.cfg.
-# Повторы: таймауты/обрывы при скачивании артефактов с galaxy.ansible.com во время docker build.
+# Ansible Galaxy roles/collections for prepare-stack (robertdebock.gitlab, cloudkrafter.nexus).
+# ANSIBLE_CONFIG before RUN — so ansible-galaxy reads [galaxy] timeout from ansible.cfg.
+# Retries: timeouts/disconnects when downloading artifacts from galaxy.ansible.com during docker build.
 ENV ANSIBLE_CONFIG=/app/ansible.cfg
 ARG INSTALL_ANSIBLE_GALAXY=0
 RUN if [ "$INSTALL_ANSIBLE_GALAXY" = "1" ]; then \

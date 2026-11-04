@@ -1,4 +1,4 @@
-"""HTTP-клиент к admin-service: состояние AI-команды (Postgres)."""
+"""HTTP client to admin-service: AI Team state (Postgres)."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def team_patch_step(
     if output_md is not None:
         body["output_md"] = output_md
     if structured is not None:
-        # Не терять llm_prompt_preview / llm_model при финальном structured (шаг завершён).
+        # Do not drop llm_prompt_preview / llm_model on final structured (step completed).
         prev: dict[str, Any] = {}
         row = team_get_run(run_id)
         if row:

@@ -1,4 +1,4 @@
-"""Запуск ansible-playbook на стороне adapter с учётными данными из ServerTarget."""
+"""Run ansible-playbook on the adapter side with credentials from ServerTarget."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def build_k8s_three_node_inventory(
     password_plain: str | None,
     pod_network_cidr: str,
 ) -> str:
-    """Inventory YAML: группы masters/workers + pod_network_cidr в all.vars."""
+    """Inventory YAML: masters/workers groups + pod_network_cidr in all.vars."""
     user = master.ssh_user.strip()
     common: dict = {
         "ansible_user": user,
@@ -66,7 +66,7 @@ def iter_ansible_playbook_multi(
     *,
     timeout_sec: int | None = None,
 ) -> Generator[str, None, tuple[int, str, str]]:
-    """ansible-playbook с произвольным inventory (например, несколько хостов)."""
+    """ansible-playbook with an arbitrary inventory (e.g. multiple hosts)."""
     if not ansible_playbook_available():
         yield from ()
         return (127, "", "ansible-playbook not found in PATH")
@@ -153,10 +153,8 @@ def iter_ansible_playbook(
     *,
     timeout_sec: int | None = None,
 ) -> Generator[str, None, tuple[int, str, str]]:
-    """
-    Потоковый запуск ansible-playbook: отдаёт строки объединённого вывода (stdout+stderr).
-    По завершении генератор возвращает (returncode, stdout, stderr) через StopIteration.value.
-    """
+    """Streaming ansible-playbook run: yields lines of merged output (stdout+stderr).
+    When finished the generator returns (returncode, stdout, stderr) via StopIteration.value."""
     if not ansible_playbook_available():
         yield from ()
         return (127, "", "ansible-playbook not found in PATH")
@@ -183,7 +181,7 @@ def iter_ansible_playbook(
         env = os.environ.copy()
         env["ANSIBLE_HOST_KEY_CHECKING"] = "False"
         env["ANSIBLE_RETRY_FILES_ENABLED"] = "False"
-        # Playbook в /tmp: явно задаём config и пути к ролям/коллекциям из образа adapter.
+        # Playbook in /tmp: explicitly set config and role/collection paths from the adapter image.
         env.setdefault("ANSIBLE_CONFIG", "/app/ansible.cfg")
         env.setdefault("ANSIBLE_ROLES_PATH", "/app/ansible/roles")
         env.setdefault("ANSIBLE_COLLECTIONS_PATHS", "/app/ansible/collections")
@@ -226,11 +224,9 @@ def run_playbook_for_target(
     timeout_sec: int | None = None,
     on_line: Callable[[str], None] | None = None,
 ) -> tuple[int, str, str]:
-    """
-    Выполняет playbook (YAML-текст) по SSH из сохранённых credential_encrypted.
-    Возвращает (returncode, stdout, stderr). stderr пуст, вывод объединён в stdout.
-    on_line — опционально вызывается для каждой строки вывода (без буферизации всего прогона).
-    """
+    """Run a playbook (YAML text) over SSH using saved credential_encrypted.
+    Returns (returncode, stdout, stderr). stderr is empty; output is merged into stdout.
+    on_line — optional callback for each output line (without buffering the whole run)."""
     if not ansible_playbook_available():
         return 127, "", "ansible-playbook not found in PATH"
 

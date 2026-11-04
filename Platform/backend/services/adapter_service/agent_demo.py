@@ -1,7 +1,5 @@
-"""
-Демо мультиагентного сценария: PM → архитектор → разработка → DevOps (CI/CD) через GitLab API.
-Требуется ресурс GitLab с PAT в проекте (после provision-gitlab-omnibus или run-stack).
-"""
+"""Multi-agent demo scenario: PM → architect → development → DevOps (CI/CD) via GitLab API.
+Requires a GitLab resource with a PAT in the project (after provision-gitlab-omnibus or run-stack)."""
 
 from __future__ import annotations
 
@@ -20,7 +18,7 @@ from services.adapter_service.crypto import decrypt_secret
 from services.adapter_service.models import ProjectInfraResource
 from services.adapter_service.clickhouse_activity import log_activity
 
-GITLAB_RESOURCE_LABEL = "GitLab агент (группа и токен)"
+GITLAB_RESOURCE_LABEL = "GitLab agent (group and token)"
 PROJECT_SERVICE_URL = os.getenv("PROJECT_SERVICE_URL", "http://project-service:8001")
 LLM_ADAPTER_URL = os.getenv("LLM_ADAPTER_SERVICE_URL", "http://llm-adapter-service:8005")
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://admin-service:8006")
@@ -61,12 +59,12 @@ def _llm_narrative(
     purpose: str = "default",
 ) -> str:
     prompts = _fetch_dev_prompts()
-    system = prompts.get(role, f"Ты агент роли {role} в команде Lambot.")
+    system = prompts.get(role, f"You are a {role} agent on the Lambot team.")
     try:
         r = httpx.post(
             f"{LLM_ADAPTER_URL.rstrip('/')}/api/v1/llm/generate",
             json={
-                "prompt": f"{system}\n\n---\n\nКратко (2–4 предложения), на русском: {user_line}",
+                "prompt": f"{system}\n\n---\n\nBrief title (2–4 sentences), in English: {user_line}",
                 "temperature": 0.25,
                 "purpose": purpose,
             },
@@ -76,8 +74,8 @@ def _llm_narrative(
             out = r.json().get("output") or ""
             return str(out).strip()[:2000]
     except Exception as exc:
-        return f"(LLM недоступен: {exc})"
-    return "(пустой ответ LLM)"
+        return f"(LLM unavailable: {exc})"
+    return "(empty LLM reply)"
 
 
 def _load_gitlab(db: Session, project_id: UUID) -> dict[str, Any] | None:
@@ -143,7 +141,7 @@ def run_agent_demo(
 
     gl = _load_gitlab(db, project_id)
     if not gl:
-        step("precheck", "error", "Нет GitLab credentials (запустите Ansible для GitLab и дождитесь ресурса с PAT).", {})
+        step("precheck", "error", "No GitLab credentials (run Ansible for GitLab and wait for a PAT resource).", {})
         return {"ok": False, "steps": steps, "error": "gitlab_credentials_missing"}
 
     pname = _fetch_project_title(project_id)
@@ -159,28 +157,28 @@ def run_agent_demo(
     # --- PM
     pm_text = _llm_narrative(
         "pm",
-        f"Проект «{pname}». Сформулируй цель MVP демо: репозиторий с мини-приложением и CI/CD в GitLab.",
+        f"Project «{pname}». State the demo MVP goal: a repository with a mini-app and CI/CD in GitLab.",
         purpose="default",
     )
-    step("pm", "ok", "PM: согласовано направление демо", {"narrative": pm_text})
+    step("pm", "ok", "PM: demo direction agreed", {"narrative": pm_text})
 
     # --- Architect
     arch_text = _llm_narrative(
         "architect",
-        f"Проект «{pname}». Опиши минимальную архитектуру: один сервис Python (FastAPI), один pipeline verify+deploy.",
+        f"Project «{pname}». Describe a minimal architecture: one Python (FastAPI) service, one verify+deploy pipeline.",
         purpose="default",
     )
-    step("architect", "ok", "Архитектор: контур решения", {"narrative": arch_text})
+    step("architect", "ok", "Architect: solution outline", {"narrative": arch_text})
 
     with httpx.Client(timeout=120.0, verify=_GITLAB_SSL_VERIFY) as client:
         gr = client.get(f"{api}/groups/{quote(group_path, safe='')}", headers=headers)
         if gr.status_code != 200:
-            step("gitlab_group", "error", f"Не найдена группа GitLab: {group_path}", {"http": gr.status_code, "body": gr.text[:500]})
+            step("gitlab_group", "error", f"GitLab group not found: {group_path}", {"http": gr.status_code, "body": gr.text[:500]})
             return {"ok": False, "steps": steps, "error": "gitlab_group_not_found"}
 
         namespace_id = gr.json().get("id")
         if not namespace_id:
-            step("gitlab_group", "error", "Ответ GitLab без id группы", {})
+            step("gitlab_group", "error", "GitLab response without a group id", {})
             return {"ok": False, "steps": steps, "error": "gitlab_group_bad_response"}
 
         create_payload = {
@@ -194,7 +192,7 @@ def run_agent_demo(
         proj: dict[str, Any]
         if cr.status_code in (200, 201):
             proj = cr.json()
-            step("gitlab_repo", "ok", f"Создан проект {repo_slug}", {"id": proj.get("id"), "web_url": proj.get("web_url")})
+            step("gitlab_repo", "ok", f"Created project {repo_slug}", {"id": proj.get("id"), "web_url": proj.get("web_url")})
         elif cr.status_code == 409 or (
             cr.status_code == 400 and "already been taken" in (cr.text or "").lower()
         ):
@@ -202,12 +200,12 @@ def run_agent_demo(
             gr2 = client.get(f"{api}/projects/{enc}", headers=headers)
             if gr2.status_code == 200:
                 proj = gr2.json()
-                step("gitlab_repo", "ok", f"Репозиторий уже существует: {repo_slug}", {"id": proj.get("id"), "web_url": proj.get("web_url")})
+                step("gitlab_repo", "ok", f"Repository already exists: {repo_slug}", {"id": proj.get("id"), "web_url": proj.get("web_url")})
             else:
-                step("gitlab_repo", "error", "Не удалось создать или найти проект", {"http": cr.status_code, "body": cr.text[:800]})
+                step("gitlab_repo", "error", "Failed to create or find the project", {"http": cr.status_code, "body": cr.text[:800]})
                 return {"ok": False, "steps": steps, "error": "gitlab_repo_failed"}
         else:
-            step("gitlab_repo", "error", "GitLab отклонил создание проекта", {"http": cr.status_code, "body": cr.text[:800]})
+            step("gitlab_repo", "error", "GitLab rejected project creation", {"http": cr.status_code, "body": cr.text[:800]})
             return {"ok": False, "steps": steps, "error": "gitlab_repo_failed"}
 
         project_id_gl = proj.get("id")
@@ -218,14 +216,14 @@ def run_agent_demo(
 
         readme = f"""# Lambot demo — {pname}
 
-Мини-сервис, созданный сценарием **агентов платформы** (PM → архитектор → разработка → DevOps).
+Mini-service created by the **platform agents** scenario (PM → architect → development → DevOps).
 
 - `app.py` — FastAPI hello
-- `.gitlab-ci.yml` — pipeline verify + условный deploy
+- `.gitlab-ci.yml` — pipeline verify + conditional deploy
 
-Откройте **CI/CD → Pipelines** в GitLab, чтобы увидеть прогон (нужен GitLab Runner).
+Open **CI/CD → Pipelines** in GitLab to see the run (a GitLab Runner is required).
 """
-        app_py = '''"""Lambot agent demo — минимальный API."""
+        app_py = '''"""Lambot agent demo — minimal API."""
 from fastapi import FastAPI
 
 app = FastAPI(title="Lambot Demo", version="0.1.0")
@@ -242,7 +240,7 @@ def root():
 '''
         req_txt = "fastapi>=0.110,<1\nuvicorn[standard]>=0.27,<1\n"
 
-        ci_yml = """# Lambot demo pipeline — работает с любым shell runner (alpine)
+        ci_yml = """# Lambot demo pipeline — works with any shell runner (alpine)
 stages:
   - verify
   - deploy
@@ -259,7 +257,7 @@ deploy:
   stage: deploy
   image: alpine:3.19
   script:
-    - echo "Lambot demo — условный deploy (зелёный job = CI/CD настроен)"
+    - echo "Lambot demo — conditional deploy (green job = CI/CD configured)"
   when: on_success
 """
 
@@ -272,10 +270,10 @@ deploy:
 
         dev_narrative = _llm_narrative(
             "backend",
-            f"Мы добавили в репозиторий {repo_slug} FastAPI app.py и зависимости. Одно предложение статуса.",
+            f"We added FastAPI app.py and dependencies to repository {repo_slug}. One status sentence.",
             purpose="coding",
         )
-        step("dev_backend", "ok", "Backend: код сгенерирован (шаблон демо)", {"narrative": dev_narrative})
+        step("dev_backend", "ok", "Backend: code generated (demo template)", {"narrative": dev_narrative})
 
         for fpath, content in files_spec:
             fe = quote(fpath, safe="")
@@ -290,19 +288,19 @@ deploy:
                 step(
                     f"commit:{fpath}",
                     "error",
-                    f"Не удалось создать файл {fpath}",
+                    f"Failed to create file {fpath}",
                     {"http": put.status_code, "body": put.text[:600]},
                 )
                 return {"ok": False, "steps": steps, "error": "gitlab_file_failed", "file": fpath}
 
-        step("gitlab_files", "ok", f"Загружены файлы ({len(files_spec)}) в ветку {default_branch}", {})
+        step("gitlab_files", "ok", f"Uploaded files ({len(files_spec)}) to branch {default_branch}", {})
 
         devops_narrative = _llm_narrative(
             "devops",
-            f"В репозитории {repo_slug} включён .gitlab-ci.yml (stages verify, deploy). Кратко что проверить в GitLab.",
+            f"Repository {repo_slug} has .gitlab-ci.yml enabled (stages verify, deploy). Brief note of what to check in GitLab.",
             purpose="coding",
         )
-        step("devops", "ok", "DevOps: CI/CD описан в репозитории", {"narrative": devops_narrative})
+        step("devops", "ok", "DevOps: CI/CD described in the repository", {"narrative": devops_narrative})
 
         web_url = (proj.get("web_url") or "").rstrip("/")
         pipelines_url = f"{web_url}/-/pipelines" if web_url else ""
@@ -314,5 +312,5 @@ deploy:
         "gitlab_web_url": proj.get("web_url"),
         "pipelines_url": pipelines_url,
         "default_branch": default_branch,
-        "note": "Если pipeline не стартует — зарегистрируйте GitLab Runner для проекта.",
+        "note": "If the pipeline does not start — register a GitLab Runner for the project.",
     }

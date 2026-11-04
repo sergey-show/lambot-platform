@@ -1,4 +1,4 @@
-"""Шифрование секретов настроек (API keys) в admin DB."""
+"""Encrypt settings secrets (API keys) in admin DB."""
 
 import base64
 import hashlib

@@ -1,5 +1,5 @@
 """
-Инструменты LangGraph: встроенные (редактируемые из админки) + HTTP GET из БД (шаблон URL).
+LangGraph tools: built-in (editable from admin) + HTTP GET from DB (URL template).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ INTERNAL_TOKEN = os.getenv("INTERNAL_LLM_SETTINGS_TOKEN", "internal-dev-token")
 def _make_get_development_context(pid: str):
     @tool
     def get_development_context() -> str:
-        """Сводка для агентов: targets, поле ssh_tools (ssh_run_command_available, ssh_targets_for_tools), K8s, ресурсы, промпты. Всегда вызывай перед утверждениями про SSH или серверы. JSON."""
+        """Summary for agents: targets, ssh_tools field (ssh_run_command_available, ssh_targets_for_tools), K8s, resources, prompts. Always call before claims about SSH or servers. JSON."""
         try:
             r = httpx.get(
                 f"{ADAPTER_URL.rstrip('/')}/api/v1/projects/{pid}/development-context",
@@ -43,7 +43,7 @@ def _make_get_development_context(pid: str):
 def _make_get_project_status(pid: str):
     @tool
     def get_project_status() -> str:
-        """Текущий статус workflow проекта (IDEA, PLAN_READY, INFRA_IN_PROGRESS, ...). JSON."""
+        """Current project workflow status (IDEA, PLAN_READY, INFRA_IN_PROGRESS, ...). JSON."""
         try:
             r = httpx.get(
                 f"{PROJECT_URL.rstrip('/')}/api/v1/projects/{pid}/status",
@@ -59,7 +59,7 @@ def _make_get_project_status(pid: str):
 def _make_list_infra_resources(pid: str):
     @tool
     def list_infra_resources() -> str:
-        """Список ресурсов инфраструктуры проекта (URL, метки; флаг has_secret без значений секретов). JSON."""
+        """List of project infrastructure resources (URL, labels; has_secret flag without secret values). JSON."""
         try:
             r = httpx.get(
                 f"{ADAPTER_URL.rstrip('/')}/api/v1/projects/{pid}/infra/resources",
@@ -76,13 +76,13 @@ def _make_list_infra_resources(pid: str):
 def _make_run_product_planning(pid: str):
     @tool
     def run_product_planning(idea: str) -> str:
-        """Запускает планирование MVP продукта (LLM + события воркфлоу): идея стартапа или сервиса. Вызывай, когда пользователь хочет сформировать план, описать продукт с нуля или прогнать шаг IDEA→PLAN. Передавай полный текст идеи пользователя (не сокращай)."""
+        """Starts product MVP planning (LLM + workflow events): a startup or service idea. Call when the user wants a plan, to describe a product from scratch, or to run IDEA→PLAN. Pass the full user idea text (do not shorten)."""
         snippet = (idea or "").strip()
         if len(snippet) < 8:
             return json.dumps(
                 {
                     "error": "idea_too_short",
-                    "hint": "Опишите продукт подробнее (несколько предложений): аудитория, задача, ценность.",
+                    "hint": "Describe the product in more detail (a few sentences): audience, problem, value.",
                 }
             )
         if len(snippet) > 12000:
@@ -103,7 +103,7 @@ def _make_run_product_planning(pid: str):
 def _make_get_activity_logs(pid: str):
     @tool
     def get_activity_logs(limit: int = 40) -> str:
-        """Журнал действий по проекту: Ansible, SSH, назначения, операции (ClickHouse). Верни JSON с items (время, действие, статус, summary, детали)."""
+        """Project activity log: Ansible, SSH, assignments, operations (ClickHouse). Return JSON with items (time, action, status, summary, details)."""
         try:
             try:
                 lim = max(1, min(int(limit), 80))
@@ -124,7 +124,7 @@ def _make_get_activity_logs(pid: str):
 def _make_get_agent_metrics(pid: str):
     @tool
     def get_agent_metrics(limit: int = 30) -> str:
-        """Последние метрики с удалённых агентов на серверах проекта (heartbeat, payload). JSON."""
+        """Latest metrics from remote agents on project servers (heartbeat, payload). JSON."""
         try:
             try:
                 lim = max(1, min(int(limit), 100))
@@ -150,11 +150,11 @@ def _make_ssh_run_command(pid: str):
         user_confirmed: bool = False,
         confirmation_token: str = "",
     ) -> str:
-        """Выполнить одну shell-команду на сохранённом SSH-сервере проекта: target_id из get_development_context.ssh_tools.ssh_targets_for_tools[].target_id или из targets при target_kind=ssh. Если ssh_tools.ssh_run_command_available=false — серверов нет, команду не вызывать. Опасные команды: платформа может выполнить повтор с подтверждением автоматически (без участия пользователя в чате). При необходимости явного согласия пользователя передай user_confirmed=true и confirmation_token из ответа adapter. Не передавай секреты в команду."""
+        """Run one shell command on a saved project SSH server: target_id from get_development_context.ssh_tools.ssh_targets_for_tools[].target_id or from targets when target_kind=ssh. If ssh_tools.ssh_run_command_available=false — no servers, do not call. Dangerous commands: the platform may re-run with confirmation automatically (without user chat). When explicit user consent is needed, pass user_confirmed=true and confirmation_token from the adapter response. Do not put secrets in the command."""
         tid = (target_id or "").strip()
         cmd = (command or "").strip()
         if not tid or not cmd:
-            return json.dumps({"error": "target_id и command обязательны"})
+            return json.dumps({"error": "target_id and command are required"})
         payload: dict[str, Any] = {
             "command": cmd,
             "confirmed": bool(user_confirmed),
@@ -208,7 +208,7 @@ def _make_kubernetes_query(pid: str):
         wide: bool = False,
         replicas: int | None = None,
     ) -> str:
-        """Управление Kubernetes по kubeconfig-таргету проекта (kubectl внутри платформы). operation: cluster_info, version, nodes, namespaces, pods, deployments, services, ingresses, statefulsets, daemonsets, events, describe, logs, top_nodes, top_pods, rollout_status, scale, rollout_restart. target_id — UUID из kubernetes_clusters в контексте. Для describe укажи resource (pod, deployment, …) и name; для logs — namespace, name (pod); для scale/rollout — namespace и name (deployment), для scale ещё replicas."""
+        """Manage Kubernetes via a project kubeconfig target (kubectl inside the platform). operation: cluster_info, version, nodes, namespaces, pods, deployments, services, ingresses, statefulsets, daemonsets, events, describe, logs, top_nodes, top_pods, rollout_status, scale, rollout_restart. target_id — UUID from kubernetes_clusters in context. For describe set resource (pod, deployment, …) and name; for logs — namespace, name (pod); for scale/rollout — namespace and name (deployment), for scale also replicas."""
         op = (operation or "").strip().lower()
         tid = (target_id or "").strip()
         if not tid:
@@ -253,8 +253,8 @@ def _make_kubernetes_query(pid: str):
 def _make_run_sandbox_python(pid: str):
     @tool
     def run_sandbox_python(code: str) -> str:
-        """Выполнить короткий Python-код в песочнице платформы (ограничение по времени и размеру). Верни stdout/stderr."""
-        _ = pid  # контекст проекта для будущей политики
+        """Run short Python code in the platform sandbox (time and size limits). Return stdout/stderr."""
+        _ = pid  # project context for future policy
         snippet = (code or "").strip()
         if len(snippet) > 24000:
             return json.dumps({"error": "code too long", "max_chars": 24000})
@@ -284,7 +284,7 @@ def _make_http_request(pid: str):
         text_body: str = "",
         timeout_sec: int = 20,
     ) -> str:
-        """Универсальный HTTP запрос через безопасный executor gateway. endpoint_alias: adapter|project|planning|catalog|agent_graph|documents. Используй path только внутри alias (можно с {project_id}); method: GET/POST/PUT/PATCH/DELETE. Для тела используй json_body или text_body. Секретные/служебные заголовки передавать нельзя."""
+        """Universal HTTP request via the safe executor gateway. endpoint_alias: adapter|project|planning|catalog|agent_graph|documents. Use path only within the alias (may include {project_id}); method: GET/POST/PUT/PATCH/DELETE. For the body use json_body or text_body. Secret/service headers are not allowed."""
         p = (path or "").strip()
         if not p:
             return json.dumps({"error": "path required"})
@@ -330,7 +330,7 @@ def _make_browser_session(pid: str):
         viewport_width: int = 1366,
         viewport_height: int = 900,
     ) -> str:
-        """Браузерный инструмент Playwright (через browser-tool-service). action=create|navigate|click|type|fill|press|wait|extract_text|content|snapshot|screenshot|close. Для create можно передать url (start_url) и viewport_*; для остальных нужен session_id. run_id передавай для привязки логов браузера к текущему прогону оркестрации."""
+        """Playwright browser tool (via browser-tool-service). action=create|navigate|click|type|fill|press|wait|extract_text|content|snapshot|screenshot|close. For create you may pass url (start_url) and viewport_*; others need session_id. Pass run_id to attach browser logs to the current orchestration run."""
         act = (action or "").strip().lower()
         payload: dict[str, Any] = {
             "action": act,
@@ -370,7 +370,7 @@ def _make_browser_session(pid: str):
 def _make_get_project_docs_context(pid: str):
     @tool
     def get_project_docs_context(query: str = "", doc_types_csv: str = "", top_k: int = 8) -> str:
-        """Поиск в wiki проекта (RAG по запросу). Вызывай только когда нужны факты из документации; query — конкретный вопрос (не весь user_message). doc_types_csv: architecture,user_guide,admin_guide. top_k 3–8."""
+        """Search project wiki (RAG by query). Call only when documentation facts are needed; query — a specific question (not the whole user_message). doc_types_csv: architecture,user_guide,admin_guide. top_k 3–8."""
         types = []
         for raw in (doc_types_csv or "").split(","):
             v = raw.strip().lower()
@@ -406,7 +406,7 @@ def _make_upsert_project_document(pid: str):
         change_summary: str = "",
         run_id: str = "",
     ) -> str:
-        """Создать/обновить wiki-документ проекта и новую версию. Используй после решения задачи для: architecture, user_guide, admin_guide."""
+        """Create/update a project wiki document and a new version. Use after solving a task for: architecture, user_guide, admin_guide."""
         if not title.strip() or not content_md.strip():
             return json.dumps({"error": "title and content_md are required"})
         tags = [x.strip().lower() for x in tags_csv.split(",") if x.strip()]
@@ -438,7 +438,7 @@ def _make_upsert_project_document(pid: str):
 def _make_list_project_documents(pid: str):
     @tool
     def list_project_documents(doc_type: str = "", status: str = "active", limit: int = 100) -> str:
-        """Список wiki-документов проекта (фильтр по типу/статусу)."""
+        """List project wiki documents (filter by type/status)."""
         params: dict[str, str] = {"limit": str(max(1, min(int(limit or 100), 300)))}
         if doc_type.strip():
             params["doc_type"] = doc_type.strip().lower()
@@ -466,7 +466,7 @@ def _make_ansible_run_template(pid: str):
         allow_fallback: bool = False,
         fallback_service: str = "",
     ) -> str:
-        """Запустить Ansible-шаблон из внутреннего каталога marketplace на SSH target проекта. Если шаблон не найден и allow_fallback=true, можно выполнить fallback_service=gitlab|docker|nexus через SSH."""
+        """Run an Ansible template from the internal marketplace catalog on a project SSH target. If the template is missing and allow_fallback=true, you may run fallback_service=gitlab|docker|nexus over SSH."""
         tid = (target_id or "").strip()
         tpl = (template_id or "").strip()
         if not tid or not tpl:
@@ -514,7 +514,7 @@ def _parse_meta_json(meta_json: str) -> dict[str, Any]:
 def _make_tracker_list_items(pid: str):
     @tool
     def tracker_list_items(kind: str = "", limit: int = 200) -> str:
-        """Список эпиков и задач трекера проекта (видно в UI «Задачи агентов»). kind: epic|task или пусто."""
+        """List project tracker epics and tasks (shown in UI "Agent tasks"). kind: epic|task or empty."""
         params: dict[str, str] = {"limit": str(max(1, min(int(limit or 200), 500)))}
         k = (kind or "").strip().lower()
         if k in ("epic", "task"):
@@ -542,7 +542,7 @@ def _make_tracker_create_epic(pid: str):
         run_id: str = "",
         seq: int = 0,
     ) -> str:
-        """Создать эпик в трекере (backlog). meta_json — JSON: requirement_id, run_id и др."""
+        """Create an epic in the tracker (backlog). meta_json — JSON: requirement_id, run_id, etc."""
         if not title.strip():
             return json.dumps({"error": "title is required"})
         meta = _parse_meta_json(meta_json)
@@ -583,7 +583,7 @@ def _make_tracker_create_task(pid: str):
         requirement_id: str = "",
         seq: int = 0,
     ) -> str:
-        """Создать задачу под эпиком с ролью агента (devops|backend|frontend|qa|architect|pm|sa)."""
+        """Create a task under an epic with an agent role (devops|backend|frontend|qa|architect|pm|sa)."""
         if not title.strip():
             return json.dumps({"error": "title is required"})
         parent = (parent_epic_id or "").strip()
@@ -631,7 +631,7 @@ def _make_search_knowledge(pid: str):
         include_platform: bool = True,
         top_k: int = 8,
     ) -> str:
-        """Семантический поиск по базам знаний (платформа + проект). kb_ids_csv — uuid через запятую или пусто = все доступные."""
+        """Semantic search over knowledge bases (platform + project). kb_ids_csv — comma-separated uuids or empty = all available."""
         q = (query or "").strip()
         if not q:
             return json.dumps({"error": "query is required"})

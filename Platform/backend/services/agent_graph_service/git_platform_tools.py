@@ -1,4 +1,4 @@
-"""Инструменты агентов: GitLab (платформа), локальный clone, индекс кода."""
+"""Agent tools: GitLab (platform), local clone, code index."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _headers() -> dict[str, str]:
 def _make_gitlab_create_repository(pid: str):
     @tool
     def gitlab_create_repository(repo_slug: str, name: str = "", description: str = "") -> str:
-        """Создать пустой GitLab-репозиторий в группе проекта (без README). repo_slug — короткое имя (латиница). Репозитории создают агенты по задаче, не при создании проекта."""
+        """Create an empty GitLab repository in the project group (no README). repo_slug — short Latin name. Agents create repos per task, not on project create."""
         try:
             r = httpx.post(
                 f"{REPO_WS_URL.rstrip('/')}/api/v1/projects/{pid}/repos",
@@ -46,7 +46,7 @@ def _make_repo_clone_or_sync(pid: str):
         feature_branch: str = "",
         create_from_ref: str = "",
     ) -> str:
-        """Клонировать или обновить локальный workspace. Для feature-ветки укажи feature_branch (создастся от branch). Индексация запускается после sync."""
+        """Clone or update the local workspace. For a feature branch set feature_branch (created from branch). Indexing starts after sync."""
         payload: dict[str, Any] = {"branch": branch or "main"}
         if feature_branch.strip():
             payload["create_branch"] = feature_branch.strip()
@@ -69,7 +69,7 @@ def _make_repo_clone_or_sync(pid: str):
 def _make_repo_read_file(pid: str):
     @tool
     def repo_read_file(repo_slug: str, path: str) -> str:
-        """Прочитать файл из локального workspace (после repo_clone_or_sync). path — относительный путь в репозитории."""
+        """Read a file from the local workspace (after repo_clone_or_sync). path — relative path in the repository."""
         try:
             r = httpx.get(
                 f"{REPO_WS_URL.rstrip('/')}/api/v1/projects/{pid}/repos/{repo_slug}/file",
@@ -92,7 +92,7 @@ def _make_repo_write_commit_push(pid: str):
         commit_message: str,
         push: bool = True,
     ) -> str:
-        """Записать файлы (JSON object path→content), commit и опционально push в active branch. files_json пример: {\"src/a.py\": \"...\"}."""
+        """Write files (JSON object path→content), commit and optionally push to the active branch. files_json example: {\"src/a.py\": \"...\"}."""
         try:
             files = json.loads(files_json)
             if not isinstance(files, dict):
@@ -135,7 +135,7 @@ def _make_repo_write_commit_push(pid: str):
 def _make_search_codebase(pid: str):
     @tool
     def search_codebase(query: str, repo_slug: str = "", branch: str = "", top_k: int = 12) -> str:
-        """Семантический поиск по индексу кода (после clone/sync ветки). repo_slug и branch опциональны для сужения."""
+        """Semantic search over the code index (after clone/sync of a branch). repo_slug and branch optional to narrow."""
         try:
             body: dict[str, Any] = {"query": query, "top_k": max(1, min(int(top_k), 40))}
             if repo_slug.strip():
@@ -158,7 +158,7 @@ def _make_search_codebase(pid: str):
 def _make_list_project_repos(pid: str):
     @tool
     def list_project_repos() -> str:
-        """Список зарегистрированных репозиториев и веток workspace проекта."""
+        """List of registered repositories and branches in the project workspace."""
         try:
             r = httpx.get(
                 f"{REPO_WS_URL.rstrip('/')}/api/v1/projects/{pid}/repos",
@@ -175,7 +175,7 @@ def _make_list_project_repos(pid: str):
 def _make_gitlab_provision_status(pid: str):
     @tool
     def gitlab_provision_status() -> str:
-        """Статус GitLab-группы проекта (platform): ready / failed / in_progress."""
+        """Project GitLab group status (platform): ready / failed / in_progress."""
         try:
             r = httpx.get(f"{GITLAB_URL.rstrip('/')}/api/v1/projects/{pid}/gitlab-provision", timeout=20.0)
             return r.text if r.text else json.dumps({"http": r.status_code})

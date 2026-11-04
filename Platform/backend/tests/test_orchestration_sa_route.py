@@ -1,4 +1,4 @@
-"""Маршрутизация SA и слои DAG."""
+"""SA routing and DAG layers — AI intake parse only (no keyword heuristics)."""
 
 import json
 
@@ -19,27 +19,44 @@ from services.agent_graph_service.execution_plan_parse import normalize_worker_e
 from services.agent_graph_service.orchestration_route import (
     active_dag_layers,
     enrich_route_with_sa_if_needed,
-    heuristic_orchestration_route,
     parse_orchestration_route,
     route_includes_sa,
+    route_is_usable,
 )
 
 
 def test_formal_spec_intent_positive():
-    assert formal_spec_intent("Нужно ТЗ и глоссарий для интеграции с CRM")
-    assert formal_spec_intent("Создай эпики и задачи в трекере для агентов")
+    assert formal_spec_intent("Need a formal requirements spec and glossary for CRM integration")
+    assert formal_spec_intent("Create epics and tasks for agents in the tracker")
 
 
 def test_formal_spec_intent_negative_site():
-    assert not formal_spec_intent("Сделай простой лендинг с формой")
+    assert not formal_spec_intent("Build a simple landing page with a form")
 
 
-def test_heuristic_includes_sa():
-    hr = heuristic_orchestration_route("Подготовь формальную спецификацию требований и traceability")
-    assert hr is not None
-    assert "sa" in hr.get("roles", [])
-    assert hr.get("mode") == "full"
-    assert hr.get("live_execution") is False
+def test_parse_route_includes_sa_from_llm_json():
+    raw = json.dumps(
+        {
+            "orchestration_route": {
+                "mode": "full",
+                "roles": ["sa", "pm", "architect"],
+                "primary_role": None,
+                "live_execution": False,
+                "reason": "formal specification and planning",
+            }
+        }
+    )
+    route = parse_orchestration_route(raw)
+    assert route_is_usable(route)
+    assert "sa" in route.get("roles", [])
+    assert route.get("mode") == "full"
+    assert route.get("live_execution") is False
+
+
+def test_route_is_usable_rejects_empty():
+    assert not route_is_usable({})
+    assert not route_is_usable({"mode": "full", "roles": []})
+    assert route_is_usable({"mode": "direct", "primary_role": "devops", "roles": ["devops"]})
 
 
 def test_active_dag_layers_without_sa():
@@ -62,7 +79,7 @@ def test_route_includes_sa_none_roles():
 
 def test_enrich_route_no_keyword_override():
     route_in = {"mode": "direct", "roles": ["pm"], "primary_role": "pm", "live_execution": False}
-    out = enrich_route_with_sa_if_needed(route_in, "Нужен глоссарий")
+    out = enrich_route_with_sa_if_needed(route_in, "Need a glossary")
     assert out == route_in
 
 
@@ -115,13 +132,13 @@ def test_extract_tool_names_from_content():
 
 
 def test_user_requests_tool_execution_approval():
-    assert user_requests_tool_execution_approval("выполняй реальные действия")
-    assert not user_requests_tool_execution_approval("какой uptime")
+    assert user_requests_tool_execution_approval("yes, go ahead and execute")
+    assert not user_requests_tool_execution_approval("what is the uptime")
 
 
 def test_invalid_architect_output_detected():
     bad = "## Step 1: Initial Analysis & Planning\n\nAwait User Feedback"
-    assert looks_like_invalid_architect_output(bad, "сделай сайт про акции")
+    assert looks_like_invalid_architect_output(bad, "build a website about promotions")
 
 
 def test_normalize_execution_plan_drops_gitlab_and_k8s():

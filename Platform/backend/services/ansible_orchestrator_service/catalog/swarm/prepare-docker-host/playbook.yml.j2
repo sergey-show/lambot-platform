@@ -1,6 +1,6 @@
 ---
-# Базовая подготовка хоста: docker.io + Compose v2 (бинарь в cli-plugins), сервис docker, группа docker.
-# Вызывается adapter'ом перед provision-gitlab / provision-nexus на том же target.
+# Base host prep: docker.io + Compose v2 (binary in cli-plugins), docker service, docker group.
+# Called by adapter before provision-gitlab / provision-nexus on the same target.
 - name: Prepare Docker host (swarm template)
   hosts: target
   become: true
@@ -26,8 +26,8 @@
         state: directory
         mode: "0755"
 
-    # Скачивание Compose: только Ansible должен раскрыть {{ ansible_architecture }} и т.д.
-    # Иначе Jinja оркестратора (prepare-bundle) затирает их — в URL получается .../download//docker-compose-linux-
+    # Compose download: only Ansible should expand {{ ansible_architecture }} etc.
+    # Otherwise the orchestrator Jinja (prepare-bundle) wipes them — URL becomes .../download//docker-compose-linux-
     - name: Install Docker Compose v2 CLI plugin (GitHub release)
       ansible.builtin.get_url:
         url: {% raw %}"https://github.com/docker/compose/releases/download/v2.31.0/docker-compose-linux-{{ {'x86_64': 'x86_64', 'aarch64': 'aarch64', 'armv7l': 'armv7'}[ansible_architecture] | default('x86_64') }}"{% endraw %}

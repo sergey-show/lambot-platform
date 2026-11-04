@@ -1,5 +1,5 @@
 /**
- * Должен импортироваться до `./main`: в ES-модулях обычный код в entry после `import` выполняется
- * после загрузки зависимостей, из-за чего флаг «admin» не успевал установиться.
+ * Must be imported before `./main`: in ES modules, ordinary entry code after `import` runs
+ * after dependencies load, so the "admin" flag would not be set in time.
  */
 (window as unknown as { __LAMBOT_APP?: string }).__LAMBOT_APP = "admin";

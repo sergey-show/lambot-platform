@@ -1,4 +1,4 @@
-"""CRUD и сериализация прогонов AI-команды (Postgres)."""
+"""CRUD and serialization of AI Team runs (Postgres)."""
 
 from __future__ import annotations
 
@@ -12,30 +12,30 @@ from services.admin_service.models import AITeamExecutionTask, AITeamRun, AITeam
 
 # step_key, role_label, task_title
 DEFAULT_PIPELINE: list[tuple[str, str, str]] = [
-    ("intake", "Маршрутизация", "Режим full/direct и JSON orchestration_route"),
+    ("intake", "Routing", "full/direct mode and orchestration_route JSON"),
     (
         "sa",
-        "Системный аналитик",
-        "ТЗ, глоссарий, traceability; эпики и задачи в трекере для агентов",
+        "Systems analyst",
+        "Spec, glossary, traceability; epics and tasks in the agent tracker",
     ),
-    ("pm", "PM", "Продуктовые приоритеты, scope релиза, KPI — без детальной техспеки"),
-    ("architect", "Архитектор", "Архитектура, стек, этапы; задачи для DevOps, Backend, Frontend"),
-    ("devops_plan", "DevOps", "План работ: инфраструктура, CI/CD, деплой — кто что и когда"),
-    ("backend_plan", "Backend", "План API и сервисов — кто что и когда"),
-    ("frontend_plan", "Frontend", "План UI/клиента — кто что и когда"),
+    ("pm", "PM", "Product priorities, release scope, KPI — without a detailed tech spec"),
+    ("architect", "Architect", "Architecture, stack, stages; tasks for DevOps, Backend, Frontend"),
+    ("devops_plan", "DevOps", "Work plan: infrastructure, CI/CD, deploy — who does what and when"),
+    ("backend_plan", "Backend", "API and services plan — who does what and when"),
+    ("frontend_plan", "Frontend", "UI/client plan — who does what and when"),
     (
         "execution_plan",
-        "Планирование исполнения",
-        "Структурированные задачи: GitLab, SSH, воркеры",
+        "Execution planning",
+        "Structured tasks: GitLab, SSH, workers",
     ),
-    ("implementation", "Реализация", "Итоги и пояснения после фактического исполнения задач"),
-    ("deploy", "Деплой", "Развёртывание на сервере (из контекста проекта)"),
+    ("implementation", "Implementation", "Outcomes and notes after actual task execution"),
+    ("deploy", "Deploy", "Deploy on the server (from project context)"),
     (
         "qa_validation",
         "QA",
-        "Фактическая проверка после деплоя: smoke/regression, риски, решение GO/NO_GO",
+        "Post-deploy verification: smoke/regression, risks, GO/NO_GO decision",
     ),
-    ("pm_summary", "PM — итог", "Отчёт пользователю: как попробовать продукт, URL, учётные записи"),
+    ("pm_summary", "PM — summary", "User report: how to try the product, URLs, accounts"),
 ]
 
 
@@ -155,7 +155,7 @@ def replace_execution_tasks(
     run_id: UUID,
     items: list[dict],
 ) -> list[AITeamExecutionTask]:
-    """Удаляет старые задачи исполнения и создаёт новые (для одного прогона)."""
+    """Deletes old execution tasks and creates new ones (for a single run)."""
     run = db.get(AITeamRun, run_id)
     if run is None:
         return []
@@ -163,7 +163,7 @@ def replace_execution_tasks(
     out: list[AITeamExecutionTask] = []
     now = datetime.utcnow()
     for seq, raw in enumerate(items):
-        title = str(raw.get("title") or f"Задача {seq + 1}")[:512]
+        title = str(raw.get("title") or f"Task {seq + 1}")[:512]
         action_kind = str(raw.get("action_kind") or raw.get("action") or "noop")[:64]
         payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else None
         plan_summary = raw.get("plan_summary")
@@ -194,7 +194,7 @@ def append_execution_tasks(
     run_id: UUID,
     items: list[dict],
 ) -> list[AITeamExecutionTask]:
-    """Добавляет задачи исполнения в конец существующей очереди run (батчами)."""
+    """Appends execution tasks to the end of an existing run queue (in batches)."""
     run = db.get(AITeamRun, run_id)
     if run is None:
         return []
@@ -205,7 +205,7 @@ def append_execution_tasks(
     out: list[AITeamExecutionTask] = []
     now = datetime.utcnow()
     for idx, raw in enumerate(items):
-        title = str(raw.get("title") or f"Задача {next_seq + idx + 1}")[:512]
+        title = str(raw.get("title") or f"Task {next_seq + idx + 1}")[:512]
         action_kind = str(raw.get("action_kind") or raw.get("action") or "noop")[:64]
         payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else None
         plan_summary = raw.get("plan_summary")

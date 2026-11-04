@@ -1,5 +1,5 @@
 ---
-# Nexus 3 OSS: cloudkrafter.nexus.nexus_oss + hosted-репозитории (как в docker-шаблоне).
+# Nexus 3 OSS: cloudkrafter.nexus.nexus_oss + hosted repositories (as in the docker template).
 - name: Nexus OSS via cloudkrafter.nexus
   hosts: target
   become: true
@@ -28,7 +28,7 @@
     nexus_api_scheme: http
     nexus_api_port: {{ nexus_http_port | int }}
   roles:
-    # При объявлении collections выше — короткое имя роли из коллекции (не FQCN в roles:).
+    # When collections are declared above — short role name from the collection (not FQCN in roles:).
     - role: nexus_oss
   post_tasks:
     - name: Wait for Nexus status API

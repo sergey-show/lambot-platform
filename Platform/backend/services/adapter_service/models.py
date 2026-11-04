@@ -9,7 +9,7 @@ from services.adapter_service.db import Base
 
 
 class ServerTarget(Base):
-    """Пользовательский сервер: SSH + токен агента (секреты зашифрованы Fernet)."""
+    """User server: SSH + agent token (secrets encrypted with Fernet)."""
 
     __tablename__ = "server_targets"
 
@@ -43,7 +43,7 @@ class AgentMetric(Base):
 
 
 class TargetServiceAssignment(Base):
-    """Какой SSH-target исполняет роль сервиса (gitlab / nexus) в проекте."""
+    """Which SSH target runs a service role (gitlab / nexus) in the project."""
 
     __tablename__ = "target_service_assignments"
     __table_args__ = (UniqueConstraint("project_id", "service_role", name="uq_project_service_role"),)
@@ -61,7 +61,7 @@ class TargetServiceAssignment(Base):
 
 
 class ProjectInfraResource(Base):
-    """Сводка ресурсов/учёток/URL для контекста агентов разработки."""
+    """Summary of resources/accounts/URLs for development agent context."""
 
     __tablename__ = "project_infra_resources"
 

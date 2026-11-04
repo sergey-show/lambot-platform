@@ -1,4 +1,4 @@
-"""Фоновый consumer Kafka + догон pending при старте."""
+"""Background Kafka consumer + catch up pending on start."""
 
 from __future__ import annotations
 

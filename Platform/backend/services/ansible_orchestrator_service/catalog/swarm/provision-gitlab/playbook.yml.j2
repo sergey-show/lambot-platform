@@ -1,5 +1,5 @@
 ---
-# Swarm: GitLab CE в Docker (Debian/Ubuntu). Переменные подставляет оркестратор из API.
+# Swarm: GitLab CE in Docker (Debian/Ubuntu). Orchestrator fills variables from the API.
 - name: Provision GitLab CE via Docker Compose
   hosts: target
   become: true
@@ -13,7 +13,7 @@
     lambot_project_name: "{{ lambot_project_name | replace('\"', '\\\"') }}"
     lambot_service_password_b64: "{{ lambot_service_password_b64 }}"
   tasks:
-    # Docker и Compose: шаблон prepare-docker-host (запускается adapter до этого плейбука).
+    # Docker and Compose: prepare-docker-host template (adapter runs it before this playbook).
 
     - name: Infra directory for GitLab
       ansible.builtin.file:

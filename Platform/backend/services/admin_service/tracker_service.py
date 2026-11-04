@@ -1,4 +1,4 @@
-"""Трекер задач агентов: CRUD, dispatch → Kafka, завершение исполнения."""
+"""Agent task tracker: CRUD, dispatch → Kafka, execution completion."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ TRACKER_KIND_TASK = "task"
 
 VALID_ASSIGNEE_ROLES = frozenset({"sa", "pm", "architect", "devops", "backend", "frontend", "qa"})
 
-# Статусы карточки
+# Card statuses
 S_BACKLOG = "backlog"
 S_READY = "ready"
 S_QUEUED = "queued"
@@ -41,7 +41,7 @@ VALID_STATUSES = frozenset(
     }
 )
 
-# Поля title/description/роль/seq/meta — только до постановки в очередь исполнения
+# Fields title/description/role/seq/meta — only until enqueued for execution
 EDITABLE_CONTENT_STATUSES = frozenset(
     {
         S_BACKLOG,
@@ -294,10 +294,8 @@ def dispatch_item(
     *,
     actor_ref: str = "user",
 ) -> tuple[TrackerItem, UUID]:
-    """
-    Ставит задачу в очередь исполнения и публикует TaskEnvelope (tracker_task_execute).
-    Возвращает (item, execution_id).
-    """
+    """Enqueues the task for execution and publishes TaskEnvelope (tracker_task_execute).
+    Returns (item, execution_id)."""
     row = get_item(db, project_id, item_id)
     if row is None:
         raise ValueError("not_found")
@@ -378,10 +376,10 @@ def dispatch_item(
 def _build_tracker_prompt(row: TrackerItem) -> str:
     role = row.assignee_role or "developer"
     return (
-        f"Ты агент роли «{role}» в проекте пользователя. "
-        f"Задача из трекера «Задачи агентов» — нужен проверяемый результат через инструменты платформы.\n\n"
-        f"Заголовок: {row.title}\n\n"
-        f"Описание:\n{row.description or '(нет)'}\n"
+        f'You are a "{role}" agent in the user\'s project. '
+        f'Task from the "Agent tasks" tracker — a verifiable result via platform tools is required.\n\n'
+        f"Title: {row.title}\n\n"
+        f"Description:\n{row.description or '(none)'}\n"
     )
 
 
@@ -396,7 +394,7 @@ def patch_execution_result(
     error: str | None = None,
     actor_ref: str = "agent_worker",
 ) -> TrackerItem | None:
-    """Вызывается из agent_worker после исполнения."""
+    """Called from agent_worker after execution."""
     row = get_item(db, project_id, item_id)
     if row is None:
         return None

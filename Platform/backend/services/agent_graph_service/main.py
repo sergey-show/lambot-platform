@@ -1,6 +1,6 @@
 """
-LangGraph ReAct-агент с tool calling: инструменты платформы (контекст, статус, инфра, sandbox).
-Вызывается через api-gateway (авторизация пользователя).
+LangGraph ReAct agent with tool calling: platform tools (context, status, infra, sandbox).
+Called via api-gateway (user auth).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _log_langfuse_on_startup() -> None:
         logger.info("langfuse tracing: on, base_url/host=%s", base or "(empty)")
     else:
         logger.info(
-            "langfuse tracing: off (LANGFUSE_TRACING_ENABLED или ключи/host; см. LANGFUSE_* в compose)"
+            "langfuse tracing: off (LANGFUSE_TRACING_ENABLED or keys/host; see LANGFUSE_* in compose)"
         )
 
 
@@ -78,7 +78,7 @@ def orchestrate_start(
     body: GraphInvokeBody,
     background_tasks: BackgroundTasks,
 ) -> dict[str, str]:
-    """Запуск оркестрации AI-команды (шаги в Postgres); фоновый пайплайн."""
+    """Start AI Team orchestration (steps in Postgres); background pipeline."""
     msg = body.message.strip()
     if not msg:
         raise HTTPException(status_code=400, detail="message is empty")
@@ -116,7 +116,7 @@ def orchestrate_continue(
 
 @app.get("/api/v1/projects/{project_id}/ai-team/state")
 def ai_team_state(project_id: UUID) -> dict:
-    """Последний прогон AI-команды по проекту (из Postgres)."""
+    """Latest AI Team run for the project (from Postgres)."""
     run = team_latest_for_project(str(project_id))
     return {"run": run}
 
@@ -131,7 +131,7 @@ def orchestrate_run_status(project_id: UUID, run_id: str) -> dict:
 
 @app.get("/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream")
 async def orchestrate_run_stream(project_id: UUID, run_id: str):
-    """Поток NDJSON с дельтами run/step/task (для realtime UI)."""
+    """NDJSON stream with run/step/task deltas (for realtime UI)."""
     row = get_run(run_id)
     if row is None or row.get("project_id") != str(project_id):
         raise HTTPException(status_code=404, detail="run not found")
@@ -145,7 +145,7 @@ async def orchestrate_run_stream(project_id: UUID, run_id: str):
 
 @app.websocket("/api/v1/projects/{project_id}/orchestrate/runs/{run_id}/stream/ws")
 async def orchestrate_run_ws(websocket: WebSocket, project_id: UUID, run_id: str):
-    """WebSocket: первое сообщение — snapshot run (восстановление UI), далее те же события, что NDJSON."""
+    """WebSocket: first message is a run snapshot (UI restore), then the same events as NDJSON."""
     await websocket.accept()
     try:
         async for ev in iter_orchestration_events(project_id, run_id, websocket_mode=True):

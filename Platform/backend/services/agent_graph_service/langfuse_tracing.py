@@ -1,4 +1,4 @@
-"""Опциональная трассировка LangChain/LangGraph в Langfuse (LLM observability)."""
+"""Optional LangChain/LangGraph tracing in Langfuse (LLM observability)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def _tracing_disabled_by_flag() -> bool:
-    """LANGFUSE_TRACING_ENABLED=0|false|no|off — явно выключить (остальные значения / пусто = не блокируем)."""
+    """LANGFUSE_TRACING_ENABLED=0|false|no|off — explicitly disable (other values / empty = do not block)."""
     v = os.getenv("LANGFUSE_TRACING_ENABLED", "").strip().lower()
     return v in ("0", "false", "no", "off")
 
@@ -28,9 +28,9 @@ def enabled() -> bool:
 
 
 def stable_trace_id_for_run(run_id: str) -> str:
-    """Детерминированный trace_id: 32 lowercase hex (W3C / Langfuse), без дефисов.
+    """Deterministic trace_id: 32 lowercase hex (W3C / Langfuse), no hyphens.
 
-    Langfuse SDK парсит trace_id как int(..., 16) — строка UUID с дефисами недопустима.
+    Langfuse SDK parses trace_id as int(..., 16) — a UUID string with hyphens is invalid.
     """
     return uuid.uuid5(uuid.NAMESPACE_URL, f"lambot/agent-graph/orchestration:{run_id}").hex
 
@@ -41,12 +41,12 @@ def invoke_config(
     step_key: str | None = None,
 ) -> dict[str, Any]:
     """
-    Возвращает RunnableConfig для model.invoke / graph.invoke.
-    orchestration_run_id: id run AI-команды — общий trace в Langfuse (trace_id детерминирован).
-    step_key: тег/metadata для фильтрации в UI Langfuse.
+    Returns RunnableConfig for model.invoke / graph.invoke.
+    orchestration_run_id: AI Team run id — shared Langfuse trace (deterministic trace_id).
+    step_key: tag/metadata for filtering in the Langfuse UI.
 
-    Если задан AGENT_GRAPH_OPENAI_BASE_URL, LangChain ходит в llm-adapter /v1/chat/completions, где уже
-    пишется generation в Langfuse — CallbackHandler отключаем, чтобы не дублировать события.
+    If AGENT_GRAPH_OPENAI_BASE_URL is set, LangChain talks to llm-adapter /v1/chat/completions, which already
+    writes a generation to Langfuse — disable CallbackHandler to avoid duplicate events.
     """
     if not enabled():
         return {}
@@ -56,13 +56,13 @@ def invoke_config(
         from langfuse import get_client
         from langfuse.langchain import CallbackHandler
     except ImportError as exc:
-        logger.warning("langfuse: CallbackHandler недоступен (%s)", exc)
+        logger.warning("langfuse: CallbackHandler unavailable (%s)", exc)
         return {}
     try:
-        # Singleton SDK подхватывает LANGFUSE_* из env; до CallbackHandler — как в доке Langfuse.
+        # Singleton SDK picks up LANGFUSE_* from env; before CallbackHandler — as in Langfuse docs.
         get_client()
     except Exception:
-        logger.exception("langfuse: get_client() не инициализировался (проверьте ключи и LANGFUSE_BASE_URL)")
+        logger.exception("langfuse: get_client() did not initialize (check keys and LANGFUSE_BASE_URL)")
         return {}
     try:
         if orchestration_run_id:
@@ -93,10 +93,10 @@ def flush() -> None:
         get_client().flush()
         return
     except Exception:
-        logger.warning("langfuse: flush через get_client() не удался", exc_info=True)
+        logger.warning("langfuse: flush via get_client() failed", exc_info=True)
     try:
         from langfuse import Langfuse
 
         Langfuse().flush()
     except Exception:
-        logger.warning("langfuse: flush через Langfuse() не удался", exc_info=True)
+        logger.warning("langfuse: flush via Langfuse() failed", exc_info=True)

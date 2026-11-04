@@ -1,4 +1,4 @@
-"""SSH: проверка доступа и установка remote agent (Paramiko)."""
+"""SSH: access check and remote agent install (Paramiko)."""
 from __future__ import annotations
 
 import base64
@@ -8,9 +8,9 @@ from typing import Tuple
 
 import paramiko
 
-# Синхронно с Platform/agent/remote_agent.py
+# Keep in sync with Platform/agent/remote_agent.py
 REMOTE_AGENT_PY = r'''#!/usr/bin/env python3
-"""Агент на стороне пользовательского сервера: шлёт метрики в platform ingest."""
+"""Agent on the user server: sends metrics to platform ingest."""
 from __future__ import annotations
 
 import json
@@ -82,10 +82,8 @@ def run_ssh_command(
     timeout: float = 120.0,
     max_output_chars: int = 200_000,
 ) -> tuple[int, str, str]:
-    """
-    Выполняет одну команду на удалённом хосте через bash -lc (как в shell).
-    Возвращает (exit_code, stdout, stderr), вывод обрезается.
-    """
+    """Run one command on the remote host via bash -lc (like a shell).
+    Returns (exit_code, stdout, stderr); output is truncated."""
     cmd = (command or "").strip()
     if not cmd:
         return 127, "", "empty command"
@@ -101,9 +99,9 @@ def run_ssh_command(
         out = out_b.decode(errors="replace")
         err = err_b.decode(errors="replace")
         if len(out) > max_output_chars:
-            out = out[: max_output_chars - 60] + "\n… [stdout обрезан]"
+            out = out[: max_output_chars - 60] + "\n… [stdout truncated]"
         if len(err) > max_output_chars:
-            err = err[: max_output_chars - 60] + "\n… [stderr обрезан]"
+            err = err[: max_output_chars - 60] + "\n… [stderr truncated]"
         return code, out, err
     finally:
         client.close()
@@ -126,7 +124,7 @@ def _load_pkey(pem_or_password: str, auth_type: str):
             return Key.from_private_key(buf)
         except Exception:
             continue
-    raise ValueError("не удалось разобрать приватный ключ (RSA/Ed25519/ECDSA PEM)")
+    raise ValueError("failed to parse private key (RSA/Ed25519/ECDSA PEM)")
 
 
 def ssh_connect(
@@ -194,7 +192,7 @@ def provision_systemd_agent(
     ingest_url: str,
     agent_token: str,
 ) -> Tuple[bool, str]:
-    """Загрузка скрипта + systemd unit на удалённый хост (нужен sudo без пароля)."""
+    """Upload script + systemd unit to the remote host (passwordless sudo required)."""
     env_lines = f"LAMBOT_INGEST_URL={ingest_url}\nLAMBOT_AGENT_TOKEN={agent_token}\n"
     unit = """[Unit]
 Description=Lambot platform metrics agent
@@ -253,7 +251,7 @@ def ssh_read_remote_file(
     max_bytes: int = 65536,
     timeout: float = 30.0,
 ) -> str | None:
-    """Прочитать текстовый файл по SSH (cat). При ошибке — None."""
+    """Read a text file over SSH (cat). On error — None."""
     try:
         client = ssh_connect(host, port, username, auth_type, secret, timeout=timeout)
         try:

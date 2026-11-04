@@ -1,46 +1,46 @@
-# GitLab платформа (промышленная связка)
+# GitLab platform (production wiring)
 
-Один GitLab на всю площадку. При `project.created` **gitlab-service** создаёт приватную **группу** и **group access token** (репозитории не создаются). Секреты хранятся в adapter (`ProjectInfraResource`, label «GitLab платформа (группа и токен)»).
+One GitLab instance for the whole site. On `project.created`, **gitlab-service** creates a private **group** and a **group access token** (repositories are not created yet). Secrets are stored in the adapter (`ProjectInfraResource`, label “GitLab platform (group and token)”).
 
-## Сервисы
+## Services
 
-| Сервис | Порт | Назначение |
-|--------|------|------------|
-| gitlab-service | 8016 | Провижининг группы, API создания репозитория |
-| code-index-service | 8017 | Поиск по клону: **Qdrant** (векторы) + **Postgres** (текст чанков) |
-| repo-workspace-service | 8018 | Локальный git: clone, feature branch, commit, push |
+| Service | Port | Purpose |
+|---------|------|---------|
+| gitlab-service | 8016 | Group provisioning, repository create API |
+| code-index-service | 8017 | Search over clone: **Qdrant** (vectors) + **Postgres** (chunk text) |
+| repo-workspace-service | 8018 | Local git: clone, feature branch, commit, push |
 
-Общий volume: `repo_workspaces_data` → `/var/lambot/repo-workspaces`.
+Shared volume: `repo_workspaces_data` → `/var/lambot/repo-workspaces`.
 
 ### Code index (Qdrant)
 
-- Сервис **qdrant** в compose (`6333`), коллекция `lambot_code_chunks`.
-- Reindex: удаляет точки по `project_id` + `repo_slug` + `branch`, затем upsert.
-- Поиск: ANN в Qdrant → текст из Postgres → лёгкий lexical rerank.
-- После обновления с Postgres-embeddings: пересоздайте `postgres_code_index` volume или выполните reindex по проектам.
+- **qdrant** service in compose (`6333`), collection `lambot_code_chunks`.
+- Reindex: deletes points by `project_id` + `repo_slug` + `branch`, then upserts.
+- Search: ANN in Qdrant → text from Postgres → light lexical rerank.
+- After migrating from Postgres embeddings: recreate the `postgres_code_index` volume or reindex per project.
 
-## Переменные (prod)
+## Environment variables (prod)
 
 ```bash
 GITLAB_URL=https://gitlab.company.com
-GITLAB_ADMIN_TOKEN=glpat-...   # api на корневой группе
-GITLAB_ROOT_GROUP_PATH=lambot    # parent для проектов
+GITLAB_ADMIN_TOKEN=glpat-...   # api on root group
+GITLAB_ROOT_GROUP_PATH=lambot    # parent for projects
 GITLAB_PROVISION_ENABLED=1
 GITLAB_PROVISION_MOCK=0
 ```
 
-## Workflow агентов
+## Agent workflow
 
 1. `gitlab_provision_status` / `get_development_context` → `gitlab_platform`
-2. `gitlab_create_repository` — пустой репозиторий в группе проекта
-3. `repo_clone_or_sync` — `feature_branch` для работы; индексируется активная ветка
+2. `gitlab_create_repository` — empty repository in the project group
+3. `repo_clone_or_sync` — `feature_branch` for work; the active branch is indexed
 4. `search_codebase` → `repo_read_file` / `repo_write_commit_push`
 
-Токен GitLab агентам не передаётся.
+The GitLab token is never passed to agents.
 
-## GitLab CE в docker-compose
+## GitLab CE in docker-compose
 
-Опциональный сервис **`gitlab-ce`** (профиль `gitlab`, ~4–8 GB RAM). На сервере с ~16+ GB свободной памяти обычно хватает.
+Optional **`gitlab-ce`** service (profile `gitlab`, ~4–8 GB RAM). On a host with ~16+ GB free memory this is usually enough.
 
 ```bash
 docker compose --profile gitlab up -d
@@ -48,17 +48,17 @@ docker compose --profile gitlab up -d
 docker exec platform-gitlab-ce grep Password /etc/gitlab/initial_root_password
 ```
 
-В UI: группа `lambot`, root PAT (`api`) → `.env`: `GITLAB_ADMIN_TOKEN`, `GITLAB_PROVISION_MOCK=0`.
+In the UI: create group `lambot`, root PAT (`api`) → `.env`: `GITLAB_ADMIN_TOKEN`, `GITLAB_PROVISION_MOCK=0`.
 
-## Старые проекты (до автопровижининга)
+## Legacy projects (before auto-provisioning)
 
-При успешном провижининге в adapter в `value_json` выставляется **`gitlab_group_created: true`**.
+On successful provisioning, adapter `value_json` sets **`gitlab_group_created: true`**.
 
-- **Superadmin** → таблица проектов → колонка «GitLab группа» → **Создать группу** / **Повторить**
-- **User portal** → Инфраструктура → блок «GitLab платформы»
+- **Superadmin** → projects table → “GitLab group” column → **Create group** / **Retry**
+- **User portal** → Infrastructure → “GitLab platform” block
 
-API: `POST /api/v1/admin/projects/{id}/gitlab-provision` (superadmin) или `POST /api/v1/projects/{id}/gitlab-provision` (Owner/Admin).
+API: `POST /api/v1/admin/projects/{id}/gitlab-provision` (superadmin) or `POST /api/v1/projects/{id}/gitlab-provision` (Owner/Admin).
 
-## Локальная разработка без GitLab
+## Local development without GitLab
 
-По умолчанию `GITLAB_PROVISION_MOCK=1` — запись в adapter без реального API. Полный git-цикл: `--profile gitlab` или внешний `GITLAB_URL`.
+By default `GITLAB_PROVISION_MOCK=1` — adapter write without a real API. Full git cycle: `--profile gitlab` or external `GITLAB_URL`.

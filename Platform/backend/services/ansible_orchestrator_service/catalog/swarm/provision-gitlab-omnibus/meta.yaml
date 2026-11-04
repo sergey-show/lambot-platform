@@ -2,10 +2,10 @@ id: provision-gitlab-omnibus
 active: true
 name: GitLab CE (Omnibus, robertdebock.gitlab)
 description: >
-  Устанавливает GitLab CE через пакет Omnibus на целевом хосте (роль robertdebock.gitlab).
-  Подходит для Ubuntu LTS / RHEL-подобных систем из meta роли. Не использует Docker —
-  шаг prepare-docker-host для этого шаблона не требуется.
-  После установки создаётся группа проекта, пользователь и PAT для API (как в docker-варианте).
+  Installs GitLab CE via the Omnibus package on the target host (role robertdebock.gitlab).
+  Suitable for Ubuntu LTS / RHEL-like systems from the role meta. Does not use Docker —
+  the prepare-docker-host step is not required for this template.
+  After install, creates the project group, user, and API PAT (as in the docker variant).
 tags:
   - gitlab
   - omnibus
